@@ -314,8 +314,19 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(self.pdf_path, "rb") as src, open(out_path, "wb") as dst:
-                dst.write(src.read())
+            has_rotations = any(rot % 360 != 0 for rot in self.page_rotations.values())
+            if has_rotations:
+                out_doc = fitz.open(str(self.pdf_path))
+                try:
+                    for idx, rot in self.page_rotations.items():
+                        if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                            out_doc[idx].set_rotation(rot % 360)
+                    out_doc.save(out_path)
+                finally:
+                    out_doc.close()
+            else:
+                with open(self.pdf_path, "rb") as src, open(out_path, "wb") as dst:
+                    dst.write(src.read())
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
