@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         page_spec, ok = QInputDialog.getText(
             self,
             "Seiten extrahieren",
-            "Seitenbereich eingeben (z.B. 1,3,5-8):",
+            "Seitenbereich eingeben (z.B. 1,3,5-8, odd, even, all):",
         )
         if not ok or not page_spec.strip():
             return
@@ -353,9 +353,20 @@ class MainWindow(QMainWindow):
     def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
         pages: set[int] = set()
         for part in spec.split(","):
-            token = part.strip()
+            token = part.strip().lower()
             if not token:
                 continue
+
+            if token in {"all", "*"}:
+                pages.update(range(total_pages))
+                continue
+            if token == "odd":
+                pages.update(range(0, total_pages, 2))
+                continue
+            if token == "even":
+                pages.update(range(1, total_pages, 2))
+                continue
+
             if "-" in token:
                 a, b = token.split("-", 1)
                 if not (a.strip().isdigit() and b.strip().isdigit()):
@@ -367,11 +378,10 @@ class MainWindow(QMainWindow):
                 for p in range(start, end + 1):
                     if 1 <= p <= total_pages:
                         pages.add(p - 1)
-            else:
-                if token.isdigit():
-                    p = int(token)
-                    if 1 <= p <= total_pages:
-                        pages.add(p - 1)
+            elif token.isdigit():
+                p = int(token)
+                if 1 <= p <= total_pages:
+                    pages.add(p - 1)
         return sorted(pages)
 
 
