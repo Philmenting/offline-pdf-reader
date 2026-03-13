@@ -286,8 +286,10 @@ class MainWindow(QMainWindow):
         text = page.get_text("text").strip()
 
         if len(text) < 40:
-            # OCR fallback on first page image
-            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+            # OCR fallback on current page image (respect UI rotation for better OCR)
+            rotation = self.page_rotations.get(self.current_page, 0)
+            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
             mode = "RGB"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
             text = pytesseract.image_to_string(img, lang="deu+eng").strip()
