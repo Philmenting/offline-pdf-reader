@@ -59,15 +59,17 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     # Date
     date_patterns = [
         r"\b(\d{2}\.\d{2}\.\d{4})\b",
+        r"\b(\d{2}\.\d{2}\.\d{2})\b",
         r"\b(\d{4}-\d{2}-\d{2})\b",
         r"\b(\d{2}/\d{2}/\d{4})\b",
+        r"\b(\d{2}/\d{2}/\d{2})\b",
     ]
     date = ""
     for pat in date_patterns:
         m = re.search(pat, text)
         if m:
             raw = m.group(1)
-            for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
                 try:
                     date = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                     break
