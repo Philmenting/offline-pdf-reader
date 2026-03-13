@@ -117,6 +117,8 @@ class MainWindow(QMainWindow):
 
         self.pdf_path: Path | None = None
         self.doc: fitz.Document | None = None
+        self.current_page = 0
+        self.zoom_factor = 1.35
 
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -129,21 +131,37 @@ class MainWindow(QMainWindow):
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
+        self.page_info = QLabel("Seite: -/- | Zoom: 100%")
+        self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         btn_open = QPushButton("PDF öffnen")
+        btn_prev = QPushButton("◀ Vorherige")
+        btn_next = QPushButton("Nächste ▶")
+        btn_zoom_out = QPushButton("− Zoom")
+        btn_zoom_in = QPushButton("+ Zoom")
         btn_extract = QPushButton("Text/OCR extrahieren")
         btn_saveas = QPushButton("Speichern als …")
 
         btn_open.clicked.connect(self.open_pdf)
+        btn_prev.clicked.connect(self.prev_page)
+        btn_next.clicked.connect(self.next_page)
+        btn_zoom_out.clicked.connect(self.zoom_out)
+        btn_zoom_in.clicked.connect(self.zoom_in)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
 
         row = QHBoxLayout()
         row.addWidget(btn_open)
+        row.addWidget(btn_prev)
+        row.addWidget(btn_next)
+        row.addWidget(btn_zoom_out)
+        row.addWidget(btn_zoom_in)
         row.addWidget(btn_extract)
         row.addWidget(btn_saveas)
 
         layout = QVBoxLayout()
         layout.addLayout(row)
+        layout.addWidget(self.page_info)
         layout.addWidget(self.preview)
         layout.addWidget(self.text_output)
         layout.addWidget(self.suggested_name)
@@ -170,31 +188,66 @@ class MainWindow(QMainWindow):
             self.doc = None
             return
 
-        self.render_first_page()
+        self.current_page = 0
+        self.zoom_factor = 1.35
+        self.render_current_page()
         self.text_output.clear()
         self.suggested_name.clear()
 
-    def render_first_page(self) -> None:
+    def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
+            self.preview.setText("Kein PDF geladen")
+            self.page_info.setText("Seite: -/- | Zoom: 100%")
             return
-        page = self.doc[0]
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+
+        total = len(self.doc)
+        self.current_page = max(0, min(self.current_page, total - 1))
+
+        page = self.doc[self.current_page]
+        pix = page.get_pixmap(matrix=fitz.Matrix(self.zoom_factor, self.zoom_factor), alpha=False)
         fmt = QImage.Format.Format_RGB888
         img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
         qpix = QPixmap.fromImage(img)
         self.preview.setPixmap(qpix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        self.page_info.setText(f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}%")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.doc:
-            self.render_first_page()
+            self.render_current_page()
+
+    def next_page(self) -> None:
+        if not self.doc:
+            return
+        if self.current_page < len(self.doc) - 1:
+            self.current_page += 1
+            self.render_current_page()
+
+    def prev_page(self) -> None:
+        if not self.doc:
+            return
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.render_current_page()
+
+    def zoom_in(self) -> None:
+        if not self.doc:
+            return
+        self.zoom_factor = min(3.0, self.zoom_factor + 0.15)
+        self.render_current_page()
+
+    def zoom_out(self) -> None:
+        if not self.doc:
+            return
+        self.zoom_factor = max(0.6, self.zoom_factor - 0.15)
+        self.render_current_page()
 
     def extract_text_and_suggest(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
             return
 
-        page = self.doc[0]
+        page = self.doc[self.current_page]
         text = page.get_text("text").strip()
 
         if len(text) < 40:
