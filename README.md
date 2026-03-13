@@ -1,5 +1,7 @@
 # Offline PDF Reader (MVP)
 
+MIT-licensed, offline-first PDF tool inspired by workflows from projects like Stirling-PDF.
+
 Open-source desktop PDF reader that works **fully offline** with:
 
 - PDF viewing
@@ -14,6 +16,11 @@ Open-source desktop PDF reader that works **fully offline** with:
 
 ## Offline guarantee
 This app performs all processing locally and does not require cloud services.
+
+## License
+- Project license: MIT (`LICENSE`)
+- Third-party attribution policy: `ATTRIBUTION.md`
+- Distribution notice: `NOTICE`
 
 ## Setup
 ```bash
