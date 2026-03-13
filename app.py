@@ -13,6 +13,7 @@ from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -141,6 +142,8 @@ class MainWindow(QMainWindow):
         btn_zoom_in = QPushButton("+ Zoom")
         btn_extract = QPushButton("Text/OCR extrahieren")
         btn_saveas = QPushButton("Speichern als …")
+        btn_merge = QPushButton("PDFs mergen")
+        btn_split = QPushButton("Seiten extrahieren")
 
         btn_open.clicked.connect(self.open_pdf)
         btn_prev.clicked.connect(self.prev_page)
@@ -149,6 +152,8 @@ class MainWindow(QMainWindow):
         btn_zoom_in.clicked.connect(self.zoom_in)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
+        btn_merge.clicked.connect(self.merge_pdfs)
+        btn_split.clicked.connect(self.extract_pages_to_new_pdf)
 
         row = QHBoxLayout()
         row.addWidget(btn_open)
@@ -158,6 +163,8 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_zoom_in)
         row.addWidget(btn_extract)
         row.addWidget(btn_saveas)
+        row.addWidget(btn_merge)
+        row.addWidget(btn_split)
 
         layout = QVBoxLayout()
         layout.addLayout(row)
@@ -284,6 +291,88 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
+
+    def merge_pdfs(self) -> None:
+        file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF files (*.pdf)")
+        if not file_names or len(file_names) < 2:
+            QMessageBox.information(self, "Hinweis", "Bitte mindestens zwei PDFs auswählen.")
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(self, "Gemergte PDF speichern", "merged.pdf", "PDF files (*.pdf)")
+        if not out_path:
+            return
+
+        merged = fitz.open()
+        try:
+            for path in file_names:
+                src = fitz.open(path)
+                merged.insert_pdf(src)
+                src.close()
+            merged.save(out_path)
+            QMessageBox.information(self, "Erfolg", f"Gemergte PDF gespeichert:\n{out_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Merge fehlgeschlagen:\n{e}")
+        finally:
+            merged.close()
+
+    def extract_pages_to_new_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seiten extrahieren",
+            "Seitenbereich eingeben (z.B. 1,3,5-8):",
+        )
+        if not ok or not page_spec.strip():
+            return
+
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+
+        default_name = f"{self.pdf_path.stem}_extract.pdf"
+        out_path, _ = QFileDialog.getSaveFileName(self, "Extrakt speichern", str(self.pdf_path.with_name(default_name)), "PDF files (*.pdf)")
+        if not out_path:
+            return
+
+        out_doc = fitz.open()
+        try:
+            for idx in page_indices:
+                out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+            out_doc.save(out_path)
+            QMessageBox.information(self, "Erfolg", f"Extrakt gespeichert:\n{out_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Seitenextraktion fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    @staticmethod
+    def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
+        pages: set[int] = set()
+        for part in spec.split(","):
+            token = part.strip()
+            if not token:
+                continue
+            if "-" in token:
+                a, b = token.split("-", 1)
+                if not (a.strip().isdigit() and b.strip().isdigit()):
+                    continue
+                start = int(a.strip())
+                end = int(b.strip())
+                if start > end:
+                    start, end = end, start
+                for p in range(start, end + 1):
+                    if 1 <= p <= total_pages:
+                        pages.add(p - 1)
+            else:
+                if token.isdigit():
+                    p = int(token)
+                    if 1 <= p <= total_pages:
+                        pages.add(p - 1)
+        return sorted(pages)
 
 
 if __name__ == "__main__":
