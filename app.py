@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self.doc: fitz.Document | None = None
         self.current_page = 0
         self.zoom_factor = 1.35
+        self.page_rotations: dict[int, int] = {}
 
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -140,6 +141,8 @@ class MainWindow(QMainWindow):
         btn_next = QPushButton("Nächste ▶")
         btn_zoom_out = QPushButton("− Zoom")
         btn_zoom_in = QPushButton("+ Zoom")
+        btn_rotate_left = QPushButton("↺ Drehen")
+        btn_rotate_right = QPushButton("↻ Drehen")
         btn_extract = QPushButton("Text/OCR extrahieren")
         btn_saveas = QPushButton("Speichern als …")
         btn_merge = QPushButton("PDFs mergen")
@@ -150,6 +153,8 @@ class MainWindow(QMainWindow):
         btn_next.clicked.connect(self.next_page)
         btn_zoom_out.clicked.connect(self.zoom_out)
         btn_zoom_in.clicked.connect(self.zoom_in)
+        btn_rotate_left.clicked.connect(self.rotate_left)
+        btn_rotate_right.clicked.connect(self.rotate_right)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
@@ -161,6 +166,8 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_next)
         row.addWidget(btn_zoom_out)
         row.addWidget(btn_zoom_in)
+        row.addWidget(btn_rotate_left)
+        row.addWidget(btn_rotate_right)
         row.addWidget(btn_extract)
         row.addWidget(btn_saveas)
         row.addWidget(btn_merge)
@@ -197,6 +204,7 @@ class MainWindow(QMainWindow):
 
         self.current_page = 0
         self.zoom_factor = 1.35
+        self.page_rotations.clear()
         self.render_current_page()
         self.text_output.clear()
         self.suggested_name.clear()
@@ -211,12 +219,16 @@ class MainWindow(QMainWindow):
         self.current_page = max(0, min(self.current_page, total - 1))
 
         page = self.doc[self.current_page]
-        pix = page.get_pixmap(matrix=fitz.Matrix(self.zoom_factor, self.zoom_factor), alpha=False)
+        rotation = self.page_rotations.get(self.current_page, 0)
+        matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor).prerotate(rotation)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
         fmt = QImage.Format.Format_RGB888
         img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
         qpix = QPixmap.fromImage(img)
         self.preview.setPixmap(qpix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        self.page_info.setText(f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}%")
+        self.page_info.setText(
+            f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -247,6 +259,20 @@ class MainWindow(QMainWindow):
         if not self.doc:
             return
         self.zoom_factor = max(0.6, self.zoom_factor - 0.15)
+        self.render_current_page()
+
+    def rotate_left(self) -> None:
+        if not self.doc:
+            return
+        current = self.page_rotations.get(self.current_page, 0)
+        self.page_rotations[self.current_page] = (current - 90) % 360
+        self.render_current_page()
+
+    def rotate_right(self) -> None:
+        if not self.doc:
+            return
+        current = self.page_rotations.get(self.current_page, 0)
+        self.page_rotations[self.current_page] = (current + 90) % 360
         self.render_current_page()
 
     def extract_text_and_suggest(self) -> None:
