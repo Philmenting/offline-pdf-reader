@@ -352,6 +352,17 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
         pages: set[int] = set()
+
+        def parse_bound(raw: str, default: int) -> int:
+            token = raw.strip().lower()
+            if not token:
+                return default
+            if token in {"last", "end"}:
+                return total_pages
+            if token.isdigit():
+                return int(token)
+            return default
+
         for part in spec.split(","):
             token = part.strip().lower()
             if not token:
@@ -366,13 +377,14 @@ class MainWindow(QMainWindow):
             if token == "even":
                 pages.update(range(1, total_pages, 2))
                 continue
+            if token in {"last", "end"}:
+                pages.add(total_pages - 1)
+                continue
 
             if "-" in token:
                 a, b = token.split("-", 1)
-                if not (a.strip().isdigit() and b.strip().isdigit()):
-                    continue
-                start = int(a.strip())
-                end = int(b.strip())
+                start = parse_bound(a, 1)
+                end = parse_bound(b, total_pages)
                 if start > end:
                     start, end = end, start
                 for p in range(start, end + 1):
