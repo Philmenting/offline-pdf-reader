@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
         btn_saveas = QPushButton("Speichern als …")
         btn_merge = QPushButton("PDFs mergen")
         btn_split = QPushButton("Seiten extrahieren")
+        btn_reorder = QPushButton("Seiten neu anordnen")
 
         btn_open.clicked.connect(self.open_pdf)
         btn_prev.clicked.connect(self.prev_page)
@@ -161,6 +162,7 @@ class MainWindow(QMainWindow):
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
+        btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
 
         row = QHBoxLayout()
         row.addWidget(btn_open)
@@ -174,6 +176,7 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_saveas)
         row.addWidget(btn_merge)
         row.addWidget(btn_split)
+        row.addWidget(btn_reorder)
 
         layout = QVBoxLayout()
         layout.addLayout(row)
@@ -390,6 +393,45 @@ class MainWindow(QMainWindow):
         finally:
             out_doc.close()
 
+    def reorder_pages_to_new_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        order_spec, ok = QInputDialog.getText(
+            self,
+            "Seiten neu anordnen",
+            "Neue Seitenreihenfolge (z.B. 3,1,2,5-7,last):",
+        )
+        if not ok or not order_spec.strip():
+            return
+
+        ordered_pages = self._parse_order_spec(order_spec, len(self.doc))
+        if not ordered_pages:
+            QMessageBox.warning(self, "Ungültig", "Keine gültige Reihenfolge erkannt.")
+            return
+
+        default_name = f"{self.pdf_path.stem}_reordered.pdf"
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Neu angeordnete PDF speichern",
+            str(self.pdf_path.with_name(default_name)),
+            "PDF files (*.pdf)",
+        )
+        if not out_path:
+            return
+
+        out_doc = fitz.open()
+        try:
+            for idx in ordered_pages:
+                out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+            out_doc.save(out_path)
+            QMessageBox.information(self, "Erfolg", f"Neu angeordnete PDF gespeichert:\n{out_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Neu-Anordnung fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
     @staticmethod
     def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
         pages: set[int] = set()
@@ -436,6 +478,45 @@ class MainWindow(QMainWindow):
                 if 1 <= p <= total_pages:
                     pages.add(p - 1)
         return sorted(pages)
+
+    @staticmethod
+    def _parse_order_spec(spec: str, total_pages: int) -> list[int]:
+        ordered: list[int] = []
+
+        def parse_single(token: str) -> int | None:
+            tk = token.strip().lower()
+            if tk in {"last", "end"}:
+                return total_pages
+            if tk.isdigit():
+                return int(tk)
+            return None
+
+        for part in spec.split(","):
+            token = part.strip().lower()
+            if not token:
+                continue
+
+            if token == "all":
+                ordered.extend(range(total_pages))
+                continue
+
+            if "-" in token:
+                a, b = token.split("-", 1)
+                start = parse_single(a)
+                end = parse_single(b)
+                if start is None or end is None:
+                    continue
+                step = 1 if start <= end else -1
+                for p in range(start, end + step, step):
+                    if 1 <= p <= total_pages:
+                        ordered.append(p - 1)
+                continue
+
+            page = parse_single(token)
+            if page is not None and 1 <= page <= total_pages:
+                ordered.append(page - 1)
+
+        return ordered
 
 
 if __name__ == "__main__":
