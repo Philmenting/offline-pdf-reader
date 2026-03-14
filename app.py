@@ -152,8 +152,10 @@ class MainWindow(QMainWindow):
         self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         btn_open = QPushButton("PDF öffnen")
+        btn_first = QPushButton("⏮ Erste")
         btn_prev = QPushButton("◀ Vorherige")
         btn_next = QPushButton("Nächste ▶")
+        btn_last = QPushButton("Letzte ⏭")
         btn_zoom_out = QPushButton("− Zoom")
         btn_zoom_in = QPushButton("+ Zoom")
         btn_zoom_reset = QPushButton("100%")
@@ -168,8 +170,10 @@ class MainWindow(QMainWindow):
         btn_reorder = QPushButton("Seiten neu anordnen")
 
         btn_open.clicked.connect(self.open_pdf)
+        btn_first.clicked.connect(self.first_page)
         btn_prev.clicked.connect(self.prev_page)
         btn_next.clicked.connect(self.next_page)
+        btn_last.clicked.connect(self.last_page)
         btn_zoom_out.clicked.connect(self.zoom_out)
         btn_zoom_in.clicked.connect(self.zoom_in)
         btn_zoom_reset.clicked.connect(self.reset_zoom)
@@ -185,8 +189,10 @@ class MainWindow(QMainWindow):
 
         row = QHBoxLayout()
         row.addWidget(btn_open)
+        row.addWidget(btn_first)
         row.addWidget(btn_prev)
         row.addWidget(btn_next)
+        row.addWidget(btn_last)
         row.addWidget(btn_zoom_out)
         row.addWidget(btn_zoom_in)
         row.addWidget(btn_zoom_reset)
