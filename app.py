@@ -157,6 +157,7 @@ class MainWindow(QMainWindow):
         btn_zoom_out = QPushButton("− Zoom")
         btn_zoom_in = QPushButton("+ Zoom")
         btn_zoom_reset = QPushButton("100%")
+        btn_goto = QPushButton("Gehe zu Seite")
         btn_rotate_left = QPushButton("↺ Drehen")
         btn_rotate_right = QPushButton("↻ Drehen")
         btn_extract = QPushButton("Text/OCR extrahieren")
@@ -172,6 +173,7 @@ class MainWindow(QMainWindow):
         btn_zoom_out.clicked.connect(self.zoom_out)
         btn_zoom_in.clicked.connect(self.zoom_in)
         btn_zoom_reset.clicked.connect(self.reset_zoom)
+        btn_goto.clicked.connect(self.go_to_page)
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
@@ -188,6 +190,7 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_zoom_out)
         row.addWidget(btn_zoom_in)
         row.addWidget(btn_zoom_reset)
+        row.addWidget(btn_goto)
         row.addWidget(btn_rotate_left)
         row.addWidget(btn_rotate_right)
         row.addWidget(btn_extract)
@@ -282,6 +285,9 @@ class MainWindow(QMainWindow):
         if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_in()
             return
+        if key == Qt.Key.Key_G and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.go_to_page()
+            return
         if key == Qt.Key.Key_Minus:
             self.zoom_out()
             return
@@ -324,6 +330,23 @@ class MainWindow(QMainWindow):
         if self.current_page != last_idx:
             self.current_page = last_idx
             self.render_current_page()
+
+    def go_to_page(self) -> None:
+        if not self.doc:
+            return
+        page, ok = QInputDialog.getInt(
+            self,
+            "Gehe zu Seite",
+            f"Seitenzahl (1-{len(self.doc)}):",
+            self.current_page + 1,
+            1,
+            len(self.doc),
+            1,
+        )
+        if not ok:
+            return
+        self.current_page = page - 1
+        self.render_current_page()
 
     def zoom_in(self) -> None:
         if not self.doc:
