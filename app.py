@@ -360,7 +360,7 @@ class MainWindow(QMainWindow):
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             mode = "RGB"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-            text = self._ocr_image(img)
+            text, _ = self._ocr_image(img)
 
         if not text:
             text = "(Kein Text erkannt)"
@@ -401,7 +401,16 @@ class MainWindow(QMainWindow):
                 matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                text = self._ocr_image(img)
+                text, ocr_error = self._ocr_image(img, show_error=False)
+                if ocr_error:
+                    QMessageBox.warning(
+                        self,
+                        "OCR-Fehler",
+                        "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
+                        f"\n\nDetails:\n{ocr_error}",
+                    )
+                    progress.cancel()
+                    return
 
             if text:
                 all_text_parts.append(text)
@@ -416,17 +425,18 @@ class MainWindow(QMainWindow):
         lang = self.ocr_lang_input.text().strip()
         return lang or "deu+eng"
 
-    def _ocr_image(self, img: Image.Image) -> str:
+    def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         try:
-            return pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
+            return pytesseract.image_to_string(img, lang=self._ocr_lang()).strip(), None
         except TesseractError as e:
-            QMessageBox.warning(
-                self,
-                "OCR-Fehler",
-                "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
-                f"\n\nDetails:\n{e}",
-            )
-            return ""
+            if show_error:
+                QMessageBox.warning(
+                    self,
+                    "OCR-Fehler",
+                    "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
+                    f"\n\nDetails:\n{e}",
+                )
+            return "", str(e)
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
