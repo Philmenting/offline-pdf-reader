@@ -308,6 +308,30 @@ class MainWindow(QMainWindow):
             return
         super().keyPressEvent(event)
 
+    def wheelEvent(self, event) -> None:
+        if not self.doc:
+            super().wheelEvent(event)
+            return
+
+        angle = event.angleDelta().y()
+        if angle == 0:
+            super().wheelEvent(event)
+            return
+
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if angle > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            event.accept()
+            return
+
+        if angle > 0:
+            self.prev_page()
+        else:
+            self.next_page()
+        event.accept()
+
     def next_page(self) -> None:
         if not self.doc:
             return
