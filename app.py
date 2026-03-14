@@ -76,7 +76,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         m = re.search(pat, text)
         if m:
             raw = m.group(1)
-            for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d-%m-%Y", "%d-%m-%y", "%d/%m/%Y", "%d/%m/%y"): 
+            for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d-%m-%Y", "%d-%m-%y", "%d/%m/%Y", "%d/%m/%y"):
                 try:
                     date = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                     break
@@ -84,6 +84,55 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                     pass
             if date:
                 break
+
+    if not date:
+        month_map = {
+            "januar": "01",
+            "january": "01",
+            "jan": "01",
+            "februar": "02",
+            "february": "02",
+            "feb": "02",
+            "märz": "03",
+            "maerz": "03",
+            "march": "03",
+            "mar": "03",
+            "april": "04",
+            "apr": "04",
+            "mai": "05",
+            "may": "05",
+            "juni": "06",
+            "june": "06",
+            "jun": "06",
+            "juli": "07",
+            "july": "07",
+            "jul": "07",
+            "august": "08",
+            "aug": "08",
+            "september": "09",
+            "sep": "09",
+            "sept": "09",
+            "oktober": "10",
+            "october": "10",
+            "okt": "10",
+            "oct": "10",
+            "november": "11",
+            "nov": "11",
+            "dezember": "12",
+            "december": "12",
+            "dez": "12",
+            "dec": "12",
+        }
+        m_textual = re.search(r"\b(\d{1,2})[.\s-]+([A-Za-zÄÖÜäöü]+)[,\s-]+(\d{4})\b", text)
+        if m_textual:
+            day, month_raw, year = m_textual.groups()
+            month_key = month_raw.strip(".").lower()
+            month = month_map.get(month_key)
+            if month:
+                try:
+                    date = datetime.strptime(f"{year}-{month}-{int(day):02d}", "%Y-%m-%d").strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
 
     # Number (supports common separators like / and _, trims trailing punctuation)
     number = ""
