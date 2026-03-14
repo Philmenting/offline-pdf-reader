@@ -234,6 +234,10 @@ class MainWindow(QMainWindow):
         act_save_as.triggered.connect(self.save_as_suggested)
         menu.addAction(act_save_as)
 
+    @staticmethod
+    def _ensure_pdf_suffix(path: str) -> str:
+        return path if path.lower().endswith(".pdf") else f"{path}.pdf"
+
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
         if not file_name:
@@ -542,6 +546,7 @@ class MainWindow(QMainWindow):
         )
         if not out_path:
             return
+        out_path = self._ensure_pdf_suffix(out_path)
 
         try:
             has_rotations = any(rot % 360 != 0 for rot in self.page_rotations.values())
@@ -570,6 +575,7 @@ class MainWindow(QMainWindow):
         out_path, _ = QFileDialog.getSaveFileName(self, "Gemergte PDF speichern", "merged.pdf", "PDF files (*.pdf)")
         if not out_path:
             return
+        out_path = self._ensure_pdf_suffix(out_path)
 
         merged = fitz.open()
         try:
@@ -610,6 +616,7 @@ class MainWindow(QMainWindow):
         out_path, _ = QFileDialog.getSaveFileName(self, "Extrakt speichern", str(self.pdf_path.with_name(default_name)), "PDF files (*.pdf)")
         if not out_path:
             return
+        out_path = self._ensure_pdf_suffix(out_path)
 
         out_doc = fitz.open()
         try:
@@ -652,6 +659,7 @@ class MainWindow(QMainWindow):
         )
         if not out_path:
             return
+        out_path = self._ensure_pdf_suffix(out_path)
 
         out_doc = fitz.open()
         try:
