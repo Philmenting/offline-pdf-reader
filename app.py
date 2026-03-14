@@ -641,6 +641,8 @@ class MainWindow(QMainWindow):
             token = raw.strip().lower()
             if not token:
                 return default
+            if token in {"first", "start", "begin"}:
+                return 1
             if token in {"last", "end"}:
                 return total_pages
             if token.isdigit():
@@ -663,6 +665,9 @@ class MainWindow(QMainWindow):
             if token == "even":
                 for idx in range(1, total_pages, 2):
                     add_page(idx)
+                continue
+            if token in {"first", "start", "begin"}:
+                add_page(0)
                 continue
             if token in {"last", "end"}:
                 add_page(total_pages - 1)
@@ -688,6 +693,8 @@ class MainWindow(QMainWindow):
 
         def parse_single(token: str) -> int | None:
             tk = token.strip().lower()
+            if tk in {"first", "start", "begin"}:
+                return 1
             if tk in {"last", "end"}:
                 return total_pages
             if tk.isdigit():
