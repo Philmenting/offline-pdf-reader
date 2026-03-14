@@ -263,6 +263,12 @@ class MainWindow(QMainWindow):
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_PageUp):
             self.prev_page()
             return
+        if key == Qt.Key.Key_Home:
+            self.first_page()
+            return
+        if key == Qt.Key.Key_End:
+            self.last_page()
+            return
         if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_in()
             return
@@ -289,6 +295,21 @@ class MainWindow(QMainWindow):
             return
         if self.current_page > 0:
             self.current_page -= 1
+            self.render_current_page()
+
+    def first_page(self) -> None:
+        if not self.doc:
+            return
+        if self.current_page != 0:
+            self.current_page = 0
+            self.render_current_page()
+
+    def last_page(self) -> None:
+        if not self.doc:
+            return
+        last_idx = len(self.doc) - 1
+        if self.current_page != last_idx:
+            self.current_page = last_idx
             self.render_current_page()
 
     def zoom_in(self) -> None:
