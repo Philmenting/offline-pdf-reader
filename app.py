@@ -606,7 +606,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
-        pages: set[int] = set()
+        ordered: list[int] = []
+        seen: set[int] = set()
+
+        def add_page(idx: int) -> None:
+            if idx not in seen:
+                seen.add(idx)
+                ordered.append(idx)
 
         def parse_bound(raw: str, default: int) -> int:
             token = raw.strip().lower()
@@ -624,32 +630,34 @@ class MainWindow(QMainWindow):
                 continue
 
             if token in {"all", "*"}:
-                pages.update(range(total_pages))
+                for idx in range(total_pages):
+                    add_page(idx)
                 continue
             if token == "odd":
-                pages.update(range(0, total_pages, 2))
+                for idx in range(0, total_pages, 2):
+                    add_page(idx)
                 continue
             if token == "even":
-                pages.update(range(1, total_pages, 2))
+                for idx in range(1, total_pages, 2):
+                    add_page(idx)
                 continue
             if token in {"last", "end"}:
-                pages.add(total_pages - 1)
+                add_page(total_pages - 1)
                 continue
 
             if "-" in token:
                 a, b = token.split("-", 1)
                 start = parse_bound(a, 1)
                 end = parse_bound(b, total_pages)
-                if start > end:
-                    start, end = end, start
-                for p in range(start, end + 1):
+                step = 1 if start <= end else -1
+                for p in range(start, end + step, step):
                     if 1 <= p <= total_pages:
-                        pages.add(p - 1)
+                        add_page(p - 1)
             elif token.isdigit():
                 p = int(token)
                 if 1 <= p <= total_pages:
-                    pages.add(p - 1)
-        return sorted(pages)
+                    add_page(p - 1)
+        return ordered
 
     @staticmethod
     def _parse_order_spec(spec: str, total_pages: int) -> list[int]:
