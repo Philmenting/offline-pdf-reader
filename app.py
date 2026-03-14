@@ -136,6 +136,9 @@ class MainWindow(QMainWindow):
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
+        self.ocr_lang_input = QLineEdit("deu+eng")
+        self.ocr_lang_input.setPlaceholderText("z.B. deu+eng")
+
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
         self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -187,6 +190,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.page_info)
         layout.addWidget(self.preview)
         layout.addWidget(self.text_output)
+
+        ocr_row = QHBoxLayout()
+        ocr_row.addWidget(QLabel("OCR-Sprachen (Tesseract):"))
+        ocr_row.addWidget(self.ocr_lang_input)
+        layout.addLayout(ocr_row)
+
         layout.addWidget(self.suggested_name)
 
         container = QWidget()
@@ -299,7 +308,7 @@ class MainWindow(QMainWindow):
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             mode = "RGB"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-            text = pytesseract.image_to_string(img, lang="deu+eng").strip()
+            text = pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
 
         if not text:
             text = "(Kein Text erkannt)"
@@ -340,7 +349,7 @@ class MainWindow(QMainWindow):
                 matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                text = pytesseract.image_to_string(img, lang="deu+eng").strip()
+                text = pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
 
             if text:
                 all_text_parts.append(text)
@@ -350,6 +359,10 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         self.text_output.setPlainText(combined_text)
         self.suggested_name.setText(suggest_filename_from_text(combined_text))
+
+    def _ocr_lang(self) -> str:
+        lang = self.ocr_lang_input.text().strip()
+        return lang or "deu+eng"
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
