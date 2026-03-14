@@ -558,7 +558,7 @@ class MainWindow(QMainWindow):
         order_spec, ok = QInputDialog.getText(
             self,
             "Seiten neu anordnen",
-            "Neue Seitenreihenfolge (z.B. 3,1,2,5-7,last):",
+            "Neue Seitenreihenfolge (z.B. 3,1,2,5-7,last,reverse):",
         )
         if not ok or not order_spec.strip():
             return
@@ -658,6 +658,9 @@ class MainWindow(QMainWindow):
 
             if token == "all":
                 ordered.extend(range(total_pages))
+                continue
+            if token in {"reverse", "rev"}:
+                ordered.extend(reversed(range(total_pages)))
                 continue
 
             if "-" in token:
