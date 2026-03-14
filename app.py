@@ -384,6 +384,8 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
 
         all_text_parts: list[str] = []
+        ocr_failed_pages: list[int] = []
+        ocr_error_preview: str = ""
 
         for idx in range(total):
             progress.setValue(idx)
@@ -403,14 +405,10 @@ class MainWindow(QMainWindow):
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 text, ocr_error = self._ocr_image(img, show_error=False)
                 if ocr_error:
-                    QMessageBox.warning(
-                        self,
-                        "OCR-Fehler",
-                        "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
-                        f"\n\nDetails:\n{ocr_error}",
-                    )
-                    progress.cancel()
-                    return
+                    ocr_failed_pages.append(idx + 1)
+                    if not ocr_error_preview:
+                        ocr_error_preview = ocr_error
+                    text = ""
 
             if text:
                 all_text_parts.append(text)
@@ -420,6 +418,19 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         self.text_output.setPlainText(combined_text)
         self.suggested_name.setText(suggest_filename_from_text(combined_text))
+
+        if ocr_failed_pages:
+            pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
+            if len(ocr_failed_pages) > 10:
+                pages += ", …"
+            QMessageBox.warning(
+                self,
+                "OCR teilweise fehlgeschlagen",
+                "Die Extraktion wurde fortgesetzt, aber OCR schlug auf einigen Seiten fehl."
+                f"\n\nSeiten: {pages}"
+                f"\nFehleranzahl: {len(ocr_failed_pages)}"
+                f"\n\nErster Fehler:\n{ocr_error_preview}",
+            )
 
     def _ocr_lang(self) -> str:
         lang = self.ocr_lang_input.text().strip()
