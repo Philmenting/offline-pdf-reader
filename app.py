@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         btn_next = QPushButton("Nächste ▶")
         btn_zoom_out = QPushButton("− Zoom")
         btn_zoom_in = QPushButton("+ Zoom")
+        btn_zoom_reset = QPushButton("100%")
         btn_rotate_left = QPushButton("↺ Drehen")
         btn_rotate_right = QPushButton("↻ Drehen")
         btn_extract = QPushButton("Text/OCR extrahieren")
@@ -170,6 +171,7 @@ class MainWindow(QMainWindow):
         btn_next.clicked.connect(self.next_page)
         btn_zoom_out.clicked.connect(self.zoom_out)
         btn_zoom_in.clicked.connect(self.zoom_in)
+        btn_zoom_reset.clicked.connect(self.reset_zoom)
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
@@ -185,6 +187,7 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_next)
         row.addWidget(btn_zoom_out)
         row.addWidget(btn_zoom_in)
+        row.addWidget(btn_zoom_reset)
         row.addWidget(btn_rotate_left)
         row.addWidget(btn_rotate_right)
         row.addWidget(btn_extract)
@@ -282,6 +285,9 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_Minus:
             self.zoom_out()
             return
+        if key == Qt.Key.Key_0:
+            self.reset_zoom()
+            return
         if key == Qt.Key.Key_R:
             self.rotate_right()
             return
@@ -329,6 +335,12 @@ class MainWindow(QMainWindow):
         if not self.doc:
             return
         self.zoom_factor = max(0.6, self.zoom_factor - 0.15)
+        self.render_current_page()
+
+    def reset_zoom(self) -> None:
+        if not self.doc:
+            return
+        self.zoom_factor = 1.0
         self.render_current_page()
 
     def rotate_left(self) -> None:
