@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressDialog,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -125,8 +126,8 @@ def suggest_filename_from_text(text: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Offline PDF Reader")
-        self.resize(1100, 800)
+        self.setWindowTitle("Offline PDF Reader — MVP")
+        self.resize(1220, 860)
 
         self.pdf_path: Path | None = None
         self.doc: fitz.Document | None = None
@@ -136,7 +137,7 @@ class MainWindow(QMainWindow):
 
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(420)
+        self.preview.setMinimumHeight(460)
 
         self.text_output = QTextEdit()
         self.text_output.setReadOnly(True)
@@ -169,6 +170,9 @@ class MainWindow(QMainWindow):
         btn_split = QPushButton("Seiten extrahieren")
         btn_reorder = QPushButton("Seiten neu anordnen")
 
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder]:
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+
         btn_open.clicked.connect(self.open_pdf)
         btn_first.clicked.connect(self.first_page)
         btn_prev.clicked.connect(self.prev_page)
@@ -187,37 +191,53 @@ class MainWindow(QMainWindow):
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
 
-        row = QHBoxLayout()
-        row.addWidget(btn_open)
-        row.addWidget(btn_first)
-        row.addWidget(btn_prev)
-        row.addWidget(btn_next)
-        row.addWidget(btn_last)
-        row.addWidget(btn_zoom_out)
-        row.addWidget(btn_zoom_in)
-        row.addWidget(btn_zoom_reset)
-        row.addWidget(btn_goto)
-        row.addWidget(btn_rotate_left)
-        row.addWidget(btn_rotate_right)
-        row.addWidget(btn_extract)
-        row.addWidget(btn_extract_all)
-        row.addWidget(btn_saveas)
-        row.addWidget(btn_merge)
-        row.addWidget(btn_split)
-        row.addWidget(btn_reorder)
+        toolbar_top = QHBoxLayout()
+        toolbar_top.addWidget(btn_open)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(btn_first)
+        toolbar_top.addWidget(btn_prev)
+        toolbar_top.addWidget(btn_next)
+        toolbar_top.addWidget(btn_last)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(btn_goto)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(btn_zoom_out)
+        toolbar_top.addWidget(btn_zoom_in)
+        toolbar_top.addWidget(btn_zoom_reset)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(btn_rotate_left)
+        toolbar_top.addWidget(btn_rotate_right)
+        toolbar_top.addStretch(1)
+
+        toolbar_bottom = QHBoxLayout()
+        toolbar_bottom.addWidget(btn_extract)
+        toolbar_bottom.addWidget(btn_extract_all)
+        toolbar_bottom.addWidget(btn_saveas)
+        toolbar_bottom.addSpacing(10)
+        toolbar_bottom.addWidget(btn_split)
+        toolbar_bottom.addWidget(btn_reorder)
+        toolbar_bottom.addWidget(btn_merge)
+        toolbar_bottom.addStretch(1)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.preview)
+        splitter.addWidget(self.text_output)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+
+        meta_row = QHBoxLayout()
+        meta_row.addWidget(QLabel("OCR-Sprachen (Tesseract):"))
+        meta_row.addWidget(self.ocr_lang_input)
+        meta_row.addSpacing(10)
+        meta_row.addWidget(QLabel("Dateiname:"))
+        meta_row.addWidget(self.suggested_name)
 
         layout = QVBoxLayout()
-        layout.addLayout(row)
+        layout.addLayout(toolbar_top)
+        layout.addLayout(toolbar_bottom)
         layout.addWidget(self.page_info)
-        layout.addWidget(self.preview)
-        layout.addWidget(self.text_output)
-
-        ocr_row = QHBoxLayout()
-        ocr_row.addWidget(QLabel("OCR-Sprachen (Tesseract):"))
-        ocr_row.addWidget(self.ocr_lang_input)
-        layout.addLayout(ocr_row)
-
-        layout.addWidget(self.suggested_name)
+        layout.addWidget(splitter)
+        layout.addLayout(meta_row)
 
         container = QWidget()
         container.setLayout(layout)
@@ -233,6 +253,36 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut("Ctrl+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu.addAction(act_save_as)
+
+        act_extract = QAction("Alle Seiten extrahieren", self)
+        act_extract.setShortcut("Ctrl+Shift+E")
+        act_extract.triggered.connect(self.extract_text_all_pages_and_suggest)
+        menu.addAction(act_extract)
+
+        self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
+        self._apply_styles()
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QMainWindow { background: #f4f6fb; }
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #d8deea;
+                border-radius: 8px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover { background: #eef3ff; }
+            QPushButton:pressed { background: #e2ebff; }
+            QTextEdit, QLineEdit {
+                background: #ffffff;
+                border: 1px solid #d8deea;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QLabel { color: #1f2a44; }
+            """
+        )
 
     @staticmethod
     def _ensure_pdf_suffix(path: str) -> str:
@@ -257,6 +307,7 @@ class MainWindow(QMainWindow):
         self.render_current_page()
         self.text_output.clear()
         self.suggested_name.clear()
+        self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
@@ -278,6 +329,8 @@ class MainWindow(QMainWindow):
         self.page_info.setText(
             f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
         )
+        if self.pdf_path:
+            self.statusBar().showMessage(f"{self.pdf_path.name} — Seite {self.current_page + 1}/{total}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -442,6 +495,7 @@ class MainWindow(QMainWindow):
 
         self.text_output.setPlainText(text)
         self.suggested_name.setText(suggest_filename_from_text(text))
+        self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
 
     def extract_text_all_pages_and_suggest(self) -> None:
         if not self.doc:
@@ -493,6 +547,7 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         self.text_output.setPlainText(combined_text)
         self.suggested_name.setText(suggest_filename_from_text(combined_text))
+        self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
 
         if ocr_failed_pages:
             pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
@@ -563,6 +618,7 @@ class MainWindow(QMainWindow):
                 with open(self.pdf_path, "rb") as src, open(out_path, "wb") as dst:
                     dst.write(src.read())
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Gespeichert: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
 
@@ -589,6 +645,7 @@ class MainWindow(QMainWindow):
                         src.close()
             merged.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Gemergte PDF gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Merge erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Merge fehlgeschlagen:\n{e}")
         finally:
@@ -627,6 +684,7 @@ class MainWindow(QMainWindow):
                     out_doc[-1].set_rotation(rot)
             out_doc.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Extrakt gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Seitenextrakt erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Seitenextraktion fehlgeschlagen:\n{e}")
         finally:
@@ -670,6 +728,7 @@ class MainWindow(QMainWindow):
                     out_doc[-1].set_rotation(rot)
             out_doc.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Neu angeordnete PDF gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Neu angeordnete PDF erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Neu-Anordnung fehlgeschlagen:\n{e}")
         finally:

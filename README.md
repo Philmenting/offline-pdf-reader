@@ -41,13 +41,17 @@ python app.py
 
 ## Features in this MVP
 - Open a PDF
-- Render first page in app window
+- Multi-page navigation (buttons, keyboard, mouse wheel, Go-to-page)
+- Zoom controls (+/−/reset) and page rotation
 - Extract text (native PDF text, fallback OCR)
+- Extract all pages with progress + partial OCR-failure handling
 - Suggest filename from date/vendor/doc type/number
 - Save-as with suggested name
+- PDF merge, page extraction, and page reordering
 
 ## Next steps
-- Multi-page navigation
+- OCR confidence highlighting + correction suggestions
+- Local learning rules from user corrections
 - Batch rename folder mode
-- Better entity extraction
 - One-click OCR to new searchable PDF
+- Windows test build (.exe) workflow
