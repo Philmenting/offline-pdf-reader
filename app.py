@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressDialog,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         btn_rotate_left = QPushButton("↺ Drehen")
         btn_rotate_right = QPushButton("↻ Drehen")
         btn_extract = QPushButton("Text/OCR extrahieren")
+        btn_extract_all = QPushButton("Alle Seiten extrahieren")
         btn_saveas = QPushButton("Speichern als …")
         btn_merge = QPushButton("PDFs mergen")
         btn_split = QPushButton("Seiten extrahieren")
@@ -159,6 +161,7 @@ class MainWindow(QMainWindow):
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
+        btn_extract_all.clicked.connect(self.extract_text_all_pages_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
@@ -173,6 +176,7 @@ class MainWindow(QMainWindow):
         row.addWidget(btn_rotate_left)
         row.addWidget(btn_rotate_right)
         row.addWidget(btn_extract)
+        row.addWidget(btn_extract_all)
         row.addWidget(btn_saveas)
         row.addWidget(btn_merge)
         row.addWidget(btn_split)
@@ -302,6 +306,50 @@ class MainWindow(QMainWindow):
 
         self.text_output.setPlainText(text)
         self.suggested_name.setText(suggest_filename_from_text(text))
+
+    def extract_text_all_pages_and_suggest(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        total = len(self.doc)
+        if total == 0:
+            QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
+            return
+
+        progress = QProgressDialog("Extrahiere Text aus allen Seiten …", "Abbrechen", 0, total, self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        all_text_parts: list[str] = []
+
+        for idx in range(total):
+            progress.setValue(idx)
+            progress.setLabelText(f"Seite {idx + 1}/{total} wird verarbeitet …")
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                QMessageBox.information(self, "Abgebrochen", "Extraktion wurde abgebrochen.")
+                return
+
+            page = self.doc[idx]
+            text = page.get_text("text").strip()
+
+            if len(text) < 40:
+                rotation = self.page_rotations.get(idx, 0)
+                matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                text = pytesseract.image_to_string(img, lang="deu+eng").strip()
+
+            if text:
+                all_text_parts.append(text)
+
+        progress.setValue(total)
+
+        combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
+        self.text_output.setPlainText(combined_text)
+        self.suggested_name.setText(suggest_filename_from_text(combined_text))
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
