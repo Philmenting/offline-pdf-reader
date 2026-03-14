@@ -544,9 +544,13 @@ class MainWindow(QMainWindow):
         merged = fitz.open()
         try:
             for path in file_names:
-                src = fitz.open(path)
-                merged.insert_pdf(src)
-                src.close()
+                src = None
+                try:
+                    src = fitz.open(path)
+                    merged.insert_pdf(src)
+                finally:
+                    if src is not None:
+                        src.close()
             merged.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Gemergte PDF gespeichert:\n{out_path}")
         except Exception as e:
