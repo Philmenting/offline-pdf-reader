@@ -50,8 +50,8 @@ python app.py
 - PDF merge, page extraction, and page reordering
 
 ## Next steps
-- OCR confidence highlighting + correction suggestions
-- Local learning rules from user corrections
+- OCR confidence highlighting direkt in der Seitenansicht (Overlay)
+- Verbesserte Korrekturvorschläge für Datum/Betrag/Nummer
 - Batch rename folder mode
 - One-click OCR to new searchable PDF
 - Windows test build (.exe) workflow

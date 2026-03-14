@@ -1,3 +1,5 @@
+import json
+import json
 import os
 import re
 import sys
@@ -7,7 +9,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import pytesseract
-from pytesseract import TesseractError
+from pytesseract import Output, TesseractError
 from PIL import Image
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
@@ -123,6 +125,29 @@ def suggest_filename_from_text(text: str) -> str:
     return sanitize_filename("_".join(parts)) + ".pdf"
 
 
+def candidate_variants(value: str) -> list[str]:
+    # common OCR confusions for invoice-like identifiers
+    confusion_map = {
+        "0": ["O", "Q"],
+        "O": ["0"],
+        "1": ["I", "l"],
+        "I": ["1", "l"],
+        "l": ["1", "I"],
+        "5": ["S"],
+        "S": ["5"],
+        "8": ["B"],
+        "B": ["8"],
+        "2": ["Z"],
+        "Z": ["2"],
+    }
+    variants = {value}
+    for idx, ch in enumerate(value):
+        for repl in confusion_map.get(ch, []):
+            variants.add(value[:idx] + repl + value[idx + 1 :])
+    variants.discard(value)
+    return sorted(variants)[:6]
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -134,6 +159,8 @@ class MainWindow(QMainWindow):
         self.current_page = 0
         self.zoom_factor = 1.35
         self.page_rotations: dict[int, int] = {}
+        self.learning_rules_path = Path(__file__).with_name("learning_rules.json")
+        self.learning_rules = self._load_learning_rules()
 
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -151,6 +178,9 @@ class MainWindow(QMainWindow):
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
         self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.ocr_feedback = QLabel("OCR-Hinweise: -")
+        self.ocr_feedback.setWordWrap(True)
 
         btn_open = QPushButton("PDF öffnen")
         btn_first = QPushButton("⏮ Erste")
@@ -238,6 +268,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.page_info)
         layout.addWidget(splitter)
         layout.addLayout(meta_row)
+        layout.addWidget(self.ocr_feedback)
 
         container = QWidget()
         container.setLayout(layout)
@@ -261,6 +292,83 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._apply_styles()
+
+    def _load_learning_rules(self) -> dict:
+        if not self.learning_rules_path.exists():
+            return {"replacements": {}}
+        try:
+            data = json.loads(self.learning_rules_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("replacements", {}), dict):
+                return data
+        except Exception:
+            pass
+        return {"replacements": {}}
+
+    def _save_learning_rules(self) -> None:
+        try:
+            self.learning_rules_path.write_text(json.dumps(self.learning_rules, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _apply_learning_rules(self, text: str) -> str:
+        replacements = self.learning_rules.get("replacements", {})
+        if not replacements:
+            return text
+        out = text
+        for src, dst in replacements.items():
+            out = re.sub(rf"\b{re.escape(src)}\b", dst, out)
+        return out
+
+    def _ocr_image_with_confidence(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None, list[str]]:
+        text, err = self._ocr_image(img, show_error=show_error)
+        if err:
+            return text, err, []
+        low_conf_tokens: list[str] = []
+        try:
+            data = pytesseract.image_to_data(img, lang=self._ocr_lang(), output_type=Output.DICT)
+            for token, conf in zip(data.get("text", []), data.get("conf", [])):
+                tk = (token or "").strip()
+                if not tk:
+                    continue
+                try:
+                    score = float(conf)
+                except Exception:
+                    continue
+                if 0 <= score < 55 and len(tk) >= 2:
+                    low_conf_tokens.append(tk)
+        except Exception:
+            pass
+        return text, None, low_conf_tokens[:20]
+
+    def _build_ocr_feedback(self, text: str, low_conf_tokens: list[str]) -> str:
+        info = parse_doc_info(text)
+        lines = []
+        if low_conf_tokens:
+            unique_tokens = []
+            for t in low_conf_tokens:
+                if t not in unique_tokens:
+                    unique_tokens.append(t)
+            lines.append("Unsichere OCR-Tokens: " + ", ".join(unique_tokens[:8]))
+
+        number = info.number
+        if number:
+            variants = candidate_variants(number)
+            if variants:
+                lines.append("Mögliche Nummer-Varianten: " + ", ".join(variants[:4]))
+                choice, ok = QInputDialog.getItem(
+                    self,
+                    "OCR-Korrektur",
+                    "Erkannte Dokument-/Rechnungsnummer prüfen:",
+                    [number] + variants[:4],
+                    0,
+                    False,
+                )
+                if ok and choice and choice != number:
+                    self.learning_rules.setdefault("replacements", {})[number] = choice
+                    self._save_learning_rules()
+                    lines.append(f"Lernregel gespeichert: {number} → {choice}")
+
+        return "OCR-Hinweise: " + (" | ".join(lines) if lines else "keine Auffälligkeiten")
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -307,6 +415,7 @@ class MainWindow(QMainWindow):
         self.render_current_page()
         self.text_output.clear()
         self.suggested_name.clear()
+        self.ocr_feedback.setText("OCR-Hinweise: -")
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def render_current_page(self) -> None:
@@ -480,6 +589,7 @@ class MainWindow(QMainWindow):
 
         page = self.doc[self.current_page]
         text = page.get_text("text").strip()
+        low_conf_tokens: list[str] = []
 
         if len(text) < 40:
             # OCR fallback on current page image (respect UI rotation for better OCR)
@@ -488,13 +598,15 @@ class MainWindow(QMainWindow):
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             mode = "RGB"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-            text, _ = self._ocr_image(img)
+            text, _, low_conf_tokens = self._ocr_image_with_confidence(img)
 
         if not text:
             text = "(Kein Text erkannt)"
 
+        text = self._apply_learning_rules(text)
         self.text_output.setPlainText(text)
         self.suggested_name.setText(suggest_filename_from_text(text))
+        self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
         self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
 
     def extract_text_all_pages_and_suggest(self) -> None:
@@ -513,6 +625,7 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
 
         all_text_parts: list[str] = []
+        all_low_conf_tokens: list[str] = []
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
 
@@ -532,7 +645,8 @@ class MainWindow(QMainWindow):
                 matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                text, ocr_error = self._ocr_image(img, show_error=False)
+                text, ocr_error, low_conf_tokens = self._ocr_image_with_confidence(img, show_error=False)
+                all_low_conf_tokens.extend(low_conf_tokens)
                 if ocr_error:
                     ocr_failed_pages.append(idx + 1)
                     if not ocr_error_preview:
@@ -545,8 +659,10 @@ class MainWindow(QMainWindow):
         progress.setValue(total)
 
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
+        combined_text = self._apply_learning_rules(combined_text)
         self.text_output.setPlainText(combined_text)
         self.suggested_name.setText(suggest_filename_from_text(combined_text))
+        self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
 
         if ocr_failed_pages:
