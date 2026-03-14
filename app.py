@@ -471,6 +471,9 @@ class MainWindow(QMainWindow):
         try:
             for idx in page_indices:
                 out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+                rot = self.page_rotations.get(idx, 0) % 360
+                if rot:
+                    out_doc[-1].set_rotation(rot)
             out_doc.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Extrakt gespeichert:\n{out_path}")
         except Exception as e:
@@ -510,6 +513,9 @@ class MainWindow(QMainWindow):
         try:
             for idx in ordered_pages:
                 out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+                rot = self.page_rotations.get(idx, 0) % 360
+                if rot:
+                    out_doc[-1].set_rotation(rot)
             out_doc.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Neu angeordnete PDF gespeichert:\n{out_path}")
         except Exception as e:
