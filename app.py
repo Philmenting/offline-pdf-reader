@@ -439,6 +439,14 @@ class MainWindow(QMainWindow):
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         try:
             return pytesseract.image_to_string(img, lang=self._ocr_lang()).strip(), None
+        except FileNotFoundError as e:
+            msg = (
+                "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
+                "dass der Befehl 'tesseract' im PATH verfügbar ist."
+            )
+            if show_error:
+                QMessageBox.warning(self, "OCR-Fehler", f"{msg}\n\nDetails:\n{e}")
+            return "", f"{msg} Details: {e}"
         except TesseractError as e:
             if show_error:
                 QMessageBox.warning(
