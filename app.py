@@ -219,8 +219,14 @@ class MainWindow(QMainWindow):
 
         menu = self.menuBar().addMenu("Datei")
         act_open = QAction("Öffnen", self)
+        act_open.setShortcut("Ctrl+O")
         act_open.triggered.connect(self.open_pdf)
         menu.addAction(act_open)
+
+        act_save_as = QAction("Speichern als …", self)
+        act_save_as.setShortcut("Ctrl+S")
+        act_save_as.triggered.connect(self.save_as_suggested)
+        menu.addAction(act_save_as)
 
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
