@@ -81,11 +81,17 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             if date:
                 break
 
-    # Number
+    # Number (supports common separators like / and _, trims trailing punctuation)
     number = ""
-    m_num = re.search(r"(?i)(rechnungsnr\.?|invoice\s*no\.?|belegnr\.?|nr\.?)[\s:#-]*([A-Z0-9-]{4,})", text)
-    if m_num:
-        number = m_num.group(2)
+    number_patterns = [
+        r"(?i)(?:rechnungs(?:nr|nummer)\.?|invoice\s*(?:no|number)\.?|belegnr\.?|vorgangs(?:nr|nummer)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+        r"(?i)\b(?:inv|doc)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b",
+    ]
+    for pat in number_patterns:
+        m_num = re.search(pat, text)
+        if m_num:
+            number = m_num.group(1).strip(".,;:)")
+            break
 
     # Vendor heuristic: first non-empty line that isn't too numeric
     vendor = ""
