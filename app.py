@@ -7,6 +7,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import pytesseract
+from pytesseract import TesseractError
 from PIL import Image
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
@@ -359,7 +360,7 @@ class MainWindow(QMainWindow):
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             mode = "RGB"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-            text = pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
+            text = self._ocr_image(img)
 
         if not text:
             text = "(Kein Text erkannt)"
@@ -400,7 +401,7 @@ class MainWindow(QMainWindow):
                 matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                text = pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
+                text = self._ocr_image(img)
 
             if text:
                 all_text_parts.append(text)
@@ -414,6 +415,18 @@ class MainWindow(QMainWindow):
     def _ocr_lang(self) -> str:
         lang = self.ocr_lang_input.text().strip()
         return lang or "deu+eng"
+
+    def _ocr_image(self, img: Image.Image) -> str:
+        try:
+            return pytesseract.image_to_string(img, lang=self._ocr_lang()).strip()
+        except TesseractError as e:
+            QMessageBox.warning(
+                self,
+                "OCR-Fehler",
+                "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
+                f"\n\nDetails:\n{e}",
+            )
+            return ""
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
