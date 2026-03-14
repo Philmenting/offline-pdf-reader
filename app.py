@@ -775,7 +775,7 @@ class MainWindow(QMainWindow):
         page_spec, ok = QInputDialog.getText(
             self,
             "Seiten extrahieren",
-            "Seitenbereich eingeben (z.B. 1,3,5-8, odd, even, all):",
+            "Seitenbereich eingeben (z.B. 1,3,5-8,current, odd, even, all):",
         )
         if not ok or not page_spec.strip():
             return
@@ -814,7 +814,7 @@ class MainWindow(QMainWindow):
         order_spec, ok = QInputDialog.getText(
             self,
             "Seiten neu anordnen",
-            "Neue Seitenreihenfolge (z.B. 3,1,2,5-7,last,reverse):",
+            "Neue Seitenreihenfolge (z.B. 3,1,current,2,5-7,last,reverse):",
         )
         if not ok or not order_spec.strip():
             return
@@ -850,8 +850,7 @@ class MainWindow(QMainWindow):
         finally:
             out_doc.close()
 
-    @staticmethod
-    def _parse_page_spec(spec: str, total_pages: int) -> list[int]:
+    def _parse_page_spec(self, spec: str, total_pages: int) -> list[int]:
         ordered: list[int] = []
         seen: set[int] = set()
 
@@ -868,6 +867,8 @@ class MainWindow(QMainWindow):
                 return 1
             if token in {"last", "end"}:
                 return total_pages
+            if token in {"current", "cur", "here"}:
+                return self.current_page + 1
             if token.isdigit():
                 return int(token)
             return default
@@ -895,6 +896,10 @@ class MainWindow(QMainWindow):
             if token in {"last", "end"}:
                 add_page(total_pages - 1)
                 continue
+            if token in {"current", "cur", "here"}:
+                if 0 <= self.current_page < total_pages:
+                    add_page(self.current_page)
+                continue
 
             if "-" in token:
                 a, b = token.split("-", 1)
@@ -910,8 +915,7 @@ class MainWindow(QMainWindow):
                     add_page(p - 1)
         return ordered
 
-    @staticmethod
-    def _parse_order_spec(spec: str, total_pages: int) -> list[int]:
+    def _parse_order_spec(self, spec: str, total_pages: int) -> list[int]:
         ordered: list[int] = []
 
         def parse_single(token: str) -> int | None:
@@ -920,6 +924,8 @@ class MainWindow(QMainWindow):
                 return 1
             if tk in {"last", "end"}:
                 return total_pages
+            if tk in {"current", "cur", "here"}:
+                return self.current_page + 1
             if tk.isdigit():
                 return int(tk)
             return None
