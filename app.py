@@ -706,8 +706,14 @@ class MainWindow(QMainWindow):
             if not token:
                 continue
 
-            if token == "all":
+            if token in {"all", "*"}:
                 ordered.extend(range(total_pages))
+                continue
+            if token == "odd":
+                ordered.extend(range(0, total_pages, 2))
+                continue
+            if token == "even":
+                ordered.extend(range(1, total_pages, 2))
                 continue
             if token in {"reverse", "rev"}:
                 ordered.extend(reversed(range(total_pages)))
