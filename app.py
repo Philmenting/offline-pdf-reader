@@ -253,6 +253,28 @@ class MainWindow(QMainWindow):
         if self.doc:
             self.render_current_page()
 
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
+            self.next_page()
+            return
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_PageUp):
+            self.prev_page()
+            return
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_in()
+            return
+        if key == Qt.Key.Key_Minus:
+            self.zoom_out()
+            return
+        if key == Qt.Key.Key_R:
+            self.rotate_right()
+            return
+        if key == Qt.Key.Key_L:
+            self.rotate_left()
+            return
+        super().keyPressEvent(event)
+
     def next_page(self) -> None:
         if not self.doc:
             return
