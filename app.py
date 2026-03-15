@@ -175,7 +175,8 @@ def suggest_filename_from_text(text: str) -> str:
 
 
 def _normalize_amount_token(raw: str) -> str:
-    token = re.sub(r"\s+", "", raw)
+    token = re.sub(r"[\s\u00A0\u202F]", "", raw)
+    token = token.replace("'", "").replace("’", "")
     if not token:
         return ""
 
@@ -205,14 +206,17 @@ def _normalize_amount_token(raw: str) -> str:
 
 
 def extract_total_amount(text: str) -> str:
+    amount_expr = r"(\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))"
     patterns = [
-        r"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{0,16}(\d{1,3}(?:[\.,\s]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))\s*(?:€|eur)?",
-        r"(?i)(\d{1,3}(?:[\.,\s]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))\s*(?:€|eur)\b",
+        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{{0,16}}{amount_expr}\s*(?:€|eur|chf)?",
+        rf"(?i)(?:€|eur|chf)\s*{amount_expr}\b",
+        rf"(?i){amount_expr}\s*(?:€|eur|chf)\b",
     ]
     for pat in patterns:
         m = re.search(pat, text)
         if m:
-            return _normalize_amount_token(m.group(1))
+            amount = m.group(1) if m.lastindex else m.group(0)
+            return _normalize_amount_token(amount)
     return ""
 
 
