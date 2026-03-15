@@ -226,17 +226,24 @@ def _normalize_amount_token(raw: str) -> str:
         thousand_sep = "." if decimal_sep == "," else ","
         token = token.replace(thousand_sep, "")
         integer_part, frac_part = token.rsplit(decimal_sep, 1)
+        if frac_part.isdigit() and len(frac_part) == 1:
+            frac_part += "0"
         return f"{integer_part},{frac_part}"
 
     if has_dot and not has_comma:
-        if re.search(r"\.\d{2}$", token):
+        if re.search(r"\.\d{1,2}$", token):
             integer_part, frac_part = token.rsplit(".", 1)
+            if len(frac_part) == 1:
+                frac_part += "0"
             return f"{integer_part},{frac_part}"
         return token.replace(".", "")
 
     if has_comma and not has_dot:
-        if re.search(r",\d{2}$", token):
-            return token
+        if re.search(r",\d{1,2}$", token):
+            integer_part, frac_part = token.rsplit(",", 1)
+            if len(frac_part) == 1:
+                frac_part += "0"
+            return f"{integer_part},{frac_part}"
         return token.replace(",", "")
 
     return token
@@ -256,7 +263,7 @@ def _normalize_currency_token(raw: str) -> str:
 
 
 def extract_total_amount_info(text: str) -> tuple[str, str]:
-    amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})?|\d+(?:[\.,]\d{2})?"
+    amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{1,2})?|\d+(?:[\.,]\d{1,2})?"
     currency_expr = r"€|eur|chf|\$|usd|£|gbp"
     patterns = [
         rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|endbetrag|summe|zu\s+zahlen|zu\s+überweisen|brutto(?:betrag)?|fälliger\s+betrag|total(?:\s+due)?|grand\s+total|amount\s+due|amount\s+payable)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>{currency_expr})\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})?",
