@@ -76,7 +76,20 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         m = re.search(pat, text)
         if m:
             raw = m.group(1)
-            for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d-%m-%Y", "%d-%m-%y", "%Y/%m/%d", "%d/%m/%Y", "%d/%m/%y"): 
+            for fmt in (
+                "%d.%m.%Y",
+                "%d.%m.%y",
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%m-%y",
+                "%m-%d-%Y",
+                "%m-%d-%y",
+                "%Y/%m/%d",
+                "%d/%m/%Y",
+                "%d/%m/%y",
+                "%m/%d/%Y",
+                "%m/%d/%y",
+            ):
                 try:
                     date = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                     break
