@@ -1,5 +1,4 @@
 import json
-import json
 import os
 import re
 import sys
@@ -242,6 +241,7 @@ class MainWindow(QMainWindow):
         btn_goto = QPushButton("Gehe zu Seite")
         btn_rotate_left = QPushButton("↺ Drehen")
         btn_rotate_right = QPushButton("↻ Drehen")
+        btn_rotate_reset = QPushButton("⟲ Reset-Drehung")
         btn_extract = QPushButton("Text/OCR extrahieren")
         btn_extract_all = QPushButton("Alle Seiten extrahieren")
         btn_saveas = QPushButton("Speichern als …")
@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         btn_split = QPushButton("Seiten extrahieren")
         btn_reorder = QPushButton("Seiten neu anordnen")
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.clicked.connect(self.open_pdf)
@@ -263,6 +263,7 @@ class MainWindow(QMainWindow):
         btn_goto.clicked.connect(self.go_to_page)
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
+        btn_rotate_reset.clicked.connect(self.reset_rotation)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.extract_text_all_pages_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
@@ -286,6 +287,7 @@ class MainWindow(QMainWindow):
         toolbar_top.addSpacing(8)
         toolbar_top.addWidget(btn_rotate_left)
         toolbar_top.addWidget(btn_rotate_right)
+        toolbar_top.addWidget(btn_rotate_reset)
         toolbar_top.addStretch(1)
 
         toolbar_bottom = QHBoxLayout()
@@ -521,6 +523,9 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_0:
             self.reset_zoom()
             return
+        if key == Qt.Key.Key_R and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.reset_rotation()
+            return
         if key == Qt.Key.Key_R:
             self.rotate_right()
             return
@@ -629,6 +634,12 @@ class MainWindow(QMainWindow):
             return
         current = self.page_rotations.get(self.current_page, 0)
         self.page_rotations[self.current_page] = (current + 90) % 360
+        self.render_current_page()
+
+    def reset_rotation(self) -> None:
+        if not self.doc:
+            return
+        self.page_rotations[self.current_page] = 0
         self.render_current_page()
 
     def extract_text_and_suggest(self) -> None:
