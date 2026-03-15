@@ -868,8 +868,9 @@ class MainWindow(QMainWindow):
         return lang or "deu+eng"
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
+        lang = self._ocr_lang()
         try:
-            return pytesseract.image_to_string(img, lang=self._ocr_lang()).strip(), None
+            return pytesseract.image_to_string(img, lang=lang).strip(), None
         except FileNotFoundError as e:
             msg = (
                 "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
@@ -879,6 +880,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "OCR-Fehler", f"{msg}\n\nDetails:\n{e}")
             return "", f"{msg} Details: {e}"
         except TesseractError as e:
+            err_text = str(e)
+            # fallback if custom language pack is missing/misconfigured
+            if lang != "deu+eng" and ("Failed loading language" in err_text or "Error opening data file" in err_text):
+                try:
+                    return pytesseract.image_to_string(img, lang="deu+eng").strip(), None
+                except TesseractError:
+                    pass
             if show_error:
                 QMessageBox.warning(
                     self,
@@ -886,7 +894,7 @@ class MainWindow(QMainWindow):
                     "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
                     f"\n\nDetails:\n{e}",
                 )
-            return "", str(e)
+            return "", err_text
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
