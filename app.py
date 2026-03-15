@@ -219,7 +219,7 @@ def _normalize_currency_token(raw: str) -> str:
 
 
 def extract_total_amount_info(text: str) -> tuple[str, str]:
-    amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2})"
+    amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})?|\d+(?:[\.,]\d{2})?"
     currency_expr = r"€|eur|chf|\$|usd|£|gbp"
     patterns = [
         rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>{currency_expr})\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})?",
