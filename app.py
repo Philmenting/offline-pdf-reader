@@ -226,6 +226,12 @@ def suggest_filename_from_text(text: str) -> str:
         parts.append(info.vendor)
     if info.number:
         parts.append(info.number)
+
+    amount, currency = extract_total_amount_info(text)
+    if amount and info.doc_type in {"Rechnung", "Gutschrift"}:
+        amount_tag = amount.replace(",", "-")
+        parts.append(f"{amount_tag}{currency or 'EUR'}")
+
     return sanitize_filename("_".join(parts)) + ".pdf"
 
 
