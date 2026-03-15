@@ -174,6 +174,19 @@ def suggest_filename_from_text(text: str) -> str:
     return sanitize_filename("_".join(parts)) + ".pdf"
 
 
+def extract_total_amount(text: str) -> str:
+    patterns = [
+        r"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{0,16}(\d{1,3}(?:[\.\s]\d{3})*(?:,\d{2})|\d+(?:,\d{2}))\s*(?:€|eur)?",
+        r"(?i)(\d{1,3}(?:[\.\s]\d{3})*(?:,\d{2})|\d+(?:,\d{2}))\s*(?:€|eur)\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            amount = re.sub(r"\s+", "", m.group(1))
+            return amount.replace(".", "")
+    return ""
+
+
 def candidate_variants(value: str) -> list[str]:
     # common OCR confusions for invoice-like identifiers
     confusion_map = {
@@ -394,6 +407,7 @@ class MainWindow(QMainWindow):
 
     def _build_ocr_feedback(self, text: str, low_conf_tokens: list[str]) -> str:
         info = parse_doc_info(text)
+        amount = extract_total_amount(text)
         lines = []
         if low_conf_tokens:
             unique_tokens = []
@@ -419,6 +433,9 @@ class MainWindow(QMainWindow):
                     self.learning_rules.setdefault("replacements", {})[number] = choice
                     self._save_learning_rules()
                     lines.append(f"Lernregel gespeichert: {number} → {choice}")
+
+        if amount:
+            lines.append(f"Erkannter Gesamtbetrag: {amount} EUR")
 
         return "OCR-Hinweise: " + (" | ".join(lines) if lines else "keine Auffälligkeiten")
 
