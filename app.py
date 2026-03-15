@@ -209,17 +209,22 @@ def _normalize_currency_token(raw: str) -> str:
     token = (raw or "").strip().lower()
     if token in {"€", "eur"}:
         return "EUR"
-    if token == "chf":
+    if token in {"chf"}:
         return "CHF"
+    if token in {"$", "usd"}:
+        return "USD"
+    if token in {"£", "gbp"}:
+        return "GBP"
     return ""
 
 
 def extract_total_amount_info(text: str) -> tuple[str, str]:
     amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2})"
+    currency_expr = r"€|eur|chf|\$|usd|£|gbp"
     patterns = [
-        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>€|eur|chf)\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>€|eur|chf)?",
-        rf"(?i)(?P<curr_before>€|eur|chf)\s*(?P<amount>{amount_expr})\b",
-        rf"(?i)(?P<amount>{amount_expr})\s*(?P<curr_after>€|eur|chf)\b",
+        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>{currency_expr})\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})?",
+        rf"(?i)(?P<curr_before>{currency_expr})\s*(?P<amount>{amount_expr})\b",
+        rf"(?i)(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})\b",
     ]
     for pat in patterns:
         m = re.search(pat, text)
