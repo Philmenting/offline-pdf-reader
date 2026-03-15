@@ -123,14 +123,18 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             "dez": "12",
             "dec": "12",
         }
-        m_textual = re.search(r"\b(\d{1,2})[.\s-]+([A-Za-zÄÖÜäöü]+)[,\s-]+(\d{4})\b", text)
+        m_textual = re.search(r"\b(\d{1,2})[.\s-]+([A-Za-zÄÖÜäöü]+)[,\s-]+(\d{2}|\d{4})\b", text)
         if m_textual:
-            day, month_raw, year = m_textual.groups()
+            day, month_raw, year_raw = m_textual.groups()
             month_key = month_raw.strip(".").lower()
             month = month_map.get(month_key)
             if month:
                 try:
-                    date = datetime.strptime(f"{year}-{month}-{int(day):02d}", "%Y-%m-%d").strftime("%Y-%m-%d")
+                    if len(year_raw) == 2:
+                        parsed = datetime.strptime(f"{int(day):02d}.{month}.{year_raw}", "%d.%m.%y")
+                    else:
+                        parsed = datetime.strptime(f"{int(day):02d}.{month}.{year_raw}", "%d.%m.%Y")
+                    date = parsed.strftime("%Y-%m-%d")
                 except ValueError:
                     pass
 
