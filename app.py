@@ -205,19 +205,35 @@ def _normalize_amount_token(raw: str) -> str:
     return token
 
 
-def extract_total_amount(text: str) -> str:
-    amount_expr = r"(\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))"
+def _normalize_currency_token(raw: str) -> str:
+    token = (raw or "").strip().lower()
+    if token in {"€", "eur"}:
+        return "EUR"
+    if token == "chf":
+        return "CHF"
+    return ""
+
+
+def extract_total_amount_info(text: str) -> tuple[str, str]:
+    amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2})"
     patterns = [
-        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{{0,16}}{amount_expr}\s*(?:€|eur|chf)?",
-        rf"(?i)(?:€|eur|chf)\s*{amount_expr}\b",
-        rf"(?i){amount_expr}\s*(?:€|eur|chf)\b",
+        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>€|eur|chf)\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>€|eur|chf)?",
+        rf"(?i)(?P<curr_before>€|eur|chf)\s*(?P<amount>{amount_expr})\b",
+        rf"(?i)(?P<amount>{amount_expr})\s*(?P<curr_after>€|eur|chf)\b",
     ]
     for pat in patterns:
         m = re.search(pat, text)
-        if m:
-            amount = m.group(1) if m.lastindex else m.group(0)
-            return _normalize_amount_token(amount)
-    return ""
+        if not m:
+            continue
+        amount = _normalize_amount_token(m.group("amount"))
+        currency = _normalize_currency_token(m.groupdict().get("curr_before") or m.groupdict().get("curr_after") or "")
+        return amount, currency
+    return "", ""
+
+
+def extract_total_amount(text: str) -> str:
+    amount, _ = extract_total_amount_info(text)
+    return amount
 
 
 def candidate_variants(value: str) -> list[str]:
@@ -440,7 +456,7 @@ class MainWindow(QMainWindow):
 
     def _build_ocr_feedback(self, text: str, low_conf_tokens: list[str]) -> str:
         info = parse_doc_info(text)
-        amount = extract_total_amount(text)
+        amount, currency = extract_total_amount_info(text)
         lines = []
         if low_conf_tokens:
             unique_tokens = []
@@ -468,7 +484,7 @@ class MainWindow(QMainWindow):
                     lines.append(f"Lernregel gespeichert: {number} → {choice}")
 
         if amount:
-            lines.append(f"Erkannter Gesamtbetrag: {amount} EUR")
+            lines.append(f"Erkannter Gesamtbetrag: {amount} {currency or 'EUR'}")
 
         return "OCR-Hinweise: " + (" | ".join(lines) if lines else "keine Auffälligkeiten")
 
