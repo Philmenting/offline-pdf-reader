@@ -8,7 +8,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import pytesseract
-from pytesseract import Output, TesseractError
+from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
@@ -909,7 +909,7 @@ class MainWindow(QMainWindow):
         lang = self._ocr_lang()
         try:
             return pytesseract.image_to_string(img, lang=lang).strip(), None
-        except FileNotFoundError as e:
+        except (FileNotFoundError, TesseractNotFoundError) as e:
             msg = (
                 "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
                 "dass der Befehl 'tesseract' im PATH verfügbar ist."
