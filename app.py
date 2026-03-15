@@ -174,16 +174,45 @@ def suggest_filename_from_text(text: str) -> str:
     return sanitize_filename("_".join(parts)) + ".pdf"
 
 
+def _normalize_amount_token(raw: str) -> str:
+    token = re.sub(r"\s+", "", raw)
+    if not token:
+        return ""
+
+    has_comma = "," in token
+    has_dot = "." in token
+
+    if has_comma and has_dot:
+        # Last separator is assumed to be decimal separator
+        decimal_sep = "," if token.rfind(",") > token.rfind(".") else "."
+        thousand_sep = "." if decimal_sep == "," else ","
+        token = token.replace(thousand_sep, "")
+        integer_part, frac_part = token.rsplit(decimal_sep, 1)
+        return f"{integer_part},{frac_part}"
+
+    if has_dot and not has_comma:
+        if re.search(r"\.\d{2}$", token):
+            integer_part, frac_part = token.rsplit(".", 1)
+            return f"{integer_part},{frac_part}"
+        return token.replace(".", "")
+
+    if has_comma and not has_dot:
+        if re.search(r",\d{2}$", token):
+            return token
+        return token.replace(",", "")
+
+    return token
+
+
 def extract_total_amount(text: str) -> str:
     patterns = [
-        r"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{0,16}(\d{1,3}(?:[\.\s]\d{3})*(?:,\d{2})|\d+(?:,\d{2}))\s*(?:€|eur)?",
-        r"(?i)(\d{1,3}(?:[\.\s]\d{3})*(?:,\d{2})|\d+(?:,\d{2}))\s*(?:€|eur)\b",
+        r"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|summe|total(?:\s+due)?|amount\s+due)\b[^\d]{0,16}(\d{1,3}(?:[\.,\s]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))\s*(?:€|eur)?",
+        r"(?i)(\d{1,3}(?:[\.,\s]\d{3})*(?:[\.,]\d{2})|\d+(?:[\.,]\d{2}))\s*(?:€|eur)\b",
     ]
     for pat in patterns:
         m = re.search(pat, text)
         if m:
-            amount = re.sub(r"\s+", "", m.group(1))
-            return amount.replace(".", "")
+            return _normalize_amount_token(m.group(1))
     return ""
 
 
