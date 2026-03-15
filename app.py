@@ -101,14 +101,17 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 break
 
     if not date:
-        m_compact = re.search(r"(?i)\b(?:datum|date)\s*[:\-]?\s*(\d{8})\b", text)
+        m_compact = re.search(r"(?i)\b(?:datum|date)\s*[:\-]?\s*(\d{8}|\d{6})\b", text)
         if m_compact:
             raw = m_compact.group(1)
             try:
-                if raw.startswith(("19", "20")):
-                    parsed = datetime.strptime(raw, "%Y%m%d")
+                if len(raw) == 8:
+                    if raw.startswith(("19", "20")):
+                        parsed = datetime.strptime(raw, "%Y%m%d")
+                    else:
+                        parsed = datetime.strptime(raw, "%d%m%Y")
                 else:
-                    parsed = datetime.strptime(raw, "%d%m%Y")
+                    parsed = datetime.strptime(raw, "%d%m%y")
                 date = parsed.strftime("%Y-%m-%d")
             except ValueError:
                 pass
