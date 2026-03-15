@@ -138,6 +138,26 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 except ValueError:
                     pass
 
+        if not date:
+            m_textual_month_first = re.search(
+                r"\b([A-Za-zÄÖÜäöü]+)\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2}|\d{4})\b",
+                text,
+                re.IGNORECASE,
+            )
+            if m_textual_month_first:
+                month_raw, day, year_raw = m_textual_month_first.groups()
+                month_key = month_raw.strip(".").lower()
+                month = month_map.get(month_key)
+                if month:
+                    try:
+                        if len(year_raw) == 2:
+                            parsed = datetime.strptime(f"{int(day):02d}.{month}.{year_raw}", "%d.%m.%y")
+                        else:
+                            parsed = datetime.strptime(f"{int(day):02d}.{month}.{year_raw}", "%d.%m.%Y")
+                        date = parsed.strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+
     # Number (supports common separators like / and _, trims trailing punctuation)
     number = ""
     number_patterns = [
