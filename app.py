@@ -99,6 +99,19 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 break
 
     if not date:
+        m_compact = re.search(r"(?i)\b(?:datum|date)\s*[:\-]?\s*(\d{8})\b", text)
+        if m_compact:
+            raw = m_compact.group(1)
+            try:
+                if raw.startswith(("19", "20")):
+                    parsed = datetime.strptime(raw, "%Y%m%d")
+                else:
+                    parsed = datetime.strptime(raw, "%d%m%Y")
+                date = parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+    if not date:
         month_map = {
             "januar": "01",
             "january": "01",
