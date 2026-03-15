@@ -615,6 +615,10 @@ class MainWindow(QMainWindow):
         self.ocr_feedback.setText("OCR-Hinweise: -")
         self.statusBar().showMessage("PDF geschlossen.")
 
+    def closeEvent(self, event) -> None:
+        self._close_open_document()
+        super().closeEvent(event)
+
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
         if not file_name:
