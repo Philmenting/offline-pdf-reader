@@ -423,6 +423,13 @@ class MainWindow(QMainWindow):
         act_open.triggered.connect(self.open_pdf)
         menu.addAction(act_open)
 
+        act_close_pdf = QAction("PDF schließen", self)
+        act_close_pdf.setShortcut("Ctrl+W")
+        act_close_pdf.triggered.connect(self.close_pdf)
+        menu.addAction(act_close_pdf)
+
+        menu.addSeparator()
+
         act_save_as = QAction("Speichern als …", self)
         act_save_as.setShortcut("Ctrl+S")
         act_save_as.triggered.connect(self.save_as_suggested)
@@ -543,11 +550,33 @@ class MainWindow(QMainWindow):
     def _ensure_pdf_suffix(path: str) -> str:
         return path if path.lower().endswith(".pdf") else f"{path}.pdf"
 
+    def _close_open_document(self) -> None:
+        if self.doc is None:
+            return
+        try:
+            self.doc.close()
+        except Exception:
+            pass
+        self.doc = None
+
+    def close_pdf(self) -> None:
+        self._close_open_document()
+        self.pdf_path = None
+        self.current_page = 0
+        self.page_rotations.clear()
+        self.preview.setText("Kein PDF geladen")
+        self.page_info.setText("Seite: -/- | Zoom: 100%")
+        self.text_output.clear()
+        self.suggested_name.clear()
+        self.ocr_feedback.setText("OCR-Hinweise: -")
+        self.statusBar().showMessage("PDF geschlossen.")
+
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
         if not file_name:
             return
 
+        self._close_open_document()
         self.pdf_path = Path(file_name)
         try:
             self.doc = fitz.open(file_name)
