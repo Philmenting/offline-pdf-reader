@@ -1413,16 +1413,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ungültig", "Keine gültige Reihenfolge erkannt.")
             return
 
-        default_name = f"{self.pdf_path.stem}_reordered.pdf"
-        out_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Neu angeordnete PDF speichern",
-            str(self.pdf_path.with_name(default_name)),
-            "PDF files (*.pdf)",
-        )
-        if not out_path:
+        if ordered_pages == list(range(len(self.doc))):
+            QMessageBox.information(self, "Hinweis", "Die Reihenfolge ist unverändert.")
             return
-        out_path = self._ensure_pdf_suffix(out_path)
 
         out_doc = fitz.open()
         try:
@@ -1431,13 +1424,33 @@ class MainWindow(QMainWindow):
                 rot = self.page_rotations.get(idx, 0) % 360
                 if rot:
                     out_doc[-1].set_rotation(rot)
-            out_doc.save(out_path)
-            QMessageBox.information(self, "Erfolg", f"Neu angeordnete PDF gespeichert:\n{out_path}")
-            self.statusBar().showMessage(f"Neu angeordnete PDF erstellt: {Path(out_path).name}")
+
+            old_doc = self.doc
+            self.doc = out_doc
+            out_doc = None
+            old_doc.close()
+
+            self.page_rotations = {
+                new_idx: (self.page_rotations.get(old_idx, 0) % 360)
+                for new_idx, old_idx in enumerate(ordered_pages)
+                if self.page_rotations.get(old_idx, 0) % 360 != 0
+            }
+
+            self.current_page = 0
+            self.render_current_page()
+
+            QMessageBox.information(
+                self,
+                "Erfolg",
+                "Neue Seitenreihenfolge wurde im aktuellen Dokument übernommen.\n\n"
+                "Wenn alles passt, speichere anschließend über 'Speichern als …'.",
+            )
+            self.statusBar().showMessage("Seitenreihenfolge übernommen (nicht gespeichert)")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Neu-Anordnung fehlgeschlagen:\n{e}")
         finally:
-            out_doc.close()
+            if out_doc is not None:
+                out_doc.close()
 
     def _parse_page_spec(self, spec: str, total_pages: int) -> list[int]:
         ordered: list[int] = []
