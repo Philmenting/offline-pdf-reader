@@ -1978,7 +1978,9 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         # (e.g. "/path/doc.pdf#page=3"). Strip those while keeping file paths.
         candidate = Path(unquote(parsed.path or "")).expanduser()
     else:
-        candidate = Path(value).expanduser()
+        # Some launchers pass plain local paths with percent-encoding
+        # (e.g. "/tmp/My%20Doc.pdf"). Decode those before existence checks.
+        candidate = Path(unquote(value)).expanduser()
 
     if candidate.exists() and candidate.is_file() and candidate.suffix.lower() == ".pdf":
         return candidate
