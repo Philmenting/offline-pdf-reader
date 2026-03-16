@@ -51,13 +51,14 @@ python app.py
 - PDF merge, page extraction, page reordering
 - Remove empty/blank pages into a new PDF
 
-## Windows .exe testen (GitHub Actions)
+## Windows-Test (portable, OCR ohne Extra-Installation)
 1. Öffne: `Actions` Tab im Repo
 2. Wähle Workflow **Build Windows EXE**
 3. Klicke **Run workflow**
-4. Nach Abschluss findest du unter **Artifacts** die Datei `offline-pdf-reader.exe`
+4. Nach Abschluss unter **Artifacts** `offline-pdf-reader-windows-portable` laden
+5. ZIP entpacken und `offline-pdf-reader.exe` im Ordner `offline-pdf-reader/` starten
 
-Hinweis: Für OCR muss auf Windows zusätzlich Tesseract installiert sein.
+Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine separate Installation nötig.
 
 ## Next steps
 - OCR confidence highlighting direkt in der Seitenansicht (Overlay)

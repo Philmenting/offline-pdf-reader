@@ -353,6 +353,7 @@ class MainWindow(QMainWindow):
         self.page_rotations: dict[int, int] = {}
         self.learning_rules_path = Path(__file__).with_name("learning_rules.json")
         self.learning_rules = self._load_learning_rules()
+        self._configure_tesseract_runtime()
 
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -505,6 +506,36 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._apply_styles()
+
+    def _configure_tesseract_runtime(self) -> None:
+        if os.name != "nt":
+            return
+
+        candidates: list[Path] = []
+
+        # PyInstaller onefile extraction dir
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "tesseract" / "tesseract.exe")
+
+        # Next to packaged app
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "tesseract" / "tesseract.exe")
+
+        # Dev/build env fallback
+        candidates.append(Path("C:/Program Files/Tesseract-OCR/tesseract.exe"))
+
+        for candidate in candidates:
+            if candidate.exists():
+                pytesseract.pytesseract.tesseract_cmd = str(candidate)
+                tessdata = candidate.parent / "tessdata"
+                if tessdata.exists():
+                    os.environ.setdefault("TESSDATA_PREFIX", str(tessdata))
+                return
+
+        system_tesseract = shutil.which("tesseract")
+        if system_tesseract:
+            pytesseract.pytesseract.tesseract_cmd = system_tesseract
 
     def _load_learning_rules(self) -> dict:
         if not self.learning_rules_path.exists():

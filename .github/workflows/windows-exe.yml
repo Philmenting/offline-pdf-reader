@@ -25,13 +25,27 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build EXE (PyInstaller)
+      - name: Install Tesseract (bundle for portable OCR)
+        shell: powershell
+        run: |
+          choco install tesseract --no-progress -y
+          if (!(Test-Path "C:\Program Files\Tesseract-OCR\tesseract.exe")) {
+            throw "Tesseract installation failed"
+          }
+
+      - name: Prepare bundled runtime files
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "bundle/tesseract" | Out-Null
+          Copy-Item "C:\Program Files\Tesseract-OCR\*" "bundle/tesseract" -Recurse -Force
+
+      - name: Build EXE (PyInstaller onedir + bundled Tesseract)
         shell: bash
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name offline-pdf-reader app.py
+          pyinstaller --noconfirm --windowed --onedir --name offline-pdf-reader --add-data "bundle/tesseract;tesseract" app.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: offline-pdf-reader-windows-exe
-          path: dist/offline-pdf-reader.exe
+          name: offline-pdf-reader-windows-portable
+          path: dist/offline-pdf-reader
