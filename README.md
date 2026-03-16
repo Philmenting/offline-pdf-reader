@@ -49,9 +49,16 @@ python app.py
 - Save-as with suggested name
 - PDF merge, page extraction, and page reordering
 
+## Windows .exe testen (GitHub Actions)
+1. Öffne: `Actions` Tab im Repo
+2. Wähle Workflow **Build Windows EXE**
+3. Klicke **Run workflow**
+4. Nach Abschluss findest du unter **Artifacts** die Datei `offline-pdf-reader.exe`
+
+Hinweis: Für OCR muss auf Windows zusätzlich Tesseract installiert sein.
+
 ## Next steps
 - OCR confidence highlighting direkt in der Seitenansicht (Overlay)
 - Verbesserte Korrekturvorschläge für Datum/Betrag/Nummer
 - Batch rename folder mode
 - One-click OCR to new searchable PDF
-- Windows test build (.exe) workflow
