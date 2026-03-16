@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressDialog,
+    QScrollArea,
     QSplitter,
     QTextEdit,
     QVBoxLayout,
@@ -38,6 +39,7 @@ class ParsedDocInfo:
     vendor: str = ""
     doc_type: str = "Dokument"
     number: str = ""
+    subject: str = ""
 
 
 def sanitize_filename(name: str) -> str:
@@ -49,7 +51,8 @@ def sanitize_filename(name: str) -> str:
 
 def parse_doc_info(text: str) -> ParsedDocInfo:
     lower = text.lower()
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    raw_lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln for ln in raw_lines if ln]
 
     # Doc type
     doc_type = "Dokument"
@@ -208,19 +211,58 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             number = m_num.group(1).strip(".,;:)")
             break
 
-    # Vendor heuristic: first non-empty line that isn't too numeric
-    vendor = ""
-    for ln in lines[:12]:
+    def is_address_like(line: str) -> bool:
+        l = line.lower()
+        if re.search(r"\b\d{5}\b", l):
+            return True
+        if re.search(r"\b\d{1,4}[a-z]?\b", l) and any(
+            token in l
+            for token in ["straße", "str.", "strasse", "street", "st.", "weg", "allee", "avenue", "road", "rd."]
+        ):
+            return True
+        if any(token in l for token in ["deutschland", "germany", "telefon", "phone", "fax", "mail", "e-mail", "www."]):
+            return True
+        return False
+
+    # Subject heuristic: prefer explicit Betreff/Subject; else first title-like line
+    subject = ""
+    m_subject = re.search(r"(?im)^(?:betreff|subject)\s*[:\-]\s*(.+)$", text)
+    if m_subject:
+        subject = m_subject.group(1).strip()
+    else:
+        for ln in lines[:40]:
+            ll = ln.lower()
+            if len(ln) < 6:
+                continue
+            if any(k in ll for k in ["rechnung", "invoice", "angebot", "quote", "gutschrift", "contract", "vertrag", "lieferschein"]):
+                subject = ln
+                break
+
+    # Sender/vendor heuristic:
+    # top-left often recipient; skip address-like and subject/doc lines and prefer company-like names
+    company_tokens = ["gmbh", "ag", "ug", "kg", "ohg", "inc", "llc", "ltd", "corp", "s.a.", "sarl", "e.k."]
+    candidates: list[str] = []
+    for ln in lines[:30]:
+        ll = ln.lower()
         if len(ln) < 3:
             continue
-        if re.search(r"\d{2,}", ln) and len(ln) < 8:
+        if is_address_like(ln):
             continue
-        if any(k in ln.lower() for k in ["rechnung", "invoice", "seite", "page"]):
+        if any(k in ll for k in ["rechnung", "invoice", "seite", "page", "betreff", "subject", "datum", "date"]):
             continue
-        vendor = ln
-        break
+        if re.fullmatch(r"[\d\W_]+", ln):
+            continue
+        candidates.append(ln)
 
-    return ParsedDocInfo(date=date, vendor=vendor, doc_type=doc_type, number=number)
+    vendor = ""
+    for ln in candidates:
+        if any(tok in ln.lower() for tok in company_tokens):
+            vendor = ln
+            break
+    if not vendor and candidates:
+        vendor = candidates[0]
+
+    return ParsedDocInfo(date=date, vendor=vendor, doc_type=doc_type, number=number, subject=subject)
 
 
 def suggest_filename_from_text(text: str) -> str:
@@ -229,6 +271,8 @@ def suggest_filename_from_text(text: str) -> str:
     if info.date:
         parts.append(info.date)
     parts.append(info.doc_type)
+    if info.subject:
+        parts.append(info.subject)
     if info.vendor:
         parts.append(info.vendor)
     if info.number:
@@ -359,6 +403,11 @@ class MainWindow(QMainWindow):
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(460)
 
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setWidget(self.preview)
+        self.preview_scroll.setWidgetResizable(False)
+        self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.text_output = QTextEdit()
         self.text_output.setReadOnly(True)
         self.text_output.setPlaceholderText("Extrahierter Text erscheint hier …")
@@ -452,7 +501,7 @@ class MainWindow(QMainWindow):
         toolbar_bottom.addStretch(1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.preview)
+        splitter.addWidget(self.preview_scroll)
         splitter.addWidget(self.text_output)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -722,7 +771,9 @@ class MainWindow(QMainWindow):
 
     def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
+            self.preview.clear()
             self.preview.setText("Kein PDF geladen")
+            self.preview.adjustSize()
             self.page_info.setText("Seite: -/- | Zoom: 100%")
             return
 
@@ -736,7 +787,9 @@ class MainWindow(QMainWindow):
         fmt = QImage.Format.Format_RGB888
         img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
         qpix = QPixmap.fromImage(img)
-        self.preview.setPixmap(qpix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        self.preview.setText("")
+        self.preview.setPixmap(qpix)
+        self.preview.resize(qpix.size())
         self.page_info.setText(
             f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
         )
