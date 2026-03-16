@@ -479,6 +479,11 @@ class MainWindow(QMainWindow):
         act_save_as.triggered.connect(self.save_as_suggested)
         menu.addAction(act_save_as)
 
+        act_extract_current = QAction("Aktuelle Seite extrahieren", self)
+        act_extract_current.setShortcut("Ctrl+E")
+        act_extract_current.triggered.connect(self.extract_text_and_suggest)
+        menu.addAction(act_extract_current)
+
         act_extract = QAction("Alle Seiten extrahieren", self)
         act_extract.setShortcut("Ctrl+Shift+E")
         act_extract.triggered.connect(self.extract_text_all_pages_and_suggest)
