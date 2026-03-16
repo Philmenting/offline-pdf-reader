@@ -1730,6 +1730,10 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if parsed.netloc:
             file_path = f"//{parsed.netloc}{file_path}"
         candidate = Path(file_path).expanduser()
+    elif parsed.scheme == "" and (parsed.query or parsed.fragment):
+        # Desktop launchers occasionally append URL-style query/fragment parts
+        # (e.g. "/path/doc.pdf#page=3"). Strip those while keeping file paths.
+        candidate = Path(unquote(parsed.path or "")).expanduser()
     else:
         candidate = Path(value).expanduser()
 
