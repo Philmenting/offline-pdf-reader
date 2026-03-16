@@ -768,6 +768,9 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_G and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.go_to_page()
             return
+        if key == Qt.Key.Key_S and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.save_as_suggested()
+            return
         if key == Qt.Key.Key_Minus:
             self.zoom_out()
             return
