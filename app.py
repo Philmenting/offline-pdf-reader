@@ -1121,6 +1121,20 @@ class MainWindow(QMainWindow):
                 return int(token)
             return default
 
+        def parse_range_with_step(token: str) -> tuple[str, str, int] | None:
+            body = token
+            step = 1
+            if "/" in token:
+                body, step_raw = token.rsplit("/", 1)
+                step_raw = step_raw.strip()
+                if not step_raw.isdigit() or int(step_raw) <= 0:
+                    return None
+                step = int(step_raw)
+            if "-" not in body:
+                return None
+            start_raw, end_raw = body.split("-", 1)
+            return start_raw, end_raw, step
+
         for part in spec.split(","):
             token = part.strip().lower()
             if not token:
@@ -1149,12 +1163,13 @@ class MainWindow(QMainWindow):
                     add_page(self.current_page)
                 continue
 
-            if "-" in token:
-                a, b = token.split("-", 1)
+            range_info = parse_range_with_step(token)
+            if range_info is not None:
+                a, b, step = range_info
                 start = parse_bound(a, 1)
                 end = parse_bound(b, total_pages)
-                step = 1 if start <= end else -1
-                for p in range(start, end + step, step):
+                signed_step = step if start <= end else -step
+                for p in range(start, end + signed_step, signed_step):
                     if 1 <= p <= total_pages:
                         add_page(p - 1)
             elif token.isdigit():
@@ -1178,6 +1193,20 @@ class MainWindow(QMainWindow):
                 return int(tk)
             return None
 
+        def parse_range_with_step(token: str) -> tuple[str, str, int] | None:
+            body = token
+            step = 1
+            if "/" in token:
+                body, step_raw = token.rsplit("/", 1)
+                step_raw = step_raw.strip()
+                if not step_raw.isdigit() or int(step_raw) <= 0:
+                    return None
+                step = int(step_raw)
+            if "-" not in body:
+                return None
+            start_raw, end_raw = body.split("-", 1)
+            return start_raw, end_raw, step
+
         for part in spec.split(","):
             token = part.strip().lower()
             if not token:
@@ -1196,14 +1225,15 @@ class MainWindow(QMainWindow):
                 ordered.extend(reversed(range(total_pages)))
                 continue
 
-            if "-" in token:
-                a, b = token.split("-", 1)
+            range_info = parse_range_with_step(token)
+            if range_info is not None:
+                a, b, step = range_info
                 start = parse_single(a)
                 end = parse_single(b)
                 if start is None or end is None:
                     continue
-                step = 1 if start <= end else -1
-                for p in range(start, end + step, step):
+                signed_step = step if start <= end else -step
+                for p in range(start, end + signed_step, signed_step):
                     if 1 <= p <= total_pages:
                         ordered.append(p - 1)
                 continue
