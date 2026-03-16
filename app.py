@@ -343,6 +343,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Offline PDF Reader — MVP")
         self.resize(1220, 860)
+        self.setAcceptDrops(True)
 
         self.pdf_path: Path | None = None
         self.doc: fitz.Document | None = None
@@ -630,11 +631,7 @@ class MainWindow(QMainWindow):
         self._close_open_document()
         super().closeEvent(event)
 
-    def open_pdf(self) -> None:
-        file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
-        if not file_name:
-            return
-
+    def _open_pdf_path(self, file_name: str) -> None:
         self._close_open_document()
         self.pdf_path = Path(file_name)
         try:
@@ -652,6 +649,38 @@ class MainWindow(QMainWindow):
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
+
+    def open_pdf(self) -> None:
+        file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
+        if not file_name:
+            return
+        self._open_pdf_path(file_name)
+
+    def dragEnterEvent(self, event) -> None:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            event.ignore()
+            return
+        for url in mime.urls():
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".pdf"):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event) -> None:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            event.ignore()
+            return
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            file_name = url.toLocalFile()
+            if file_name.lower().endswith(".pdf"):
+                self._open_pdf_path(file_name)
+                event.acceptProposedAction()
+                return
+        event.ignore()
 
     def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
