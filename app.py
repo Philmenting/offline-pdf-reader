@@ -479,6 +479,10 @@ class MainWindow(QMainWindow):
         self.learning_rules = self._load_learning_rules()
         self._configure_tesseract_runtime()
 
+        self.undo_stack: list[tuple[bytes, dict[int, int], int]] = []
+        self.redo_stack: list[tuple[bytes, dict[int, int], int]] = []
+        self.is_dirty = False
+
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(460)
@@ -487,6 +491,17 @@ class MainWindow(QMainWindow):
         self.preview_scroll.setWidget(self.preview)
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.thumb_list = QListWidget()
+        self.thumb_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.thumb_list.setFlow(QListWidget.Flow.TopToBottom)
+        self.thumb_list.setMovement(QListWidget.Movement.Static)
+        self.thumb_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.thumb_list.setIconSize(QSize(90, 130))
+        self.thumb_list.setSpacing(6)
+        self.thumb_list.setMinimumWidth(130)
+        self.thumb_list.setMaximumWidth(180)
+        self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
 
         self.extracted_text = ""
         self.text_dialog: QDialog | None = None
@@ -585,11 +600,15 @@ class MainWindow(QMainWindow):
         name_row.addWidget(self.suggested_name)
         name_row.addStretch(1)
 
+        content_row = QHBoxLayout()
+        content_row.addWidget(self.thumb_list)
+        content_row.addWidget(self.preview_scroll, 1)
+
         layout = QVBoxLayout()
         layout.addLayout(name_row)
         layout.addLayout(toolbar_top)
         layout.addWidget(self.page_info)
-        layout.addWidget(self.preview_scroll)
+        layout.addLayout(content_row, 1)
         layout.addWidget(self.ocr_feedback)
 
         container = QWidget()
@@ -613,6 +632,18 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut("Ctrl+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
+
+        menu_file.addSeparator()
+
+        act_undo = QAction("Rückgängig", self)
+        act_undo.setShortcut("Ctrl+Z")
+        act_undo.triggered.connect(self.undo_last_change)
+        menu_file.addAction(act_undo)
+
+        act_redo = QAction("Wiederholen", self)
+        act_redo.setShortcut("Ctrl+Y")
+        act_redo.triggered.connect(self.redo_last_change)
+        menu_file.addAction(act_redo)
 
         menu_ocr = self.menuBar().addMenu("OCR & Text")
         act_extract_current = QAction("Aktuelle Seite extrahieren", self)
@@ -733,6 +764,102 @@ class MainWindow(QMainWindow):
         self.text_dialog.raise_()
         self.text_dialog.activateWindow()
 
+    def _set_dirty(self, dirty: bool) -> None:
+        self.is_dirty = dirty
+        title = "Offline PDF Reader — MVP"
+        if self.pdf_path:
+            title += f" | {self.pdf_path.name}"
+        if self.is_dirty:
+            title += " *"
+        self.setWindowTitle(title)
+
+    def _snapshot_state(self) -> tuple[bytes, dict[int, int], int] | None:
+        if not self.doc:
+            return None
+        try:
+            payload = self.doc.tobytes(garbage=3, deflate=True)
+            return payload, dict(self.page_rotations), self.current_page
+        except Exception:
+            return None
+
+    def _restore_state(self, snap: tuple[bytes, dict[int, int], int]) -> bool:
+        try:
+            payload, rotations, page_idx = snap
+            new_doc = fitz.open(stream=payload, filetype="pdf")
+            old = self.doc
+            self.doc = new_doc
+            if old is not None:
+                old.close()
+            self.page_rotations = dict(rotations)
+            self.current_page = max(0, min(page_idx, len(self.doc) - 1)) if len(self.doc) else 0
+            self._refresh_thumbnails()
+            self.render_current_page()
+            return True
+        except Exception:
+            return False
+
+    def _push_undo_state(self) -> None:
+        snap = self._snapshot_state()
+        if snap is None:
+            return
+        self.undo_stack.append(snap)
+        if len(self.undo_stack) > 30:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def undo_last_change(self) -> None:
+        if not self.undo_stack:
+            self.statusBar().showMessage("Nichts zum Rückgängig machen.")
+            return
+        current = self._snapshot_state()
+        snap = self.undo_stack.pop()
+        if current is not None:
+            self.redo_stack.append(current)
+        if self._restore_state(snap):
+            self._set_dirty(True)
+            self.statusBar().showMessage("Änderung rückgängig gemacht.")
+
+    def redo_last_change(self) -> None:
+        if not self.redo_stack:
+            self.statusBar().showMessage("Nichts zum Wiederholen.")
+            return
+        current = self._snapshot_state()
+        snap = self.redo_stack.pop()
+        if current is not None:
+            self.undo_stack.append(current)
+        if self._restore_state(snap):
+            self._set_dirty(True)
+            self.statusBar().showMessage("Änderung wiederholt.")
+
+    def _refresh_thumbnails(self) -> None:
+        self.thumb_list.blockSignals(True)
+        self.thumb_list.clear()
+        if self.doc:
+            for i in range(len(self.doc)):
+                page = self.doc[i]
+                rotation = self.page_rotations.get(i, 0)
+                pix = page.get_pixmap(matrix=fitz.Matrix(0.18, 0.18).prerotate(rotation), alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                item = QListWidgetItem(QIcon(QPixmap.fromImage(img)), f"{i + 1}")
+                item.setData(Qt.ItemDataRole.UserRole, i)
+                self.thumb_list.addItem(item)
+        self.thumb_list.blockSignals(False)
+
+    def _sync_thumbnail_selection(self) -> None:
+        if not self.doc:
+            return
+        if 0 <= self.current_page < self.thumb_list.count():
+            self.thumb_list.blockSignals(True)
+            self.thumb_list.setCurrentRow(self.current_page)
+            self.thumb_list.scrollToItem(self.thumb_list.item(self.current_page))
+            self.thumb_list.blockSignals(False)
+
+    def _on_thumbnail_clicked(self, item: QListWidgetItem) -> None:
+        idx = int(item.data(Qt.ItemDataRole.UserRole))
+        if self.doc and 0 <= idx < len(self.doc):
+            self.current_page = idx
+            self.render_current_page()
+
     def _ocr_image_with_confidence(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None, list[str]]:
         text, err = self._ocr_image(img, show_error=show_error)
         if err:
@@ -828,14 +955,29 @@ class MainWindow(QMainWindow):
         self.pdf_path = None
         self.current_page = 0
         self.page_rotations.clear()
+        self.undo_stack.clear()
+        self.redo_stack.clear()
         self.preview.setText("Kein PDF geladen")
         self.page_info.setText("Seite: -/- | Zoom: 100%")
         self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
+        self._refresh_thumbnails()
+        self._set_dirty(False)
         self.statusBar().showMessage("PDF geschlossen.")
 
     def closeEvent(self, event) -> None:
+        if self.doc and self.is_dirty:
+            choice = QMessageBox.question(
+                self,
+                "Ungespeicherte Änderungen",
+                "Es gibt ungespeicherte Änderungen. Wirklich beenden?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         self._close_open_document()
         super().closeEvent(event)
 
@@ -852,10 +994,14 @@ class MainWindow(QMainWindow):
         self.current_page = 0
         self.zoom_factor = 1.35
         self.page_rotations.clear()
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self._refresh_thumbnails()
         self.render_current_page()
         self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
@@ -914,6 +1060,7 @@ class MainWindow(QMainWindow):
         self.page_info.setText(
             f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
         )
+        self._sync_thumbnail_selection()
         if self.pdf_path:
             self.statusBar().showMessage(f"{self.pdf_path.name} — Seite {self.current_page + 1}/{total}")
 
@@ -1053,21 +1200,30 @@ class MainWindow(QMainWindow):
     def rotate_left(self) -> None:
         if not self.doc:
             return
+        self._push_undo_state()
         current = self.page_rotations.get(self.current_page, 0)
         self.page_rotations[self.current_page] = (current - 90) % 360
+        self._set_dirty(True)
+        self._refresh_thumbnails()
         self.render_current_page()
 
     def rotate_right(self) -> None:
         if not self.doc:
             return
+        self._push_undo_state()
         current = self.page_rotations.get(self.current_page, 0)
         self.page_rotations[self.current_page] = (current + 90) % 360
+        self._set_dirty(True)
+        self._refresh_thumbnails()
         self.render_current_page()
 
     def reset_rotation(self) -> None:
         if not self.doc:
             return
+        self._push_undo_state()
         self.page_rotations[self.current_page] = 0
+        self._set_dirty(True)
+        self._refresh_thumbnails()
         self.render_current_page()
 
     def extract_text_and_suggest(self) -> None:
@@ -1292,6 +1448,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self._push_undo_state()
             # delete in reverse order so original indices remain valid during deletion
             for idx in reversed([p - 1 for p in removed_pages]):
                 self.doc.delete_page(idx)
@@ -1308,6 +1465,8 @@ class MainWindow(QMainWindow):
             if self.current_page >= len(self.doc):
                 self.current_page = max(0, len(self.doc) - 1)
 
+            self._set_dirty(True)
+            self._refresh_thumbnails()
             self.render_current_page()
 
             preview = ", ".join(str(p) for p in removed_pages[:12])
@@ -1446,6 +1605,9 @@ class MainWindow(QMainWindow):
             finally:
                 out_doc.close()
 
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self._set_dirty(False)
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
             self.statusBar().showMessage(f"Gespeichert: {Path(out_path).name}")
         except Exception as e:
@@ -1539,6 +1701,7 @@ class MainWindow(QMainWindow):
 
         out_doc = fitz.open()
         try:
+            self._push_undo_state()
             for idx in ordered_pages:
                 out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
                 rot = self.page_rotations.get(idx, 0) % 360
@@ -1557,6 +1720,8 @@ class MainWindow(QMainWindow):
             }
 
             self.current_page = 0
+            self._set_dirty(True)
+            self._refresh_thumbnails()
             self.render_current_page()
 
             QMessageBox.information(
