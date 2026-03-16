@@ -1098,7 +1098,7 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_0:
             self.reset_zoom()
             return
-        if key == Qt.Key.Key_R and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+        if key == Qt.Key.Key_R and event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.reset_rotation()
             return
         if key == Qt.Key.Key_R:
