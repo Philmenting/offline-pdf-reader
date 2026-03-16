@@ -1114,28 +1114,27 @@ class MainWindow(QMainWindow):
             return
 
         if not keep_indices:
-            QMessageBox.warning(self, "Hinweis", "Alle Seiten wurden als leer erkannt. Es wurde keine Datei erstellt.")
+            QMessageBox.warning(self, "Hinweis", "Alle Seiten wurden als leer erkannt. Das Dokument bleibt unverändert.")
             return
 
-        default_name = f"{self.pdf_path.stem}_ohne_leere_seiten.pdf"
-        out_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "PDF ohne leere Seiten speichern",
-            str(self.pdf_path.with_name(default_name)),
-            "PDF files (*.pdf)",
-        )
-        if not out_path:
-            return
-        out_path = self._ensure_pdf_suffix(out_path)
-
-        out_doc = fitz.open()
         try:
-            for idx in keep_indices:
-                out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
-                rot = self.page_rotations.get(idx, 0) % 360
-                if rot:
-                    out_doc[-1].set_rotation(rot)
-            out_doc.save(out_path)
+            # delete in reverse order so original indices remain valid during deletion
+            for idx in reversed([p - 1 for p in removed_pages]):
+                self.doc.delete_page(idx)
+
+            # remap rotations to new page indices
+            old_rotations = dict(self.page_rotations)
+            mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_indices)}
+            self.page_rotations = {
+                mapping[old_idx]: rot
+                for old_idx, rot in old_rotations.items()
+                if old_idx in mapping and rot % 360 != 0
+            }
+
+            if self.current_page >= len(self.doc):
+                self.current_page = max(0, len(self.doc) - 1)
+
+            self.render_current_page()
 
             preview = ", ".join(str(p) for p in removed_pages[:12])
             if len(removed_pages) > 12:
@@ -1143,13 +1142,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Erfolg",
-                f"PDF gespeichert:\n{out_path}\n\nEntfernte leere Seiten: {len(removed_pages)}\nSeiten: {preview}",
+                f"Leere Seiten wurden im aktuellen Dokument entfernt.\n\n"
+                f"Entfernte Seiten: {len(removed_pages)}\n"
+                f"Seiten: {preview}\n\n"
+                "Wenn alles passt, kannst du anschließend über 'Speichern als …' sichern.",
             )
-            self.statusBar().showMessage(f"Leere Seiten entfernt: {len(removed_pages)}")
+            self.statusBar().showMessage(f"Leere Seiten entfernt: {len(removed_pages)} (nicht gespeichert)")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Leere Seiten konnten nicht entfernt werden:\n{e}")
-        finally:
-            out_doc.close()
 
     def _ocr_lang(self) -> str:
         lang = self.ocr_lang_input.text().strip()
