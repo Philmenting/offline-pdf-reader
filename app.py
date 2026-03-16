@@ -388,12 +388,14 @@ class MainWindow(QMainWindow):
         btn_rotate_reset = QPushButton("⟲ Reset-Drehung")
         btn_extract = QPushButton("Text/OCR extrahieren")
         btn_extract_all = QPushButton("Alle Seiten extrahieren")
+        btn_ocr_all = QPushButton("OCR alle Seiten")
         btn_saveas = QPushButton("Speichern als …")
         btn_merge = QPushButton("PDFs mergen")
         btn_split = QPushButton("Seiten extrahieren")
         btn_reorder = QPushButton("Seiten neu anordnen")
+        btn_remove_empty = QPushButton("Leere Seiten entfernen")
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.clicked.connect(self.open_pdf)
@@ -410,10 +412,12 @@ class MainWindow(QMainWindow):
         btn_rotate_reset.clicked.connect(self.reset_rotation)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.extract_text_all_pages_and_suggest)
+        btn_ocr_all.clicked.connect(self.ocr_all_pages_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
+        btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
 
         toolbar_top = QHBoxLayout()
         toolbar_top.addWidget(btn_open)
@@ -437,11 +441,13 @@ class MainWindow(QMainWindow):
         toolbar_bottom = QHBoxLayout()
         toolbar_bottom.addWidget(btn_extract)
         toolbar_bottom.addWidget(btn_extract_all)
+        toolbar_bottom.addWidget(btn_ocr_all)
         toolbar_bottom.addWidget(btn_saveas)
         toolbar_bottom.addSpacing(10)
         toolbar_bottom.addWidget(btn_split)
         toolbar_bottom.addWidget(btn_reorder)
         toolbar_bottom.addWidget(btn_merge)
+        toolbar_bottom.addWidget(btn_remove_empty)
         toolbar_bottom.addStretch(1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -951,6 +957,165 @@ class MainWindow(QMainWindow):
                 f"\nFehleranzahl: {len(ocr_failed_pages)}"
                 f"\n\nErster Fehler:\n{ocr_error_preview}",
             )
+
+    def ocr_all_pages_and_suggest(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        total = len(self.doc)
+        if total == 0:
+            QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
+            return
+
+        progress = QProgressDialog("Führe OCR auf allen Seiten aus …", "Abbrechen", 0, total, self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        all_text_parts: list[str] = []
+        all_low_conf_tokens: list[str] = []
+        ocr_failed_pages: list[int] = []
+        ocr_error_preview: str = ""
+
+        for idx in range(total):
+            progress.setValue(idx)
+            progress.setLabelText(f"OCR Seite {idx + 1}/{total} …")
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                QMessageBox.information(self, "Abgebrochen", "OCR wurde abgebrochen.")
+                return
+
+            page = self.doc[idx]
+            rotation = self.page_rotations.get(idx, 0)
+            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+            text, ocr_error, low_conf_tokens = self._ocr_image_with_confidence(img, show_error=False)
+            all_low_conf_tokens.extend(low_conf_tokens)
+            if ocr_error:
+                ocr_failed_pages.append(idx + 1)
+                if not ocr_error_preview:
+                    ocr_error_preview = ocr_error
+                continue
+
+            text = text.strip()
+            if text:
+                all_text_parts.append(text)
+
+        progress.setValue(total)
+
+        combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
+        combined_text = self._apply_learning_rules(combined_text)
+        self.text_output.setPlainText(combined_text)
+        self.suggested_name.setText(suggest_filename_from_text(combined_text))
+        self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
+        self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
+
+        if ocr_failed_pages:
+            pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
+            if len(ocr_failed_pages) > 10:
+                pages += ", …"
+            QMessageBox.warning(
+                self,
+                "OCR teilweise fehlgeschlagen",
+                "OCR wurde fortgesetzt, aber auf einigen Seiten ist ein Fehler aufgetreten."
+                f"\n\nSeiten: {pages}"
+                f"\nFehleranzahl: {len(ocr_failed_pages)}"
+                f"\n\nErster Fehler:\n{ocr_error_preview}",
+            )
+
+    def _is_page_likely_empty(self, page: fitz.Page) -> bool:
+        text = page.get_text("text")
+        if re.search(r"\w", text):
+            return False
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(0.7, 0.7), colorspace=fitz.csGRAY, alpha=False)
+        if not pix.samples:
+            return True
+
+        samples = pix.samples
+        dark_pixels = sum(1 for val in samples if val < 245)
+        dark_ratio = dark_pixels / len(samples)
+
+        return dark_ratio < 0.0025
+
+    def remove_empty_pages_to_new_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        total = len(self.doc)
+        if total == 0:
+            QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
+            return
+
+        progress = QProgressDialog("Prüfe Seiten auf Leere …", "Abbrechen", 0, total, self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        keep_indices: list[int] = []
+        removed_pages: list[int] = []
+
+        for idx in range(total):
+            progress.setValue(idx)
+            progress.setLabelText(f"Seite {idx + 1}/{total} wird analysiert …")
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                QMessageBox.information(self, "Abgebrochen", "Analyse wurde abgebrochen.")
+                return
+
+            page = self.doc[idx]
+            if self._is_page_likely_empty(page):
+                removed_pages.append(idx + 1)
+            else:
+                keep_indices.append(idx)
+
+        progress.setValue(total)
+
+        if not removed_pages:
+            QMessageBox.information(self, "Fertig", "Keine leeren Seiten gefunden.")
+            return
+
+        if not keep_indices:
+            QMessageBox.warning(self, "Hinweis", "Alle Seiten wurden als leer erkannt. Es wurde keine Datei erstellt.")
+            return
+
+        default_name = f"{self.pdf_path.stem}_ohne_leere_seiten.pdf"
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "PDF ohne leere Seiten speichern",
+            str(self.pdf_path.with_name(default_name)),
+            "PDF files (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+
+        out_doc = fitz.open()
+        try:
+            for idx in keep_indices:
+                out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+                rot = self.page_rotations.get(idx, 0) % 360
+                if rot:
+                    out_doc[-1].set_rotation(rot)
+            out_doc.save(out_path)
+
+            preview = ", ".join(str(p) for p in removed_pages[:12])
+            if len(removed_pages) > 12:
+                preview += ", …"
+            QMessageBox.information(
+                self,
+                "Erfolg",
+                f"PDF gespeichert:\n{out_path}\n\nEntfernte leere Seiten: {len(removed_pages)}\nSeiten: {preview}",
+            )
+            self.statusBar().showMessage(f"Leere Seiten entfernt: {len(removed_pages)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Leere Seiten konnten nicht entfernt werden:\n{e}")
+        finally:
+            out_doc.close()
 
     def _ocr_lang(self) -> str:
         lang = self.ocr_lang_input.text().strip()

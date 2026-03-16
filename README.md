@@ -45,9 +45,11 @@ python app.py
 - Zoom controls (+/−/reset) and page rotation
 - Extract text (native PDF text, fallback OCR)
 - Extract all pages with progress + partial OCR-failure handling
+- Force OCR for all pages via dedicated button
 - Suggest filename from date/vendor/doc type/number
 - Save-as with suggested name
-- PDF merge, page extraction, and page reordering
+- PDF merge, page extraction, page reordering
+- Remove empty/blank pages into a new PDF
 
 ## Windows .exe testen (GitHub Actions)
 1. Öffne: `Actions` Tab im Repo
