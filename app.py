@@ -1304,6 +1304,31 @@ class MainWindow(QMainWindow):
             return "Dokument.pdf"
 
         page = self.doc[0]
+
+        # Prefer content from lower 2/3 of the first page (skip letterhead/address zone at top)
+        try:
+            h = float(page.rect.height)
+            cutoff = h / 3.0
+            blocks = page.get_text("blocks") or []
+            lower_text_parts: list[str] = []
+            for blk in blocks:
+                if len(blk) < 5:
+                    continue
+                x0, y0, x1, y1, txt = blk[:5]
+                if y0 < cutoff:
+                    continue
+                t = (txt or "").strip()
+                if t:
+                    lower_text_parts.append(t)
+            lower_text = "\n".join(lower_text_parts).strip()
+        except Exception:
+            lower_text = ""
+
+        if lower_text:
+            suggestion = suggest_filename_from_text(lower_text)
+            if suggestion != "Dokument.pdf":
+                return suggestion
+
         native_text = page.get_text("text").strip()
         suggestion = suggest_filename_from_text(native_text)
         if suggestion != "Dokument.pdf":
