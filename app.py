@@ -1669,6 +1669,9 @@ class MainWindow(QMainWindow):
                     self._close_open_document()
                     tmp_out.replace(dest_path)
                     self.doc = fitz.open(str(dest_path))
+                    # Rotations are now baked into the PDF. Keep in-memory overrides clean
+                    # to avoid applying them a second time in the preview.
+                    self.page_rotations.clear()
                 else:
                     out_doc.save(str(dest_path))
             finally:
