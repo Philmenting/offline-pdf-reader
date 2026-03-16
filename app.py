@@ -448,15 +448,14 @@ class MainWindow(QMainWindow):
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.text_output = QTextEdit()
-        self.text_output.setReadOnly(True)
-        self.text_output.setPlaceholderText("Extrahierter Text erscheint hier …")
+        self.extracted_text = ""
+        self.text_dialog: QDialog | None = None
+        self.text_output_view: QTextEdit | None = None
 
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
-        self.ocr_lang_input = QLineEdit("deu+eng")
-        self.ocr_lang_input.setPlaceholderText("z.B. deu+eng")
+        self.ocr_lang = "deu+eng"
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
         self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -464,29 +463,42 @@ class MainWindow(QMainWindow):
         self.ocr_feedback = QLabel("OCR-Hinweise: -")
         self.ocr_feedback.setWordWrap(True)
 
-        btn_open = QPushButton("PDF öffnen")
-        btn_first = QPushButton("⏮ Erste")
-        btn_prev = QPushButton("◀ Vorherige")
-        btn_next = QPushButton("Nächste ▶")
-        btn_last = QPushButton("Letzte ⏭")
-        btn_zoom_out = QPushButton("− Zoom")
-        btn_zoom_in = QPushButton("+ Zoom")
+        btn_open = QPushButton("Öffnen")
+        btn_first = QPushButton("⏮")
+        btn_prev = QPushButton("◀")
+        btn_next = QPushButton("▶")
+        btn_last = QPushButton("⏭")
+        btn_zoom_out = QPushButton("−")
+        btn_zoom_in = QPushButton("+")
         btn_zoom_reset = QPushButton("100%")
-        btn_goto = QPushButton("Gehe zu Seite")
-        btn_rotate_left = QPushButton("↺ Drehen")
-        btn_rotate_right = QPushButton("↻ Drehen")
-        btn_rotate_reset = QPushButton("⟲ Reset-Drehung")
-        btn_extract = QPushButton("Text/OCR extrahieren")
-        btn_extract_all = QPushButton("Alle Seiten extrahieren")
-        btn_ocr_all = QPushButton("OCR alle Seiten")
-        btn_saveas = QPushButton("Speichern als …")
-        btn_merge = QPushButton("PDFs mergen")
-        btn_split = QPushButton("Seiten extrahieren")
-        btn_reorder = QPushButton("Seiten neu anordnen")
-        btn_remove_empty = QPushButton("Leere Seiten entfernen")
+        btn_goto = QPushButton("#")
+        btn_rotate_left = QPushButton("↺")
+        btn_rotate_right = QPushButton("↻")
+        btn_rotate_reset = QPushButton("⟲")
+        btn_extract = QPushButton("OCR")
+        btn_extract_all = QPushButton("Text alle")
+        btn_ocr_all = QPushButton("OCR alle")
+        btn_saveas = QPushButton("Speichern")
+        btn_merge = QPushButton("Merge")
+        btn_split = QPushButton("Extrakt")
+        btn_reorder = QPushButton("Sortieren")
+        btn_remove_empty = QPushButton("Leer entfernen")
 
         for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        btn_open.setToolTip("PDF öffnen")
+        btn_first.setToolTip("Erste Seite")
+        btn_prev.setToolTip("Vorherige Seite")
+        btn_next.setToolTip("Nächste Seite")
+        btn_last.setToolTip("Letzte Seite")
+        btn_zoom_out.setToolTip("Zoom verkleinern")
+        btn_zoom_in.setToolTip("Zoom vergrößern")
+        btn_zoom_reset.setToolTip("Zoom auf 100%")
+        btn_goto.setToolTip("Gehe zu Seite")
+        btn_rotate_left.setToolTip("Nach links drehen")
+        btn_rotate_right.setToolTip("Nach rechts drehen")
+        btn_rotate_reset.setToolTip("Drehung zurücksetzen")
 
         btn_open.clicked.connect(self.open_pdf)
         btn_first.clicked.connect(self.first_page)
@@ -528,70 +540,76 @@ class MainWindow(QMainWindow):
         toolbar_top.addWidget(btn_rotate_reset)
         toolbar_top.addStretch(1)
 
-        toolbar_bottom = QHBoxLayout()
-        toolbar_bottom.addWidget(btn_extract)
-        toolbar_bottom.addWidget(btn_extract_all)
-        toolbar_bottom.addWidget(btn_ocr_all)
-        toolbar_bottom.addWidget(btn_saveas)
-        toolbar_bottom.addSpacing(10)
-        toolbar_bottom.addWidget(btn_split)
-        toolbar_bottom.addWidget(btn_reorder)
-        toolbar_bottom.addWidget(btn_merge)
-        toolbar_bottom.addWidget(btn_remove_empty)
-        toolbar_bottom.addStretch(1)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.preview_scroll)
-        splitter.addWidget(self.text_output)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-
-        meta_row = QHBoxLayout()
-        meta_row.addWidget(QLabel("OCR-Sprachen (Tesseract):"))
-        meta_row.addWidget(self.ocr_lang_input)
-        meta_row.addSpacing(10)
-        meta_row.addWidget(QLabel("Dateiname:"))
-        meta_row.addWidget(self.suggested_name)
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Dateiname:"))
+        name_row.addWidget(self.suggested_name)
+        name_row.addStretch(1)
 
         layout = QVBoxLayout()
+        layout.addLayout(name_row)
         layout.addLayout(toolbar_top)
-        layout.addLayout(toolbar_bottom)
         layout.addWidget(self.page_info)
-        layout.addWidget(splitter)
-        layout.addLayout(meta_row)
+        layout.addWidget(self.preview_scroll)
         layout.addWidget(self.ocr_feedback)
 
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        menu = self.menuBar().addMenu("Datei")
+        menu_file = self.menuBar().addMenu("Datei")
         act_open = QAction("Öffnen", self)
         act_open.setShortcut("Ctrl+O")
         act_open.triggered.connect(self.open_pdf)
-        menu.addAction(act_open)
+        menu_file.addAction(act_open)
 
         act_close_pdf = QAction("PDF schließen", self)
         act_close_pdf.setShortcut("Ctrl+W")
         act_close_pdf.triggered.connect(self.close_pdf)
-        menu.addAction(act_close_pdf)
+        menu_file.addAction(act_close_pdf)
 
-        menu.addSeparator()
+        menu_file.addSeparator()
 
         act_save_as = QAction("Speichern als …", self)
         act_save_as.setShortcut("Ctrl+S")
         act_save_as.triggered.connect(self.save_as_suggested)
-        menu.addAction(act_save_as)
+        menu_file.addAction(act_save_as)
 
+        menu_ocr = self.menuBar().addMenu("OCR & Text")
         act_extract_current = QAction("Aktuelle Seite extrahieren", self)
         act_extract_current.setShortcut("Ctrl+E")
         act_extract_current.triggered.connect(self.extract_text_and_suggest)
-        menu.addAction(act_extract_current)
+        menu_ocr.addAction(act_extract_current)
 
         act_extract = QAction("Alle Seiten extrahieren", self)
         act_extract.setShortcut("Ctrl+Shift+E")
         act_extract.triggered.connect(self.extract_text_all_pages_and_suggest)
-        menu.addAction(act_extract)
+        menu_ocr.addAction(act_extract)
+
+        act_ocr_all = QAction("OCR alle Seiten", self)
+        act_ocr_all.triggered.connect(self.ocr_all_pages_and_suggest)
+        menu_ocr.addAction(act_ocr_all)
+
+        act_show_text = QAction("Extrahierten Text anzeigen", self)
+        act_show_text.setShortcut("Ctrl+T")
+        act_show_text.triggered.connect(self.show_extracted_text_window)
+        menu_ocr.addAction(act_show_text)
+
+        menu_tools = self.menuBar().addMenu("PDF-Werkzeuge")
+        act_split = QAction("Seiten extrahieren", self)
+        act_split.triggered.connect(self.extract_pages_to_new_pdf)
+        menu_tools.addAction(act_split)
+
+        act_reorder = QAction("Seiten neu anordnen", self)
+        act_reorder.triggered.connect(self.reorder_pages_to_new_pdf)
+        menu_tools.addAction(act_reorder)
+
+        act_merge = QAction("PDFs mergen", self)
+        act_merge.triggered.connect(self.merge_pdfs)
+        menu_tools.addAction(act_merge)
+
+        act_remove_empty = QAction("Leere Seiten entfernen", self)
+        act_remove_empty.triggered.connect(self.remove_empty_pages_to_new_pdf)
+        menu_tools.addAction(act_remove_empty)
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._apply_styles()
@@ -651,6 +669,29 @@ class MainWindow(QMainWindow):
         for src, dst in replacements.items():
             out = re.sub(rf"\b{re.escape(src)}\b", dst, out)
         return out
+
+    def _set_extracted_text(self, text: str) -> None:
+        self.extracted_text = text
+        if self.text_output_view is not None:
+            self.text_output_view.setPlainText(text)
+
+    def show_extracted_text_window(self) -> None:
+        if self.text_dialog is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Extrahierter OCR/Text")
+            dlg.resize(880, 620)
+            lay = QVBoxLayout(dlg)
+            view = QTextEdit()
+            view.setReadOnly(True)
+            view.setPlaceholderText("Noch kein Text extrahiert.")
+            view.setPlainText(self.extracted_text or "")
+            lay.addWidget(view)
+            self.text_dialog = dlg
+            self.text_output_view = view
+        self.text_output_view.setPlainText(self.extracted_text or "")
+        self.text_dialog.show()
+        self.text_dialog.raise_()
+        self.text_dialog.activateWindow()
 
     def _ocr_image_with_confidence(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None, list[str]]:
         text, err = self._ocr_image(img, show_error=show_error)
@@ -749,7 +790,7 @@ class MainWindow(QMainWindow):
         self.page_rotations.clear()
         self.preview.setText("Kein PDF geladen")
         self.page_info.setText("Seite: -/- | Zoom: 100%")
-        self.text_output.clear()
+        self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
         self.statusBar().showMessage("PDF geschlossen.")
@@ -772,7 +813,7 @@ class MainWindow(QMainWindow):
         self.zoom_factor = 1.35
         self.page_rotations.clear()
         self.render_current_page()
-        self.text_output.clear()
+        self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
@@ -1011,7 +1052,7 @@ class MainWindow(QMainWindow):
             text = "(Kein Text erkannt)"
 
         text = self._apply_learning_rules(text)
-        self.text_output.setPlainText(text)
+        self._set_extracted_text(text)
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
         self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
@@ -1067,7 +1108,7 @@ class MainWindow(QMainWindow):
 
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
-        self.text_output.setPlainText(combined_text)
+        self._set_extracted_text(combined_text)
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
@@ -1135,7 +1176,7 @@ class MainWindow(QMainWindow):
 
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
-        self.text_output.setPlainText(combined_text)
+        self._set_extracted_text(combined_text)
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
@@ -1262,8 +1303,7 @@ class MainWindow(QMainWindow):
         return suggest_filename_from_text(text)
 
     def _ocr_lang(self) -> str:
-        lang = self.ocr_lang_input.text().strip()
-        return lang or "deu+eng"
+        return self.ocr_lang or "deu+eng"
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         lang = self._ocr_lang()
