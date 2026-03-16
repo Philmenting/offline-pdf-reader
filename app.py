@@ -58,8 +58,10 @@ class ReorderPagesDialog(QDialog):
 
         self.list_widget = QListWidget()
         self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-        self.list_widget.setMovement(QListWidget.Movement.Snap)
+        self.list_widget.setMovement(QListWidget.Movement.Static)
         self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.list_widget.setWrapping(True)
+        self.list_widget.setFlow(QListWidget.Flow.LeftToRight)
         self.list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_widget.setDragEnabled(True)
@@ -78,7 +80,7 @@ class ReorderPagesDialog(QDialog):
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
             item = QListWidgetItem(QIcon(QPixmap.fromImage(img)), f"Seite {i + 1}")
             item.setData(Qt.ItemDataRole.UserRole, i)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             self.list_widget.addItem(item)
 
         layout.addWidget(self.list_widget)
@@ -323,6 +325,18 @@ def suggest_filename_from_text(text: str) -> str:
     info = parse_doc_info(text)
     if info.subject:
         return sanitize_filename(info.subject) + ".pdf"
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for ln in lines[:30]:
+        ll = ln.lower()
+        if len(ln) < 6:
+            continue
+        if re.fullmatch(r"[\d\W_]+", ln):
+            continue
+        if any(k in ll for k in ["straße", "str.", "strasse", "street", "deutschland", "germany", "www.", "telefon", "phone", "fax", "mail"]):
+            continue
+        return sanitize_filename(ln) + ".pdf"
+
     return "Dokument.pdf"
 
 
@@ -1290,17 +1304,23 @@ class MainWindow(QMainWindow):
             return "Dokument.pdf"
 
         page = self.doc[0]
-        text = page.get_text("text").strip()
-        if len(text) < 20:
-            rotation = self.page_rotations.get(0, 0)
-            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            ocr_text, _ = self._ocr_image(img, show_error=False)
-            if ocr_text:
-                text = ocr_text
+        native_text = page.get_text("text").strip()
+        suggestion = suggest_filename_from_text(native_text)
+        if suggestion != "Dokument.pdf":
+            return suggestion
 
-        return suggest_filename_from_text(text)
+        # Fallback to OCR for scanned/low-quality first pages
+        rotation = self.page_rotations.get(0, 0)
+        matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        ocr_text, _ = self._ocr_image(img, show_error=False)
+        if ocr_text:
+            suggestion = suggest_filename_from_text(ocr_text)
+            if suggestion != "Dokument.pdf":
+                return suggestion
+
+        return suggestion
 
     def _ocr_lang(self) -> str:
         return self.ocr_lang or "deu+eng"
