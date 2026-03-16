@@ -103,7 +103,10 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 break
 
     if not date:
-        m_compact = re.search(r"(?i)\b(?:datum|date)\s*[:\-]?\s*(\d{8}|\d{6})\b", text)
+        m_compact = re.search(
+            r"(?i)\b(?:datum|date|rechnungsdatum|belegdatum|invoice\s+date)\s*[:\-]?\s*(\d{8}|\d{6})\b",
+            text,
+        )
         if m_compact:
             raw = m_compact.group(1)
             try:
