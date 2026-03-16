@@ -660,6 +660,10 @@ class MainWindow(QMainWindow):
         act_ocr_all.triggered.connect(self.ocr_all_pages_and_suggest)
         menu_ocr.addAction(act_ocr_all)
 
+        act_ocr_lang = QAction("OCR-Sprache wählen …", self)
+        act_ocr_lang.triggered.connect(self.choose_ocr_language)
+        menu_ocr.addAction(act_ocr_lang)
+
         act_show_text = QAction("Extrahierten Text anzeigen", self)
         act_show_text.setShortcut("Ctrl+T")
         act_show_text.triggered.connect(self.show_extracted_text_window)
@@ -1536,6 +1540,49 @@ class MainWindow(QMainWindow):
                 return suggestion
 
         return suggestion
+
+    def choose_ocr_language(self) -> None:
+        options = [
+            ("Deutsch + Englisch (deu+eng)", "deu+eng"),
+            ("Deutsch (deu)", "deu"),
+            ("Englisch (eng)", "eng"),
+            ("Französisch (fra)", "fra"),
+            ("Spanisch (spa)", "spa"),
+            ("Italienisch (ita)", "ita"),
+        ]
+        labels = [label for label, _ in options] + ["Benutzerdefiniert …"]
+
+        current_label = next((label for label, code in options if code == self._ocr_lang()), labels[0])
+        choice, ok = QInputDialog.getItem(
+            self,
+            "OCR-Sprache wählen",
+            "Tesseract-Sprachcode:",
+            labels,
+            max(0, labels.index(current_label)),
+            False,
+        )
+        if not ok:
+            return
+
+        if choice == "Benutzerdefiniert …":
+            custom, ok_custom = QInputDialog.getText(
+                self,
+                "OCR-Sprache (benutzerdefiniert)",
+                "Code (z. B. deu+eng, eng, deu):",
+                QLineEdit.EchoMode.Normal,
+                self._ocr_lang(),
+            )
+            if not ok_custom:
+                return
+            custom = (custom or "").strip()
+            if not custom:
+                QMessageBox.information(self, "Hinweis", "Kein Sprachcode eingegeben.")
+                return
+            self.ocr_lang = custom
+        else:
+            self.ocr_lang = dict(options)[choice]
+
+        self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
 
     def _ocr_lang(self) -> str:
         return self.ocr_lang or "deu+eng"
