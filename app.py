@@ -641,7 +641,7 @@ class MainWindow(QMainWindow):
         menu_file.addAction(act_undo)
 
         act_redo = QAction("Wiederholen", self)
-        act_redo.setShortcut("Ctrl+Y")
+        act_redo.setShortcuts(["Ctrl+Y", "Ctrl+Shift+Z"])
         act_redo.triggered.connect(self.redo_last_change)
         menu_file.addAction(act_redo)
 
