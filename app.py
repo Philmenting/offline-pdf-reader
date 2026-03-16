@@ -1071,6 +1071,11 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
+        focused = QApplication.focusWidget()
+        if isinstance(focused, (QLineEdit, QTextEdit)):
+            super().keyPressEvent(event)
+            return
+
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
             self.next_page()
             return
