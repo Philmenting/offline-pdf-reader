@@ -192,7 +192,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     # Number (supports common separators like / and _, trims trailing punctuation)
     number = ""
     number_patterns = [
-        r"(?i)(?:rechnungs(?:nr|nummer)\.?|invoice\s*(?:no|number)\.?|belegnr\.?|vorgangs(?:nr|nummer)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+        r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number)\.?|belegnr\.?|vorgangs(?:nr|nummer)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
         r"(?i)\b(?:inv|doc)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b",
     ]
     for pat in number_patterns:
