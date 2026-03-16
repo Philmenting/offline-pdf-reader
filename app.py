@@ -1293,5 +1293,11 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
+
+    if len(sys.argv) > 1:
+        candidate = Path(sys.argv[1]).expanduser()
+        if candidate.exists() and candidate.suffix.lower() == ".pdf":
+            win._open_pdf_path(str(candidate))
+
     win.show()
     sys.exit(app.exec())
