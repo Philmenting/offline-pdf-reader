@@ -1385,9 +1385,13 @@ class MainWindow(QMainWindow):
                 if same_target:
                     tmp_out = dest_path.with_name(f"{dest_path.stem}.tmp{dest_path.suffix}")
                     out_doc.save(str(tmp_out))
+
+                    # Replace can fail on Windows while the original file is still open.
+                    self._close_open_document()
                     tmp_out.replace(dest_path)
+                    self.doc = fitz.open(str(dest_path))
                 else:
-                    out_doc.save(out_path)
+                    out_doc.save(str(dest_path))
             finally:
                 out_doc.close()
 
