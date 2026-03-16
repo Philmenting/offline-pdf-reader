@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import fitz  # PyMuPDF
 import pytesseract
@@ -1290,13 +1291,32 @@ class MainWindow(QMainWindow):
         return ordered
 
 
+def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
+    value = (raw_arg or "").strip()
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme == "file":
+        file_path = unquote(parsed.path or "")
+        if parsed.netloc:
+            file_path = f"//{parsed.netloc}{file_path}"
+        candidate = Path(file_path).expanduser()
+    else:
+        candidate = Path(value).expanduser()
+
+    if candidate.exists() and candidate.is_file() and candidate.suffix.lower() == ".pdf":
+        return candidate
+    return None
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
 
     if len(sys.argv) > 1:
-        candidate = Path(sys.argv[1]).expanduser()
-        if candidate.exists() and candidate.suffix.lower() == ".pdf":
+        candidate = resolve_startup_pdf_argument(sys.argv[1])
+        if candidate is not None:
             win._open_pdf_path(str(candidate))
 
     win.show()
