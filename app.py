@@ -63,6 +63,7 @@ class ReorderPagesDialog(QDialog):
         self.list_widget.setWrapping(True)
         self.list_widget.setFlow(QListWidget.Flow.LeftToRight)
         self.list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.list_widget.setDragDropOverwriteMode(False)
         self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_widget.setDragEnabled(True)
         self.list_widget.setAcceptDrops(True)
@@ -103,6 +104,28 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r"\s+", "_", name.strip())
     name = re.sub(r"_+", "_", name)
     return name[:140] or "Dokument"
+
+
+def _looks_like_subject_line(line: str) -> bool:
+    ln = (line or "").strip()
+    if len(ln) < 10:
+        return False
+    if re.fullmatch(r"[\W_\d]+", ln):
+        return False
+
+    low = ln.lower()
+    if any(k in low for k in ["straße", "str.", "strasse", "street", "telefon", "phone", "fax", "www.", "mail", "e-mail", "deutschland", "germany"]):
+        return False
+
+    words = re.findall(r"[A-Za-zÄÖÜäöüß]{2,}", ln)
+    if len(words) < 3:
+        return False
+
+    short_words = [w for w in words if len(w) <= 2]
+    if len(short_words) > max(2, len(words) // 2):
+        return False
+
+    return True
 
 
 def parse_doc_info(text: str) -> ParsedDocInfo:
@@ -280,19 +303,28 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             return True
         return False
 
-    # Subject heuristic: prefer explicit Betreff/Subject; else first title-like line
+    # Subject heuristic: prefer explicit Betreff/Subject; else best title-like line
     subject = ""
     m_subject = re.search(r"(?im)^(?:betreff|subject)\s*[:\-]\s*(.+)$", text)
     if m_subject:
         subject = m_subject.group(1).strip()
     else:
-        for ln in lines[:40]:
-            ll = ln.lower()
-            if len(ln) < 6:
+        preferred_keywords = ["verkauf", "teilgrundstück", "grundstück", "betreff", "antrag", "kündigung", "vertrag", "rechnung", "invoice", "angebot", "gutschrift"]
+        weighted: list[tuple[int, str]] = []
+        for idx, ln in enumerate(lines[:60]):
+            if not _looks_like_subject_line(ln):
                 continue
-            if any(k in ll for k in ["rechnung", "invoice", "angebot", "quote", "gutschrift", "contract", "vertrag", "lieferschein"]):
-                subject = ln
-                break
+            ll = ln.lower()
+            score = 0
+            if any(k in ll for k in preferred_keywords):
+                score += 8
+            score += min(6, len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", ln)))
+            if idx < 25:
+                score += 2
+            weighted.append((score, ln))
+        if weighted:
+            weighted.sort(key=lambda x: x[0], reverse=True)
+            subject = weighted[0][1]
 
     # Sender/vendor heuristic:
     # top-left often recipient; skip address-like and subject/doc lines and prefer company-like names
@@ -327,15 +359,9 @@ def suggest_filename_from_text(text: str) -> str:
         return sanitize_filename(info.subject) + ".pdf"
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    for ln in lines[:30]:
-        ll = ln.lower()
-        if len(ln) < 6:
-            continue
-        if re.fullmatch(r"[\d\W_]+", ln):
-            continue
-        if any(k in ll for k in ["straße", "str.", "strasse", "street", "deutschland", "germany", "www.", "telefon", "phone", "fax", "mail"]):
-            continue
-        return sanitize_filename(ln) + ".pdf"
+    for ln in lines[:40]:
+        if _looks_like_subject_line(ln):
+            return sanitize_filename(ln) + ".pdf"
 
     return "Dokument.pdf"
 
