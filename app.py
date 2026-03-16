@@ -1966,6 +1966,12 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         file_path = unquote(parsed.path or "")
         if parsed.netloc:
             file_path = f"//{parsed.netloc}{file_path}"
+
+        # Windows file URIs are often shaped like /C:/path/to/file.pdf.
+        # Strip the leading slash so Path resolves correctly on Windows.
+        if os.name == "nt" and re.match(r"^/[A-Za-z]:/", file_path):
+            file_path = file_path[1:]
+
         candidate = Path(file_path).expanduser()
     elif parsed.scheme == "" and (parsed.query or parsed.fragment):
         # Desktop launchers occasionally append URL-style query/fragment parts
