@@ -314,23 +314,9 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
 def suggest_filename_from_text(text: str) -> str:
     info = parse_doc_info(text)
-    parts = []
-    if info.date:
-        parts.append(info.date)
-    parts.append(info.doc_type)
     if info.subject:
-        parts.append(info.subject)
-    if info.vendor:
-        parts.append(info.vendor)
-    if info.number:
-        parts.append(info.number)
-
-    amount, currency = extract_total_amount_info(text)
-    if amount and info.doc_type in {"Rechnung", "Gutschrift"}:
-        amount_tag = amount.replace(",", "-")
-        parts.append(f"{amount_tag}{currency or 'EUR'}")
-
-    return sanitize_filename("_".join(parts)) + ".pdf"
+        return sanitize_filename(info.subject) + ".pdf"
+    return "Dokument.pdf"
 
 
 def _normalize_amount_token(raw: str) -> str:
@@ -1019,7 +1005,7 @@ class MainWindow(QMainWindow):
 
         text = self._apply_learning_rules(text)
         self.text_output.setPlainText(text)
-        self.suggested_name.setText(suggest_filename_from_text(text))
+        self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
         self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
 
@@ -1075,7 +1061,7 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
         self.text_output.setPlainText(combined_text)
-        self.suggested_name.setText(suggest_filename_from_text(combined_text))
+        self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
 
@@ -1143,7 +1129,7 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
         self.text_output.setPlainText(combined_text)
-        self.suggested_name.setText(suggest_filename_from_text(combined_text))
+        self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
 
@@ -1250,6 +1236,23 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Leere Seiten entfernt: {len(removed_pages)} (nicht gespeichert)")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Leere Seiten konnten nicht entfernt werden:\n{e}")
+
+    def _suggest_name_from_first_page(self) -> str:
+        if not self.doc or len(self.doc) == 0:
+            return "Dokument.pdf"
+
+        page = self.doc[0]
+        text = page.get_text("text").strip()
+        if len(text) < 20:
+            rotation = self.page_rotations.get(0, 0)
+            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            ocr_text, _ = self._ocr_image(img, show_error=False)
+            if ocr_text:
+                text = ocr_text
+
+        return suggest_filename_from_text(text)
 
     def _ocr_lang(self) -> str:
         lang = self.ocr_lang_input.text().strip()
