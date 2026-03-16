@@ -1574,18 +1574,35 @@ class MainWindow(QMainWindow):
             )
             if not ok_custom:
                 return
-            custom = (custom or "").strip()
-            if not custom:
-                QMessageBox.information(self, "Hinweis", "Kein Sprachcode eingegeben.")
+            normalized = self._normalize_ocr_language_code(custom)
+            if not normalized:
+                QMessageBox.information(
+                    self,
+                    "Ungültiger Sprachcode",
+                    "Bitte einen gültigen Tesseract-Sprachcode eingeben (z. B. deu, eng oder deu+eng).",
+                )
                 return
-            self.ocr_lang = custom
+            self.ocr_lang = normalized
         else:
             self.ocr_lang = dict(options)[choice]
 
         self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
 
+    def _normalize_ocr_language_code(self, code: str | None) -> str:
+        normalized = (code or "").strip().lower().replace(",", "+")
+        normalized = re.sub(r"\s*\+\s*", "+", normalized)
+        normalized = re.sub(r"\+{2,}", "+", normalized)
+        normalized = normalized.strip("+")
+        if not normalized:
+            return ""
+
+        if not re.fullmatch(r"[a-z_]+(?:\+[a-z_]+)*", normalized):
+            return ""
+        return normalized
+
     def _ocr_lang(self) -> str:
-        return self.ocr_lang or "deu+eng"
+        normalized = self._normalize_ocr_language_code(self.ocr_lang)
+        return normalized or "deu+eng"
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         lang = self._ocr_lang()
