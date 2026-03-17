@@ -653,6 +653,8 @@ class MainWindow(QMainWindow):
         btn_rotate_left = QPushButton("↺")
         btn_rotate_right = QPushButton("↻")
         btn_rotate_reset = QPushButton("⟲")
+        self.btn_undo = QPushButton("↶")
+        self.btn_redo = QPushButton("↷")
         btn_extract = QPushButton("OCR")
         btn_extract_all = QPushButton("Text alle")
         btn_ocr_all = QPushButton("OCR alle")
@@ -668,7 +670,7 @@ class MainWindow(QMainWindow):
         self.btn_cancel_ocr = QPushButton("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_hit_prev, btn_hit_next, self.btn_cancel_ocr]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_hit_prev, btn_hit_next, self.btn_cancel_ocr]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.setToolTip("PDF öffnen")
@@ -683,6 +685,8 @@ class MainWindow(QMainWindow):
         btn_rotate_left.setToolTip("Nach links drehen")
         btn_rotate_right.setToolTip("Nach rechts drehen")
         btn_rotate_reset.setToolTip("Drehung zurücksetzen")
+        self.btn_undo.setToolTip("Rückgängig (Ctrl+Z)")
+        self.btn_redo.setToolTip("Wiederholen (Ctrl+Y)")
         btn_search.setToolTip("Text in allen Seiten suchen")
         btn_hit_prev.setToolTip("Vorherigen Treffer")
         btn_hit_next.setToolTip("Nächsten Treffer")
@@ -700,6 +704,8 @@ class MainWindow(QMainWindow):
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
         btn_rotate_reset.clicked.connect(self.reset_rotation)
+        self.btn_undo.clicked.connect(self.undo_last_change)
+        self.btn_redo.clicked.connect(self.redo_last_change)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.extract_text_all_pages_and_suggest)
         btn_ocr_all.clicked.connect(self.ocr_all_pages_and_suggest)
@@ -731,6 +737,9 @@ class MainWindow(QMainWindow):
         toolbar_top.addWidget(btn_rotate_left)
         toolbar_top.addWidget(btn_rotate_right)
         toolbar_top.addWidget(btn_rotate_reset)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(self.btn_undo)
+        toolbar_top.addWidget(self.btn_redo)
         toolbar_top.addStretch(1)
 
         name_row = QHBoxLayout()
@@ -866,6 +875,7 @@ class MainWindow(QMainWindow):
         menu_export.addAction(act_batch_rename)
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
+        self._update_undo_redo_buttons()
         self._apply_styles()
 
     def _configure_tesseract_runtime(self) -> None:
@@ -981,6 +991,12 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
+    def _update_undo_redo_buttons(self) -> None:
+        if hasattr(self, "btn_undo") and self.btn_undo is not None:
+            self.btn_undo.setEnabled(bool(self.undo_stack))
+        if hasattr(self, "btn_redo") and self.btn_redo is not None:
+            self.btn_redo.setEnabled(bool(self.redo_stack))
+
     def _push_undo_state(self) -> None:
         snap = self._snapshot_state()
         if snap is None:
@@ -989,10 +1005,12 @@ class MainWindow(QMainWindow):
         if len(self.undo_stack) > 30:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
+        self._update_undo_redo_buttons()
 
     def undo_last_change(self) -> None:
         if not self.undo_stack:
             self.statusBar().showMessage("Nichts zum Rückgängig machen.")
+            self._update_undo_redo_buttons()
             return
         current = self._snapshot_state()
         snap = self.undo_stack.pop()
@@ -1001,10 +1019,12 @@ class MainWindow(QMainWindow):
         if self._restore_state(snap):
             self._set_dirty(True)
             self.statusBar().showMessage("Änderung rückgängig gemacht.")
+        self._update_undo_redo_buttons()
 
     def redo_last_change(self) -> None:
         if not self.redo_stack:
             self.statusBar().showMessage("Nichts zum Wiederholen.")
+            self._update_undo_redo_buttons()
             return
         current = self._snapshot_state()
         snap = self.redo_stack.pop()
@@ -1013,6 +1033,7 @@ class MainWindow(QMainWindow):
         if self._restore_state(snap):
             self._set_dirty(True)
             self.statusBar().showMessage("Änderung wiederholt.")
+        self._update_undo_redo_buttons()
 
     def _refresh_thumbnails(self) -> None:
         self.thumb_list.blockSignals(True)
@@ -1314,6 +1335,7 @@ class MainWindow(QMainWindow):
         self._update_search_counter()
         self._refresh_thumbnails()
         self._set_dirty(False)
+        self._update_undo_redo_buttons()
         self.statusBar().showMessage("PDF geschlossen.")
 
     def closeEvent(self, event) -> None:
@@ -1356,6 +1378,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.clear()
         self._update_search_counter()
         self._set_dirty(False)
+        self._update_undo_redo_buttons()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
