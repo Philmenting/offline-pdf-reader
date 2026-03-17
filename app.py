@@ -1375,6 +1375,54 @@ class MainWindow(QMainWindow):
                 return
         event.ignore()
 
+    def _map_search_rect_to_view(
+        self,
+        rect: fitz.Rect,
+        page_width: float,
+        page_height: float,
+        rotation: int,
+        scale: float,
+        view_width: int,
+        view_height: int,
+    ) -> tuple[int, int, int, int] | None:
+        x0, y0, x1, y1 = float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)
+        rot = rotation % 360
+
+        def _as_int_box(a0: float, b0: float, a1: float, b1: float) -> tuple[int, int, int, int] | None:
+            lx, rx = sorted((a0, a1))
+            ty, by = sorted((b0, b1))
+            ix = max(0, int(round(lx * scale)))
+            iy = max(0, int(round(ty * scale)))
+            iw = int(round((rx - lx) * scale))
+            ih = int(round((by - ty) * scale))
+            if iw <= 0 or ih <= 0:
+                return None
+            if ix >= view_width or iy >= view_height:
+                return None
+            return ix, iy, iw, ih
+
+        # Primary mapping: clockwise view transform.
+        if rot == 0:
+            mapped = _as_int_box(x0, y0, x1, y1)
+        elif rot == 90:
+            mapped = _as_int_box(page_height - y1, x0, page_height - y0, x1)
+        elif rot == 180:
+            mapped = _as_int_box(page_width - x1, page_height - y1, page_width - x0, page_height - y0)
+        elif rot == 270:
+            mapped = _as_int_box(y0, page_width - x1, y1, page_width - x0)
+        else:
+            mapped = _as_int_box(x0, y0, x1, y1)
+
+        if mapped is not None:
+            return mapped
+
+        # Fallback mapping for environments where +90 is rendered CCW.
+        if rot == 90:
+            return _as_int_box(y0, page_width - x1, y1, page_width - x0)
+        if rot == 270:
+            return _as_int_box(page_height - y1, x0, page_height - y0, x1)
+        return None
+
     def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
             self.preview.clear()
@@ -1405,12 +1453,20 @@ class MainWindow(QMainWindow):
                         pen = QPen(QColor(255, 196, 0))
                         pen.setWidth(3)
                         painter.setPen(pen)
-                        scale = self.zoom_factor
-                        rotation = self.page_rotations.get(self.current_page, 0) % 360
                         for r in rects[:6]:
-                            if rotation != 0:
+                            box = self._map_search_rect_to_view(
+                                rect=r,
+                                page_width=float(page.rect.width),
+                                page_height=float(page.rect.height),
+                                rotation=rotation,
+                                scale=self.zoom_factor,
+                                view_width=qpix.width(),
+                                view_height=qpix.height(),
+                            )
+                            if box is None:
                                 continue
-                            painter.drawRect(int(r.x0 * scale), int(r.y0 * scale), int(r.width * scale), int(r.height * scale))
+                            x, y, w, h = box
+                            painter.drawRect(x, y, w, h)
                         painter.end()
                 except Exception:
                     pass
