@@ -180,17 +180,17 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     elif "angebot" in lower or "quote" in lower:
         doc_type = "Angebot"
     elif (
-        "bestellung" in lower
-        or "purchase order" in lower
-        or re.search(r"\border\b", lower)
-    ):
-        doc_type = "Bestellung"
-    elif (
         "auftragsbestätigung" in lower
         or "auftragsbestaetigung" in lower
         or "order confirmation" in lower
     ):
         doc_type = "Auftragsbestaetigung"
+    elif (
+        "bestellung" in lower
+        or "purchase order" in lower
+        or re.search(r"\border\b", lower)
+    ):
+        doc_type = "Bestellung"
     elif "vertrag" in lower or "contract" in lower:
         doc_type = "Vertrag"
     elif (
