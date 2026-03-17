@@ -1,9 +1,11 @@
+import csv
 import json
 import os
 import re
 import shutil
 import sys
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -13,7 +15,7 @@ import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -45,6 +47,42 @@ class ParsedDocInfo:
     doc_type: str = "Dokument"
     number: str = ""
     subject: str = ""
+
+
+@dataclass
+class ExportRecord:
+    datei: str
+    datum: str
+    typ: str
+    absender: str
+    nummer: str
+    betreff: str
+    betrag: str
+    waehrung: str
+    text_laenge: int
+    text_auszug: str
+
+
+def _normalize_filename_part(value: str, max_len: int = 48) -> str:
+    token = (value or "").strip()
+    if not token:
+        return ""
+    replacements = {
+        "ä": "ae",
+        "ö": "oe",
+        "ü": "ue",
+        "ß": "ss",
+        "Ä": "Ae",
+        "Ö": "Oe",
+        "Ü": "Ue",
+    }
+    for src, dst in replacements.items():
+        token = token.replace(src, dst)
+    token = unicodedata.normalize("NFKD", token)
+    token = token.encode("ascii", "ignore").decode("ascii")
+    token = re.sub(r"[^A-Za-z0-9._-]+", "_", token)
+    token = re.sub(r"_+", "_", token).strip("._-")
+    return token[:max_len]
 
 
 class ReorderPagesDialog(QDialog):
@@ -100,10 +138,8 @@ class ReorderPagesDialog(QDialog):
 
 
 def sanitize_filename(name: str) -> str:
-    name = re.sub(r"[\\/:*?\"<>|]", "_", name)
-    name = re.sub(r"\s+", "_", name.strip())
-    name = re.sub(r"_+", "_", name)
-    return name[:140] or "Dokument"
+    name = _normalize_filename_part(name, max_len=140)
+    return name or "Dokument"
 
 
 def _looks_like_subject_line(line: str) -> bool:
@@ -377,13 +413,26 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
 def suggest_filename_from_text(text: str) -> str:
     info = parse_doc_info(text)
-    if info.subject:
-        return sanitize_filename(info.subject) + ".pdf"
+    parts = [
+        _normalize_filename_part(info.date, max_len=16),
+        _normalize_filename_part(info.doc_type, max_len=28),
+        _normalize_filename_part(info.vendor, max_len=40),
+        _normalize_filename_part(info.number, max_len=28),
+    ]
+    prioritized = [p for p in parts if p]
+    if prioritized:
+        return "_".join(prioritized)[:140] + ".pdf"
+
+    fallback = _normalize_filename_part(info.subject, max_len=90)
+    if fallback:
+        return fallback + ".pdf"
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for ln in lines[:40]:
         if _looks_like_subject_line(ln):
-            return sanitize_filename(ln) + ".pdf"
+            cleaned = _normalize_filename_part(ln, max_len=90)
+            if cleaned:
+                return cleaned + ".pdf"
 
     return "Dokument.pdf"
 
@@ -485,6 +534,45 @@ def candidate_variants(value: str) -> list[str]:
     return sorted(variants)[:6]
 
 
+def build_export_record(file_name: str, text: str) -> ExportRecord:
+    info = parse_doc_info(text)
+    amount, currency = extract_total_amount_info(text)
+    excerpt = re.sub(r"\s+", " ", text).strip()[:220]
+    return ExportRecord(
+        datei=file_name,
+        datum=info.date,
+        typ=info.doc_type,
+        absender=info.vendor,
+        nummer=info.number,
+        betreff=info.subject,
+        betrag=amount,
+        waehrung=currency,
+        text_laenge=len(text),
+        text_auszug=excerpt,
+    )
+
+
+def export_records_as_txt(records: list[ExportRecord]) -> str:
+    parts: list[str] = []
+    for rec in records:
+        parts.append(
+            "\n".join(
+                [
+                    f"Datei: {rec.datei}",
+                    f"Datum: {rec.datum or '-'}",
+                    f"Typ: {rec.typ or '-'}",
+                    f"Absender: {rec.absender or '-'}",
+                    f"Nummer: {rec.nummer or '-'}",
+                    f"Betreff: {rec.betreff or '-'}",
+                    f"Betrag: {(rec.betrag + ' ' + rec.waehrung).strip() or '-'}",
+                    f"Textlänge: {rec.text_laenge}",
+                    f"Auszug: {rec.text_auszug or '-'}",
+                ]
+            )
+        )
+    return "\n\n".join(parts)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -523,6 +611,9 @@ class MainWindow(QMainWindow):
         self.thumb_list.setSpacing(6)
         self.thumb_list.setMinimumWidth(130)
         self.thumb_list.setMaximumWidth(180)
+        self.thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.thumb_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.thumb_list.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
         self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
 
         self.extracted_text = ""
@@ -533,6 +624,15 @@ class MainWindow(QMainWindow):
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
         self.ocr_lang = "deu+eng"
+        self.ocr_cancel_requested = False
+
+        self.search_query = QLineEdit()
+        self.search_query.setPlaceholderText("Suche in allen Seiten …")
+        self.search_results_list = QListWidget()
+        self.search_results_list.setMinimumHeight(140)
+        self.search_results_list.itemClicked.connect(self._on_search_result_clicked)
+        self.search_hits: list[dict] = []
+        self.current_search_hit = -1
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
         self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -560,8 +660,14 @@ class MainWindow(QMainWindow):
         btn_split = QPushButton("Extrakt")
         btn_reorder = QPushButton("Sortieren")
         btn_remove_empty = QPushButton("Leer entfernen")
+        btn_search = QPushButton("Suchen")
+        btn_hit_prev = QPushButton("Treffer ◀")
+        btn_hit_next = QPushButton("Treffer ▶")
+        self.search_counter = QLabel("Treffer: 0/0")
+        self.btn_cancel_ocr = QPushButton("OCR stoppen")
+        self.btn_cancel_ocr.setEnabled(False)
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_hit_prev, btn_hit_next, self.btn_cancel_ocr]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.setToolTip("PDF öffnen")
@@ -576,6 +682,10 @@ class MainWindow(QMainWindow):
         btn_rotate_left.setToolTip("Nach links drehen")
         btn_rotate_right.setToolTip("Nach rechts drehen")
         btn_rotate_reset.setToolTip("Drehung zurücksetzen")
+        btn_search.setToolTip("Text in allen Seiten suchen")
+        btn_hit_prev.setToolTip("Vorherigen Treffer")
+        btn_hit_next.setToolTip("Nächsten Treffer")
+        self.btn_cancel_ocr.setToolTip("Laufenden OCR-Vorgang abbrechen")
 
         btn_open.clicked.connect(self.open_pdf)
         btn_first.clicked.connect(self.first_page)
@@ -597,6 +707,11 @@ class MainWindow(QMainWindow):
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
+        btn_search.clicked.connect(self.search_all_pages)
+        self.search_query.returnPressed.connect(self.search_all_pages)
+        btn_hit_prev.clicked.connect(self.prev_search_hit)
+        btn_hit_next.clicked.connect(self.next_search_hit)
+        self.btn_cancel_ocr.clicked.connect(self.cancel_ocr)
 
         toolbar_top = QHBoxLayout()
         toolbar_top.addWidget(btn_open)
@@ -622,6 +737,18 @@ class MainWindow(QMainWindow):
         name_row.addWidget(self.suggested_name)
         name_row.addStretch(1)
 
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Suche:"))
+        search_row.addWidget(self.search_query, 1)
+        search_row.addWidget(btn_search)
+        search_row.addWidget(btn_hit_prev)
+        search_row.addWidget(btn_hit_next)
+        search_row.addWidget(self.search_counter)
+
+        ocr_row = QHBoxLayout()
+        ocr_row.addWidget(self.ocr_feedback, 1)
+        ocr_row.addWidget(self.btn_cancel_ocr)
+
         content_row = QHBoxLayout()
         content_row.addWidget(self.thumb_list)
         content_row.addWidget(self.preview_scroll, 1)
@@ -629,9 +756,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addLayout(name_row)
         layout.addLayout(toolbar_top)
+        layout.addLayout(search_row)
+        layout.addWidget(self.search_results_list)
         layout.addWidget(self.page_info)
         layout.addLayout(content_row, 1)
-        layout.addWidget(self.ocr_feedback)
+        layout.addLayout(ocr_row)
 
         container = QWidget()
         container.setLayout(layout)
@@ -691,6 +820,11 @@ class MainWindow(QMainWindow):
         act_show_text.triggered.connect(self.show_extracted_text_window)
         menu_ocr.addAction(act_show_text)
 
+        act_search = QAction("In allen Seiten suchen", self)
+        act_search.setShortcut("Ctrl+F")
+        act_search.triggered.connect(self.search_all_pages)
+        menu_ocr.addAction(act_search)
+
         menu_tools = self.menuBar().addMenu("PDF-Werkzeuge")
         act_split = QAction("Seiten extrahieren", self)
         act_split.triggered.connect(self.extract_pages_to_new_pdf)
@@ -707,6 +841,24 @@ class MainWindow(QMainWindow):
         act_remove_empty = QAction("Leere Seiten entfernen", self)
         act_remove_empty.triggered.connect(self.remove_empty_pages_to_new_pdf)
         menu_tools.addAction(act_remove_empty)
+
+        act_delete_pages = QAction("Ausgewählte Seiten löschen", self)
+        act_delete_pages.setShortcut("Delete")
+        act_delete_pages.triggered.connect(self.delete_selected_pages)
+        menu_tools.addAction(act_delete_pages)
+
+        menu_export = self.menuBar().addMenu("Export")
+        act_export_current = QAction("Aktuelle Datei exportieren …", self)
+        act_export_current.triggered.connect(self.export_current_file)
+        menu_export.addAction(act_export_current)
+
+        act_export_folder = QAction("Ordner aggregiert exportieren …", self)
+        act_export_folder.triggered.connect(self.export_folder_aggregate)
+        menu_export.addAction(act_export_folder)
+
+        act_batch_rename = QAction("Ordner Batch-Rename …", self)
+        act_batch_rename.triggered.connect(self.batch_rename_folder)
+        menu_export.addAction(act_batch_rename)
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._apply_styles()
@@ -886,6 +1038,159 @@ class MainWindow(QMainWindow):
             self.current_page = idx
             self.render_current_page()
 
+    def _show_thumbnail_context_menu(self, pos) -> None:
+        item = self.thumb_list.itemAt(pos)
+        if item and not item.isSelected():
+            self.thumb_list.setCurrentItem(item)
+        menu = self.thumb_list.createStandardContextMenu()
+        delete_action = QAction("Ausgewählte Seite(n) löschen", self)
+        delete_action.triggered.connect(self.delete_selected_pages)
+        menu.addSeparator()
+        menu.addAction(delete_action)
+        menu.exec(self.thumb_list.mapToGlobal(pos))
+
+    def delete_selected_pages(self) -> None:
+        if not self.doc or len(self.doc) == 0:
+            return
+        selected = sorted({int(it.data(Qt.ItemDataRole.UserRole)) for it in self.thumb_list.selectedItems()})
+        if not selected:
+            selected = [self.current_page]
+
+        if len(selected) >= len(self.doc):
+            QMessageBox.warning(self, "Nicht möglich", "Mindestens eine Seite muss erhalten bleiben.")
+            return
+
+        if len(selected) > 1:
+            pages_preview = ", ".join(str(p + 1) for p in selected[:12])
+            if len(selected) > 12:
+                pages_preview += ", …"
+            choice = QMessageBox.question(
+                self,
+                "Mehrere Seiten löschen",
+                f"{len(selected)} Seiten wirklich löschen?\n\nSeiten: {pages_preview}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+
+        self._push_undo_state()
+        selected_set = set(selected)
+        old_total = len(self.doc)
+        for idx in reversed(selected):
+            self.doc.delete_page(idx)
+
+        # rotations remap
+        mapping: dict[int, int] = {}
+        new_idx = 0
+        for old_idx in range(old_total):
+            if old_idx in selected_set:
+                continue
+            mapping[old_idx] = new_idx
+            new_idx += 1
+        self.page_rotations = {
+            mapping[old_idx]: rot
+            for old_idx, rot in self.page_rotations.items()
+            if old_idx in mapping and rot % 360 != 0
+        }
+
+        removed_before = sum(1 for s in selected if s < self.current_page)
+        if self.current_page in selected_set:
+            self.current_page = max(0, self.current_page - removed_before)
+        else:
+            self.current_page = max(0, self.current_page - removed_before)
+        if self.doc:
+            self.current_page = min(self.current_page, len(self.doc) - 1)
+
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self._update_search_counter()
+        self._set_dirty(True)
+        self._refresh_thumbnails()
+        self.render_current_page()
+        self.statusBar().showMessage(f"{len(selected)} Seite(n) gelöscht (noch nicht gespeichert)")
+
+    def search_all_pages(self) -> None:
+        if not self.doc:
+            return
+        query = self.search_query.text().strip()
+        if len(query) < 2:
+            QMessageBox.information(self, "Suche", "Bitte mindestens 2 Zeichen eingeben.")
+            return
+
+        self.search_hits = []
+        self.search_results_list.clear()
+        needle = query.casefold()
+
+        for idx in range(len(self.doc)):
+            text = self.doc[idx].get_text("text")
+            for line in text.splitlines():
+                if needle in line.casefold():
+                    hit = {"page": idx, "snippet": line.strip()[:180]}
+                    self.search_hits.append(hit)
+
+        for hit_idx, hit in enumerate(self.search_hits, start=1):
+            item = QListWidgetItem(f"{hit_idx}. S.{hit['page'] + 1}: {hit['snippet']}")
+            item.setData(Qt.ItemDataRole.UserRole, hit_idx - 1)
+            self.search_results_list.addItem(item)
+
+        self.current_search_hit = 0 if self.search_hits else -1
+        self._update_search_counter()
+        if self.search_hits:
+            self.jump_to_search_hit(0)
+        else:
+            self.statusBar().showMessage("Keine Treffer gefunden.")
+
+    def _update_search_counter(self) -> None:
+        total = len(self.search_hits)
+        current = self.current_search_hit + 1 if 0 <= self.current_search_hit < total else 0
+        self.search_counter.setText(f"Treffer: {current}/{total}")
+
+    def _on_search_result_clicked(self, item: QListWidgetItem) -> None:
+        hit_idx = int(item.data(Qt.ItemDataRole.UserRole))
+        self.jump_to_search_hit(hit_idx)
+
+    def jump_to_search_hit(self, hit_idx: int) -> None:
+        if not (0 <= hit_idx < len(self.search_hits)):
+            return
+        self.current_search_hit = hit_idx
+        hit = self.search_hits[hit_idx]
+        self.current_page = hit["page"]
+        self.render_current_page()
+        self.search_results_list.blockSignals(True)
+        self.search_results_list.setCurrentRow(hit_idx)
+        self.search_results_list.blockSignals(False)
+        self._update_search_counter()
+
+    def next_search_hit(self) -> None:
+        if not self.search_hits:
+            return
+        self.jump_to_search_hit((self.current_search_hit + 1) % len(self.search_hits))
+
+    def prev_search_hit(self) -> None:
+        if not self.search_hits:
+            return
+        self.jump_to_search_hit((self.current_search_hit - 1) % len(self.search_hits))
+
+    def cancel_ocr(self) -> None:
+        self.ocr_cancel_requested = True
+        self.statusBar().showMessage("OCR-Abbruch angefordert …")
+
+    def _set_ocr_running(self, running: bool) -> None:
+        self.btn_cancel_ocr.setEnabled(running)
+        if running:
+            self.ocr_cancel_requested = False
+
+    def _ocr_with_retry(self, img: Image.Image, retries: int = 1) -> tuple[str, str | None, list[str]]:
+        last_err: str | None = None
+        for _ in range(retries + 1):
+            text, err, tokens = self._ocr_image_with_confidence(img, show_error=False)
+            if not err:
+                return text, None, tokens
+            last_err = err
+        return "", last_err, []
+
     def _ocr_image_with_confidence(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None, list[str]]:
         text, err = self._ocr_image(img, show_error=show_error)
         if err:
@@ -988,6 +1293,10 @@ class MainWindow(QMainWindow):
         self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self._update_search_counter()
         self._refresh_thumbnails()
         self._set_dirty(False)
         self.statusBar().showMessage("PDF geschlossen.")
@@ -1027,6 +1336,10 @@ class MainWindow(QMainWindow):
         self._set_extracted_text("")
         self.suggested_name.clear()
         self.ocr_feedback.setText("OCR-Hinweise: -")
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self._update_search_counter()
         self._set_dirty(False)
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
@@ -1080,6 +1393,28 @@ class MainWindow(QMainWindow):
         fmt = QImage.Format.Format_RGB888
         img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
         qpix = QPixmap.fromImage(img)
+
+        if 0 <= self.current_search_hit < len(self.search_hits):
+            hit = self.search_hits[self.current_search_hit]
+            if hit.get("page") == self.current_page:
+                try:
+                    rects = page.search_for(self.search_query.text().strip())
+                    if rects:
+                        painter = QPainter(qpix)
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                        pen = QPen(QColor(255, 196, 0))
+                        pen.setWidth(3)
+                        painter.setPen(pen)
+                        scale = self.zoom_factor
+                        rotation = self.page_rotations.get(self.current_page, 0) % 360
+                        for r in rects[:6]:
+                            if rotation != 0:
+                                continue
+                            painter.drawRect(int(r.x0 * scale), int(r.y0 * scale), int(r.width * scale), int(r.height * scale))
+                        painter.end()
+                except Exception:
+                    pass
+
         self.preview.setText("")
         self.preview.setPixmap(qpix)
         self.preview.resize(qpix.size())
@@ -1100,6 +1435,14 @@ class MainWindow(QMainWindow):
         focused = QApplication.focusWidget()
         if isinstance(focused, (QLineEdit, QTextEdit)):
             super().keyPressEvent(event)
+            return
+
+        if key == Qt.Key.Key_Delete and self.thumb_list.hasFocus():
+            self.delete_selected_pages()
+            return
+        if key == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.search_query.setFocus()
+            self.search_query.selectAll()
             return
 
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
@@ -1304,32 +1647,36 @@ class MainWindow(QMainWindow):
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
 
-        for idx in range(total):
-            progress.setValue(idx)
-            progress.setLabelText(f"Seite {idx + 1}/{total} wird verarbeitet …")
-            QApplication.processEvents()
-            if progress.wasCanceled():
-                QMessageBox.information(self, "Abgebrochen", "Extraktion wurde abgebrochen.")
-                return
+        self._set_ocr_running(True)
+        try:
+            for idx in range(total):
+                progress.setValue(idx)
+                progress.setLabelText(f"Seite {idx + 1}/{total} wird verarbeitet …")
+                QApplication.processEvents()
+                if progress.wasCanceled() or self.ocr_cancel_requested:
+                    QMessageBox.information(self, "Abgebrochen", "Extraktion wurde abgebrochen.")
+                    return
 
-            page = self.doc[idx]
-            text = page.get_text("text").strip()
+                page = self.doc[idx]
+                text = page.get_text("text").strip()
 
-            if len(text) < 40:
-                rotation = self.page_rotations.get(idx, 0)
-                matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
-                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                text, ocr_error, low_conf_tokens = self._ocr_image_with_confidence(img, show_error=False)
-                all_low_conf_tokens.extend(low_conf_tokens)
-                if ocr_error:
-                    ocr_failed_pages.append(idx + 1)
-                    if not ocr_error_preview:
-                        ocr_error_preview = ocr_error
-                    text = ""
+                if len(text) < 40:
+                    rotation = self.page_rotations.get(idx, 0)
+                    matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+                    pix = page.get_pixmap(matrix=matrix, alpha=False)
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    text, ocr_error, low_conf_tokens = self._ocr_with_retry(img, retries=1)
+                    all_low_conf_tokens.extend(low_conf_tokens)
+                    if ocr_error:
+                        ocr_failed_pages.append(idx + 1)
+                        if not ocr_error_preview:
+                            ocr_error_preview = ocr_error
+                        text = ""
 
-            if text:
-                all_text_parts.append(text)
+                if text:
+                    all_text_parts.append(text)
+        finally:
+            self._set_ocr_running(False)
 
         progress.setValue(total)
 
@@ -1373,31 +1720,35 @@ class MainWindow(QMainWindow):
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
 
-        for idx in range(total):
-            progress.setValue(idx)
-            progress.setLabelText(f"OCR Seite {idx + 1}/{total} …")
-            QApplication.processEvents()
-            if progress.wasCanceled():
-                QMessageBox.information(self, "Abgebrochen", "OCR wurde abgebrochen.")
-                return
+        self._set_ocr_running(True)
+        try:
+            for idx in range(total):
+                progress.setValue(idx)
+                progress.setLabelText(f"OCR Seite {idx + 1}/{total} …")
+                QApplication.processEvents()
+                if progress.wasCanceled() or self.ocr_cancel_requested:
+                    QMessageBox.information(self, "Abgebrochen", "OCR wurde abgebrochen.")
+                    return
 
-            page = self.doc[idx]
-            rotation = self.page_rotations.get(idx, 0)
-            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                page = self.doc[idx]
+                rotation = self.page_rotations.get(idx, 0)
+                matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
-            text, ocr_error, low_conf_tokens = self._ocr_image_with_confidence(img, show_error=False)
-            all_low_conf_tokens.extend(low_conf_tokens)
-            if ocr_error:
-                ocr_failed_pages.append(idx + 1)
-                if not ocr_error_preview:
-                    ocr_error_preview = ocr_error
-                continue
+                text, ocr_error, low_conf_tokens = self._ocr_with_retry(img, retries=1)
+                all_low_conf_tokens.extend(low_conf_tokens)
+                if ocr_error:
+                    ocr_failed_pages.append(idx + 1)
+                    if not ocr_error_preview:
+                        ocr_error_preview = ocr_error
+                    continue
 
-            text = text.strip()
-            if text:
-                all_text_parts.append(text)
+                text = text.strip()
+                if text:
+                    all_text_parts.append(text)
+        finally:
+            self._set_ocr_running(False)
 
         progress.setValue(total)
 
@@ -1706,6 +2057,120 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Gespeichert: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
+
+    def export_current_file(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        text = self.extracted_text.strip()
+        if not text:
+            text = "\n\n".join(self.doc[i].get_text("text") for i in range(len(self.doc))).strip()
+        record = build_export_record(self.pdf_path.name, text)
+
+        fmt, ok = QInputDialog.getItem(self, "Exportformat", "Format:", ["TXT", "JSON", "CSV"], 0, False)
+        if not ok:
+            return
+        suffix = fmt.lower()
+        out_path, _ = QFileDialog.getSaveFileName(self, "Export speichern", str(self.pdf_path.with_suffix(f".{suffix}")))
+        if not out_path:
+            return
+
+        data = [record]
+        self._write_export_data(Path(out_path), fmt, data)
+        self.statusBar().showMessage(f"Export erstellt: {Path(out_path).name}")
+
+    def export_folder_aggregate(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "PDF-Ordner auswählen")
+        if not folder:
+            return
+        pdfs = sorted(Path(folder).glob("*.pdf"))
+        if not pdfs:
+            QMessageBox.information(self, "Hinweis", "Keine PDFs im Ordner gefunden.")
+            return
+
+        records: list[ExportRecord] = []
+        for pdf in pdfs:
+            try:
+                with fitz.open(str(pdf)) as doc:
+                    text = "\n\n".join(doc[i].get_text("text") for i in range(len(doc))).strip()
+                records.append(build_export_record(pdf.name, text))
+            except Exception:
+                records.append(build_export_record(pdf.name, ""))
+
+        fmt, ok = QInputDialog.getItem(self, "Exportformat", "Format:", ["TXT", "JSON", "CSV"], 1, False)
+        if not ok:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Aggregat speichern", str(Path(folder) / f"export_gesamt.{fmt.lower()}"))
+        if not out_path:
+            return
+        self._write_export_data(Path(out_path), fmt, records)
+        self.statusBar().showMessage(f"Ordner-Export erstellt: {Path(out_path).name}")
+
+    def _write_export_data(self, out_path: Path, fmt: str, records: list[ExportRecord]) -> None:
+        rows = [asdict(r) for r in records]
+        if fmt == "TXT":
+            out_path.write_text(export_records_as_txt(records), encoding="utf-8")
+            return
+        if fmt == "JSON":
+            out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+            return
+        with out_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else list(asdict(ExportRecord("", "", "", "", "", "", "", "", 0, "")).keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def batch_rename_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Ordner für Batch-Rename auswählen")
+        if not folder:
+            return
+        folder_path = Path(folder)
+        files = sorted(folder_path.glob("*.pdf"))
+        if not files:
+            QMessageBox.information(self, "Hinweis", "Keine PDFs gefunden.")
+            return
+
+        proposals: list[tuple[Path, Path]] = []
+        used_targets: set[str] = set()
+        for src in files:
+            try:
+                with fitz.open(str(src)) as doc:
+                    first_page_text = doc[0].get_text("text") if len(doc) else ""
+                base_name = suggest_filename_from_text(first_page_text)
+            except Exception:
+                base_name = "Dokument.pdf"
+            stem = Path(base_name).stem
+            candidate = f"{stem}.pdf"
+            n = 1
+            while candidate.lower() in used_targets or (folder_path / candidate).exists() and (folder_path / candidate) != src:
+                candidate = f"{stem}({n}).pdf"
+                n += 1
+            used_targets.add(candidate.lower())
+            proposals.append((src, folder_path / candidate))
+
+        preview = "\n".join([f"{src.name} -> {dst.name}" for src, dst in proposals[:30]])
+        if len(proposals) > 30:
+            preview += "\n…"
+
+        confirm = QMessageBox.question(
+            self,
+            "Batch-Rename Vorschau (Dry-Run)",
+            "Vorschau (es wurde noch nichts umbenannt):\n\n"
+            f"{preview}\n\n"
+            "Jetzt wirklich umbenennen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        renamed = 0
+        for src, dst in proposals:
+            if src == dst:
+                continue
+            src.rename(dst)
+            renamed += 1
+        QMessageBox.information(self, "Fertig", f"Batch-Rename abgeschlossen: {renamed} Datei(en) umbenannt.")
 
     def merge_pdfs(self) -> None:
         file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF files (*.pdf)")
