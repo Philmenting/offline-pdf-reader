@@ -1961,6 +1961,13 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
     if not value:
         return None
 
+    # Some launch wrappers pass the argument with surrounding quotes intact.
+    # Unwrap one matching quote pair so Path/urlparse handling still works.
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+        if not value:
+            return None
+
     parsed = urlparse(value)
     if parsed.scheme == "file":
         file_path = unquote(parsed.path or "")
