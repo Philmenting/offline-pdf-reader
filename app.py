@@ -1989,6 +1989,13 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if os.name == "nt" and re.match(r"^/[A-Za-z]:/", file_path):
             file_path = file_path[1:]
 
+        # Older producers may encode drive letters as C| instead of C:.
+        # Accept both /C|/path and C|/path legacy forms.
+        if os.name == "nt" and re.match(r"^/?[A-Za-z]\|/", file_path):
+            if file_path.startswith("/"):
+                file_path = file_path[1:]
+            file_path = f"{file_path[0]}:{file_path[2:]}"
+
         candidate = Path(file_path).expanduser()
     elif parsed.scheme == "" and (parsed.query or parsed.fragment):
         # Desktop launchers occasionally append URL-style query/fragment parts
