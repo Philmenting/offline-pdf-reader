@@ -1227,7 +1227,13 @@ class MainWindow(QMainWindow):
         needle = query.casefold()
 
         for idx in range(len(self.doc)):
-            text = self.doc[idx].get_text("text")
+            text = self.doc[idx].get_text("text").strip()
+            if len(text) < 20:
+                rotation = self.page_rotations.get(idx, 0)
+                ocr_text, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
+                if ocr_text:
+                    text = f"{text}\n{ocr_text}".strip()
+
             for line in text.splitlines():
                 if needle in line.casefold():
                     hit = {"page": idx, "snippet": line.strip()[:180]}
