@@ -43,12 +43,16 @@ python app.py
 - Open a PDF
 - Multi-page navigation (buttons, keyboard, mouse wheel, Go-to-page)
 - Zoom controls (+/−/reset) and page rotation
+- Suche über alle Seiten mit Trefferliste, klickbaren Treffern und Trefferzähler (z. B. 3/18)
+- Extrakt/OCR mit Fortschritt pro Seite, Abbruchbutton und robustem Fehlerverhalten (Einzelseitenfehler stoppen nicht den gesamten Lauf)
 - Extract text (native PDF text, fallback OCR)
-- Extract all pages with progress + partial OCR-failure handling
 - Force OCR for all pages via dedicated button
-- Suggest filename from date/vendor/doc type/number
+- Suggest filename from priorisierten Feldern `Datum_Typ_Absender_Nummer` mit konsistenter Normalisierung
 - Save-as with suggested name
 - PDF merge, page extraction, page reordering
+- Seiten im Thumbnail-Bereich per Delete-Taste oder Kontextmenü löschen (inkl. Mehrfach-Confirm)
+- Batch-Rename für Ordner mit Dry-Run-Vorschau und Konfliktauflösung via `(1)`, `(2)`
+- Export (TXT/JSON/CSV) pro Datei und als Ordner-Aggregat auf gemeinsamem Datenmodell
 - Remove empty/blank pages into a new PDF
 
 ## Windows-Test (portable, OCR ohne Extra-Installation)
@@ -60,8 +64,19 @@ python app.py
 
 Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine separate Installation nötig.
 
+## Lightweight validation
+```bash
+python3 validate_helpers.py
+```
+
+## Manuelle Test-Notizen
+- Suche: Begriff eingeben, Trefferliste prüfen, mit Treffer ◀/▶ navigieren, Sprung und Hervorhebung prüfen.
+- OCR-Lauf: OCR alle starten, Abbrechen klicken, danach erneut starten (Retry-Pfad).
+- Thumbnail-Löschen: Mehrfachauswahl im linken Bereich, Delete drücken oder Rechtsklick -> Löschen.
+- Batch-Rename: Ordner auswählen, Vorschau prüfen, dann explizit bestätigen.
+- Export: Einzeldatei-Export und Ordner-Aggregat jeweils in TXT/JSON/CSV erzeugen.
+
 ## Next steps
 - OCR confidence highlighting direkt in der Seitenansicht (Overlay)
 - Verbesserte Korrekturvorschläge für Datum/Betrag/Nummer
-- Batch rename folder mode
 - One-click OCR to new searchable PDF
