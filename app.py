@@ -1962,8 +1962,9 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         return None
 
     # Some launch wrappers pass the argument with surrounding quotes intact.
-    # Unwrap one matching quote pair so Path/urlparse handling still works.
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+    # Repeatedly unwrap matching quote pairs so doubly-wrapped values like
+    # '"/tmp/doc.pdf"' still resolve as file paths.
+    while len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         value = value[1:-1].strip()
         if not value:
             return None
