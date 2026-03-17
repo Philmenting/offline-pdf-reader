@@ -171,20 +171,31 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
     # Doc type
     doc_type = "Dokument"
+    has_order_confirmation = (
+        "auftragsbestätigung" in lower
+        or "auftragsbestaetigung" in lower
+        or "order confirmation" in lower
+    )
+    has_delivery_note = (
+        "lieferschein" in lower
+        or "delivery note" in lower
+        or "dispatch note" in lower
+        or "despatch note" in lower
+        or "packing slip" in lower
+    )
+
     if "gutschrift" in lower or "credit note" in lower or "credit memo" in lower:
         doc_type = "Gutschrift"
     elif "mahnung" in lower or "zahlungserinnerung" in lower or "payment reminder" in lower:
         doc_type = "Mahnung"
+    elif has_order_confirmation:
+        doc_type = "Auftragsbestaetigung"
+    elif has_delivery_note:
+        doc_type = "Lieferschein"
     elif "rechnung" in lower or "invoice" in lower:
         doc_type = "Rechnung"
     elif "angebot" in lower or "quote" in lower:
         doc_type = "Angebot"
-    elif (
-        "auftragsbestätigung" in lower
-        or "auftragsbestaetigung" in lower
-        or "order confirmation" in lower
-    ):
-        doc_type = "Auftragsbestaetigung"
     elif (
         "bestellung" in lower
         or "purchase order" in lower
@@ -193,14 +204,6 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         doc_type = "Bestellung"
     elif "vertrag" in lower or "contract" in lower:
         doc_type = "Vertrag"
-    elif (
-        "lieferschein" in lower
-        or "delivery note" in lower
-        or "dispatch note" in lower
-        or "despatch note" in lower
-        or "packing slip" in lower
-    ):
-        doc_type = "Lieferschein"
 
     # Date
     date_patterns = [
