@@ -630,6 +630,7 @@ class MainWindow(QMainWindow):
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
         self.search_results_list = QListWidget()
         self.search_results_list.setMinimumHeight(140)
+        self.search_results_list.setVisible(False)
         self.search_results_list.itemClicked.connect(self._on_search_result_clicked)
         self.search_hits: list[dict] = []
         self.current_search_hit = -1
@@ -707,7 +708,7 @@ class MainWindow(QMainWindow):
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
-        btn_search.clicked.connect(self.search_all_pages)
+        btn_search.clicked.connect(self.open_search_and_run)
         self.search_query.returnPressed.connect(self.search_all_pages)
         btn_hit_prev.clicked.connect(self.prev_search_hit)
         btn_hit_next.clicked.connect(self.next_search_hit)
@@ -822,7 +823,7 @@ class MainWindow(QMainWindow):
 
         act_search = QAction("In allen Seiten suchen", self)
         act_search.setShortcut("Ctrl+F")
-        act_search.triggered.connect(self.search_all_pages)
+        act_search.triggered.connect(self.open_search)
         menu_ocr.addAction(act_search)
 
         menu_tools = self.menuBar().addMenu("PDF-Werkzeuge")
@@ -1111,9 +1112,19 @@ class MainWindow(QMainWindow):
         self.render_current_page()
         self.statusBar().showMessage(f"{len(selected)} Seite(n) gelöscht (noch nicht gespeichert)")
 
+    def open_search(self) -> None:
+        self.search_results_list.setVisible(True)
+        self.search_query.setFocus()
+        self.search_query.selectAll()
+
+    def open_search_and_run(self) -> None:
+        self.search_results_list.setVisible(True)
+        self.search_all_pages()
+
     def search_all_pages(self) -> None:
         if not self.doc:
             return
+        self.search_results_list.setVisible(True)
         query = self.search_query.text().strip()
         if len(query) < 2:
             QMessageBox.information(self, "Suche", "Bitte mindestens 2 Zeichen eingeben.")
@@ -1497,6 +1508,7 @@ class MainWindow(QMainWindow):
             self.delete_selected_pages()
             return
         if key == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.search_results_list.setVisible(True)
             self.search_query.setFocus()
             self.search_query.selectAll()
             return
