@@ -625,6 +625,10 @@ class MainWindow(QMainWindow):
 
         self.ocr_lang = "deu+eng"
         self.ocr_cancel_requested = False
+        self.ocr_cache: dict[str, tuple[str, str | None, list[str]]] = {}
+        self.ocr_cache_order: list[str] = []
+        self.ocr_cache_max_entries = 80
+        self.doc_revision = 0
 
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
@@ -958,6 +962,9 @@ class MainWindow(QMainWindow):
         self.text_dialog.activateWindow()
 
     def _set_dirty(self, dirty: bool) -> None:
+        if dirty:
+            self.doc_revision += 1
+            self._clear_ocr_cache()
         self.is_dirty = dirty
         title = "Offline PDF Reader — MVP"
         if self.pdf_path:
@@ -1218,6 +1225,61 @@ class MainWindow(QMainWindow):
         if running:
             self.ocr_cancel_requested = False
 
+    def _clear_ocr_cache(self) -> None:
+        self.ocr_cache.clear()
+        self.ocr_cache_order.clear()
+
+    def _ocr_cache_key(self, page_index: int, rotation: int, mode: str) -> str:
+        path_part = "doc"
+        if self.pdf_path and self.pdf_path.exists():
+            try:
+                st = self.pdf_path.stat()
+                path_part = f"{self.pdf_path.resolve()}|{st.st_mtime_ns}|{st.st_size}"
+            except Exception:
+                path_part = str(self.pdf_path)
+        return f"{path_part}|rev:{self.doc_revision}|p{page_index}|r{rotation % 360}|lang:{self._ocr_lang()}|mode:{mode}"
+
+    def _ocr_cache_get(self, key: str) -> tuple[str, str | None, list[str]] | None:
+        value = self.ocr_cache.get(key)
+        if value is None:
+            return None
+        if key in self.ocr_cache_order:
+            self.ocr_cache_order.remove(key)
+        self.ocr_cache_order.append(key)
+        return value
+
+    def _ocr_cache_put(self, key: str, value: tuple[str, str | None, list[str]]) -> None:
+        self.ocr_cache[key] = value
+        if key in self.ocr_cache_order:
+            self.ocr_cache_order.remove(key)
+        self.ocr_cache_order.append(key)
+        while len(self.ocr_cache_order) > self.ocr_cache_max_entries:
+            oldest = self.ocr_cache_order.pop(0)
+            self.ocr_cache.pop(oldest, None)
+
+    def _ocr_page_with_retry_cached(
+        self,
+        page_index: int,
+        rotation: int,
+        retries: int = 1,
+    ) -> tuple[str, str | None, list[str]]:
+        if not self.doc or not (0 <= page_index < len(self.doc)):
+            return "", "Ungültige Seite", []
+
+        key = self._ocr_cache_key(page_index, rotation, mode="confidence")
+        cached = self._ocr_cache_get(key)
+        if cached is not None:
+            return cached
+
+        page = self.doc[page_index]
+        matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+        result = self._ocr_with_retry(img, retries=retries)
+        self._ocr_cache_put(key, result)
+        return result
+
     def _ocr_with_retry(self, img: Image.Image, retries: int = 1) -> tuple[str, str | None, list[str]]:
         last_err: str | None = None
         for _ in range(retries + 1):
@@ -1324,6 +1386,8 @@ class MainWindow(QMainWindow):
         self.page_rotations.clear()
         self.undo_stack.clear()
         self.redo_stack.clear()
+        self.doc_revision = 0
+        self._clear_ocr_cache()
         self.preview.setText("Kein PDF geladen")
         self.page_info.setText("Seite: -/- | Zoom: 100%")
         self._set_extracted_text("")
@@ -1368,6 +1432,8 @@ class MainWindow(QMainWindow):
         self.page_rotations.clear()
         self.undo_stack.clear()
         self.redo_stack.clear()
+        self.doc_revision = 0
+        self._clear_ocr_cache()
         self._refresh_thumbnails()
         self.render_current_page()
         self._set_extracted_text("")
@@ -1707,11 +1773,7 @@ class MainWindow(QMainWindow):
         if len(text) < 40:
             # OCR fallback on current page image (respect UI rotation for better OCR)
             rotation = self.page_rotations.get(self.current_page, 0)
-            matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-            mode = "RGB"
-            img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-            text, _, low_conf_tokens = self._ocr_image_with_confidence(img)
+            text, _, low_conf_tokens = self._ocr_page_with_retry_cached(self.current_page, rotation, retries=1)
 
         if not text:
             text = "(Kein Text erkannt)"
@@ -1757,10 +1819,7 @@ class MainWindow(QMainWindow):
 
                 if len(text) < 40:
                     rotation = self.page_rotations.get(idx, 0)
-                    matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-                    pix = page.get_pixmap(matrix=matrix, alpha=False)
-                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                    text, ocr_error, low_conf_tokens = self._ocr_with_retry(img, retries=1)
+                    text, ocr_error, low_conf_tokens = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
                     all_low_conf_tokens.extend(low_conf_tokens)
                     if ocr_error:
                         ocr_failed_pages.append(idx + 1)
@@ -1825,13 +1884,8 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "Abgebrochen", "OCR wurde abgebrochen.")
                     return
 
-                page = self.doc[idx]
                 rotation = self.page_rotations.get(idx, 0)
-                matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
-                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-
-                text, ocr_error, low_conf_tokens = self._ocr_with_retry(img, retries=1)
+                text, ocr_error, low_conf_tokens = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
                 all_low_conf_tokens.extend(low_conf_tokens)
                 if ocr_error:
                     ocr_failed_pages.append(idx + 1)
@@ -1998,10 +2052,7 @@ class MainWindow(QMainWindow):
 
         # Fallback to OCR for scanned/low-quality first pages
         rotation = self.page_rotations.get(0, 0)
-        matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        ocr_text, _ = self._ocr_image(img, show_error=False)
+        ocr_text, _, _ = self._ocr_page_with_retry_cached(0, rotation, retries=1)
         if ocr_text:
             suggestion = suggest_filename_from_text(ocr_text)
             if suggestion != "Dokument.pdf":
@@ -2054,6 +2105,7 @@ class MainWindow(QMainWindow):
         else:
             self.ocr_lang = dict(options)[choice]
 
+        self._clear_ocr_cache()
         self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
 
     def _normalize_ocr_language_code(self, code: str | None) -> str:
