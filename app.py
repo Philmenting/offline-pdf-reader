@@ -173,6 +173,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     doc_type = "Dokument"
     if "gutschrift" in lower or "credit note" in lower or "credit memo" in lower:
         doc_type = "Gutschrift"
+    elif "mahnung" in lower or "zahlungserinnerung" in lower or "payment reminder" in lower:
+        doc_type = "Mahnung"
     elif "rechnung" in lower or "invoice" in lower:
         doc_type = "Rechnung"
     elif "angebot" in lower or "quote" in lower:
