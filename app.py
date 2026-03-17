@@ -951,6 +951,9 @@ class MainWindow(QMainWindow):
             lay = QVBoxLayout(dlg)
             view = QTextEdit()
             view.setReadOnly(True)
+            view.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            )
             view.setPlaceholderText("Noch kein Text extrahiert.")
             view.setPlainText(self.extracted_text or "")
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1825,6 +1828,7 @@ class MainWindow(QMainWindow):
 
         text = self._apply_learning_rules(text)
         self._set_extracted_text(text)
+        self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
         self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
@@ -1882,6 +1886,7 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
         self._set_extracted_text(combined_text)
+        self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
@@ -1949,6 +1954,7 @@ class MainWindow(QMainWindow):
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
         self._set_extracted_text(combined_text)
+        self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_first_page())
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
