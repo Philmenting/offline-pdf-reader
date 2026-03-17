@@ -953,13 +953,50 @@ class MainWindow(QMainWindow):
             view.setReadOnly(True)
             view.setPlaceholderText("Noch kein Text extrahiert.")
             view.setPlainText(self.extracted_text or "")
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            view.customContextMenuRequested.connect(self._show_ocr_text_context_menu)
             lay.addWidget(view)
+
+            btn_pick_name = QPushButton("Markierung als Dateiname")
+            btn_pick_name.clicked.connect(self.use_selected_text_as_filename)
+            lay.addWidget(btn_pick_name)
+
             self.text_dialog = dlg
             self.text_output_view = view
         self.text_output_view.setPlainText(self.extracted_text or "")
         self.text_dialog.show()
         self.text_dialog.raise_()
         self.text_dialog.activateWindow()
+
+    def _show_ocr_text_context_menu(self, pos) -> None:
+        if self.text_output_view is None:
+            return
+        menu = self.text_output_view.createStandardContextMenu()
+        menu.addSeparator()
+        act_take_name = QAction("Als Dateiname übernehmen", self)
+        act_take_name.triggered.connect(self.use_selected_text_as_filename)
+        menu.addAction(act_take_name)
+        menu.exec(self.text_output_view.mapToGlobal(pos))
+
+    def use_selected_text_as_filename(self) -> None:
+        if self.text_output_view is None:
+            return
+        cursor = self.text_output_view.textCursor()
+        selected = (cursor.selectedText() or "").replace("\u2029", " ").strip()
+        if not selected:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Zeile oder einen Textbereich im OCR-Fenster markieren.")
+            return
+
+        candidate = sanitize_filename(selected)
+        if not candidate or len(candidate) < 2:
+            QMessageBox.information(self, "Hinweis", "Die Markierung ergibt keinen gültigen Dateinamen.")
+            return
+
+        if not candidate.lower().endswith(".pdf"):
+            candidate = self._ensure_pdf_suffix(candidate)
+
+        self.suggested_name.setText(candidate)
+        self.statusBar().showMessage("Dateiname aus Markierung übernommen.")
 
     def _set_dirty(self, dirty: bool) -> None:
         if dirty:
