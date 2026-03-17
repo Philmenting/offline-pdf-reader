@@ -206,6 +206,22 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 pass
 
     if not date:
+        # Fallback for standalone compact dates like 20260317 or 17032026.
+        for raw in re.findall(r"\b\d{8}\b", text):
+            parsed = None
+            try:
+                if raw.startswith(("19", "20")):
+                    parsed = datetime.strptime(raw, "%Y%m%d")
+                else:
+                    parsed = datetime.strptime(raw, "%d%m%Y")
+            except ValueError:
+                continue
+
+            if 1990 <= parsed.year <= 2100:
+                date = parsed.strftime("%Y-%m-%d")
+                break
+
+    if not date:
         month_map = {
             "januar": "01",
             "january": "01",
