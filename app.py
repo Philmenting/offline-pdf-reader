@@ -505,18 +505,67 @@ def _normalize_currency_token(raw: str) -> str:
 def extract_total_amount_info(text: str) -> tuple[str, str]:
     amount_expr = r"\d{1,3}(?:[\.,'’\s\u00A0\u202F]\d{3})*(?:[\.,]\d{1,2})?|\d+(?:[\.,]\d{1,2})?"
     currency_expr = r"€|eur|chf|\$|usd|£|gbp"
-    patterns = [
-        rf"(?i)\b(?:gesamt(?:betrag)?|rechnungsbetrag|endbetrag|summe|zu\s+zahlen|zu\s+überweisen|brutto(?:betrag)?|fälliger\s+betrag|offener\s+betrag|restbetrag|saldo|zahlbar(?:er\s+betrag)?|total(?:\s+due)?|grand\s+total|amount\s+due|amount\s+payable|balance\s+due)\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>{currency_expr})\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})?",
-        rf"(?i)(?P<curr_before>{currency_expr})\s*(?P<amount>{amount_expr})\b",
-        rf"(?i)(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})\b",
+    label_expr = (
+        r"gesamt(?:betrag)?|rechnungsbetrag|endbetrag|summe|zu\s+zahlen|zu\s+überweisen|"
+        r"brutto(?:betrag)?|fälliger\s+betrag|offener\s+betrag|restbetrag|saldo|"
+        r"zahlbar(?:er\s+betrag)?|total(?:\s+due)?|grand\s+total|amount\s+due|"
+        r"amount\s+payable|balance\s+due"
+    )
+
+    keyword_pattern = re.compile(
+        rf"(?i)\b(?P<label>{label_expr})\b[^\dA-Z]{{0,16}}(?:(?P<curr_before>{currency_expr})\s*)?(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})?"
+    )
+    fallback_patterns = [
+        re.compile(rf"(?i)(?P<curr_before>{currency_expr})\s*(?P<amount>{amount_expr})\b"),
+        re.compile(rf"(?i)(?P<amount>{amount_expr})\s*(?P<curr_after>{currency_expr})\b"),
     ]
-    for pat in patterns:
-        m = re.search(pat, text)
+
+    label_weights = {
+        "grand total": 100,
+        "amount due": 95,
+        "amount payable": 95,
+        "balance due": 95,
+        "gesamtbetrag": 90,
+        "endbetrag": 90,
+        "rechnungsbetrag": 88,
+        "zu zahlen": 86,
+        "zu überweisen": 86,
+        "falliger betrag": 84,
+        "bruttobetrag": 82,
+        "brutto": 80,
+        "total": 76,
+        "summe": 70,
+        "saldo": 68,
+        "offener betrag": 66,
+        "restbetrag": 65,
+    }
+
+    best: tuple[int, int, str, str] | None = None
+    for m in keyword_pattern.finditer(text):
+        amount = _normalize_amount_token(m.group("amount"))
+        if not amount:
+            continue
+
+        currency = _normalize_currency_token(m.groupdict().get("curr_before") or m.groupdict().get("curr_after") or "")
+        raw_label = (m.group("label") or "").lower()
+        normalized_label = unicodedata.normalize("NFKD", raw_label).encode("ascii", "ignore").decode("ascii")
+        weight = label_weights.get(normalized_label, 60)
+
+        candidate = (weight, m.start(), amount, currency)
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+
+    if best is not None:
+        return best[2], best[3]
+
+    for pat in fallback_patterns:
+        m = pat.search(text)
         if not m:
             continue
         amount = _normalize_amount_token(m.group("amount"))
         currency = _normalize_currency_token(m.groupdict().get("curr_before") or m.groupdict().get("curr_after") or "")
         return amount, currency
+
     return "", ""
 
 
