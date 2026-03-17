@@ -1968,6 +1968,14 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if not value:
             return None
 
+    # On Windows, urlparse treats drive-letter paths like C:\foo.pdf as URL schemes
+    # (scheme="c"). Detect and normalize those paths before URL parsing.
+    if os.name == "nt" and re.match(r"^[A-Za-z]:[\\/].*", value):
+        value = re.split(r"[?#]", value, maxsplit=1)[0]
+        candidate = Path(unquote(value)).expanduser()
+        if candidate.exists() and candidate.is_file() and candidate.suffix.lower() == ".pdf":
+            return candidate
+
     parsed = urlparse(value)
     if parsed.scheme == "file":
         file_path = unquote(parsed.path or "")
