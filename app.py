@@ -147,9 +147,6 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         "lieferschein" in lower
         or "delivery note" in lower
         or "packing slip" in lower
-        or "bon de livraison" in lower
-        or "albarán" in lower
-        or "albaran" in lower
     ):
         doc_type = "Lieferschein"
 
