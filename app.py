@@ -2861,10 +2861,15 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
 
-    if len(sys.argv) > 1:
-        candidate = resolve_startup_pdf_argument(sys.argv[1])
+    startup_candidate: Path | None = None
+    for raw_arg in sys.argv[1:]:
+        candidate = resolve_startup_pdf_argument(raw_arg)
         if candidate is not None:
-            win._open_pdf_path(str(candidate))
+            startup_candidate = candidate
+            break
+
+    if startup_candidate is not None:
+        win._open_pdf_path(str(startup_candidate))
 
     win.show()
     sys.exit(app.exec())
