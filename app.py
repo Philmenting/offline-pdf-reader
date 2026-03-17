@@ -2376,7 +2376,7 @@ class MainWindow(QMainWindow):
         for pdf in pdfs:
             try:
                 with fitz.open(str(pdf)) as doc:
-                    text = "\n\n".join(doc[i].get_text("text") for i in range(len(doc))).strip()
+                    text = self._extract_text_with_ocr_fallback(doc)
                 records.append(build_export_record(pdf.name, text))
             except Exception:
                 records.append(build_export_record(pdf.name, ""))
@@ -2389,6 +2389,21 @@ class MainWindow(QMainWindow):
             return
         self._write_export_data(Path(out_path), fmt, records)
         self.statusBar().showMessage(f"Ordner-Export erstellt: {Path(out_path).name}")
+
+    def _extract_text_with_ocr_fallback(self, doc: fitz.Document) -> str:
+        parts: list[str] = []
+        for idx in range(len(doc)):
+            page = doc[idx]
+            text = page.get_text("text").strip()
+            if len(text) < 40:
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                ocr_text, _ = self._ocr_image(img, show_error=False)
+                if ocr_text:
+                    text = f"{text}\n{ocr_text}".strip()
+            if text:
+                parts.append(text)
+        return "\n\n".join(parts).strip()
 
     def _write_export_data(self, out_path: Path, fmt: str, records: list[ExportRecord]) -> None:
         rows = [asdict(r) for r in records]
