@@ -291,6 +291,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             "märz": "03",
             "maerz": "03",
             "marz": "03",
+            "mär": "03",
+            "mrz": "03",
             "march": "03",
             "mar": "03",
             "april": "04",
