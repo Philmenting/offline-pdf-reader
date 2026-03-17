@@ -143,7 +143,12 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         doc_type = "Angebot"
     elif "vertrag" in lower or "contract" in lower:
         doc_type = "Vertrag"
-    elif "lieferschein" in lower or "delivery note" in lower or "packing slip" in lower:
+    elif (
+        "lieferschein" in lower
+        or "delivery note" in lower
+        or "packing slip" in lower
+        or "bon de livraison" in lower
+    ):
         doc_type = "Lieferschein"
 
     # Date
