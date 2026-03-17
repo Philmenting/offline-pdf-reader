@@ -1592,6 +1592,14 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
+
+        if key == Qt.Key.Key_F3:
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.prev_search_hit()
+            else:
+                self.next_search_hit()
+            return
+
         focused = QApplication.focusWidget()
         if isinstance(focused, (QLineEdit, QTextEdit)):
             super().keyPressEvent(event)
