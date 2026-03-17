@@ -1001,6 +1001,18 @@ class MainWindow(QMainWindow):
         self.suggested_name.setText(candidate)
         self.statusBar().showMessage("Dateiname aus Markierung übernommen.")
 
+    def _suggest_name_from_extracted_text_or_first_page(self, text: str) -> str:
+        lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+        for ln in lines:
+            if len(ln) < 4:
+                continue
+            if re.fullmatch(r"[\W_]+", ln):
+                continue
+            candidate = sanitize_filename(ln)
+            if candidate and candidate.lower() != "dokument":
+                return self._ensure_pdf_suffix(candidate)
+        return self._suggest_name_from_first_page()
+
     def _set_dirty(self, dirty: bool) -> None:
         if dirty:
             self.doc_revision += 1
@@ -1829,7 +1841,7 @@ class MainWindow(QMainWindow):
         text = self._apply_learning_rules(text)
         self._set_extracted_text(text)
         self.show_extracted_text_window()
-        self.suggested_name.setText(self._suggest_name_from_first_page())
+        self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(text))
         self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
         self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
 
@@ -1887,7 +1899,7 @@ class MainWindow(QMainWindow):
         combined_text = self._apply_learning_rules(combined_text)
         self._set_extracted_text(combined_text)
         self.show_extracted_text_window()
-        self.suggested_name.setText(self._suggest_name_from_first_page())
+        self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
 
@@ -1955,7 +1967,7 @@ class MainWindow(QMainWindow):
         combined_text = self._apply_learning_rules(combined_text)
         self._set_extracted_text(combined_text)
         self.show_extracted_text_window()
-        self.suggested_name.setText(self._suggest_name_from_first_page())
+        self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
         self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
 
