@@ -185,6 +185,12 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         or re.search(r"\border\b", lower)
     ):
         doc_type = "Bestellung"
+    elif (
+        "auftragsbestätigung" in lower
+        or "auftragsbestaetigung" in lower
+        or "order confirmation" in lower
+    ):
+        doc_type = "Auftragsbestaetigung"
     elif "vertrag" in lower or "contract" in lower:
         doc_type = "Vertrag"
     elif (
