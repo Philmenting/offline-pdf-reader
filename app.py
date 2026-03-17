@@ -146,6 +146,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     elif (
         "lieferschein" in lower
         or "delivery note" in lower
+        or "dispatch note" in lower
+        or "despatch note" in lower
         or "packing slip" in lower
     ):
         doc_type = "Lieferschein"
