@@ -1278,6 +1278,10 @@ class MainWindow(QMainWindow):
         self.search_results_list.setVisible(True)
         query = self.search_query.text().strip()
         if len(query) < 2:
+            self.search_hits = []
+            self.current_search_hit = -1
+            self.search_results_list.clear()
+            self._update_search_counter()
             QMessageBox.information(self, "Suche", "Bitte mindestens 2 Zeichen eingeben.")
             return
 
