@@ -839,6 +839,10 @@ class MainWindow(QMainWindow):
         act_merge.triggered.connect(self.merge_pdfs)
         menu_tools.addAction(act_merge)
 
+        act_split_chunks = QAction("PDF in Blöcke teilen …", self)
+        act_split_chunks.triggered.connect(self.split_pdf_into_chunks)
+        menu_tools.addAction(act_split_chunks)
+
         act_remove_empty = QAction("Leere Seiten entfernen", self)
         act_remove_empty.triggered.connect(self.remove_empty_pages_to_new_pdf)
         menu_tools.addAction(act_remove_empty)
@@ -2268,6 +2272,74 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fehler", f"Merge fehlgeschlagen:\n{e}")
         finally:
             merged.close()
+
+    def split_pdf_into_chunks(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        total_pages = len(self.doc)
+        if total_pages < 2:
+            QMessageBox.information(self, "Hinweis", "Das PDF hat nur eine Seite und muss nicht geteilt werden.")
+            return
+
+        pages_per_chunk, ok = QInputDialog.getInt(
+            self,
+            "PDF in Blöcke teilen",
+            f"Nach wie vielen Seiten teilen? (1-{total_pages})",
+            5,
+            1,
+            total_pages,
+            1,
+        )
+        if not ok:
+            return
+
+        parent_folder = QFileDialog.getExistingDirectory(self, "Zielordner für den Ausgabeordner auswählen")
+        if not parent_folder:
+            return
+
+        base_name_raw = self.pdf_path.stem if self.pdf_path and self.pdf_path.stem else "PDFs geteilt"
+        base_name = sanitize_filename(base_name_raw) or "PDFs geteilt"
+        folder_name = sanitize_filename(f"{base_name} geteilt") or "PDFs geteilt"
+        out_dir = Path(parent_folder) / folder_name
+        suffix = 2
+        while out_dir.exists():
+            out_dir = Path(parent_folder) / f"{folder_name} ({suffix})"
+            suffix += 1
+        out_dir.mkdir(parents=True, exist_ok=False)
+
+        created_files: list[Path] = []
+        try:
+            part_no = 1
+            for start in range(0, total_pages, pages_per_chunk):
+                end = min(start + pages_per_chunk, total_pages)
+                part_doc = fitz.open()
+                try:
+                    for idx in range(start, end):
+                        part_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+                        rot = self.page_rotations.get(idx, 0) % 360
+                        if rot:
+                            part_doc[-1].set_rotation(rot)
+                    part_name_raw = f"{base_name or 'PDF'}_Teil_{part_no:03d}_S{start+1:03d}-S{end:03d}.pdf"
+                    part_name = sanitize_filename(part_name_raw)
+                    if not part_name.lower().endswith(".pdf"):
+                        part_name = self._ensure_pdf_suffix(part_name)
+                    part_path = out_dir / part_name
+                    part_doc.save(str(part_path))
+                    created_files.append(part_path)
+                    part_no += 1
+                finally:
+                    part_doc.close()
+
+            QMessageBox.information(
+                self,
+                "Erfolg",
+                f"PDF wurde in {len(created_files)} Datei(en) geteilt:\n{out_dir}",
+            )
+            self.statusBar().showMessage(f"PDF geteilt: {len(created_files)} Datei(en) in {out_dir.name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Teilen fehlgeschlagen:\n{e}")
 
     def extract_pages_to_new_pdf(self) -> None:
         if not self.doc or not self.pdf_path:
