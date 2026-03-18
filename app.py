@@ -404,7 +404,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
     # Subject heuristic: prefer explicit Betreff/Subject; else best title-like line
     subject = ""
-    m_subject = re.search(r"(?im)^(?:betreff|subject)\s*[:\-]\s*(.+)$", text)
+    m_subject = re.search(r"(?im)^(?:betreff|subject)\s*(?::|-)?\s*(.+)$", text)
     if m_subject:
         subject = m_subject.group(1).strip()
     else:
