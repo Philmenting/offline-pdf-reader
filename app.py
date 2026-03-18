@@ -321,7 +321,11 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             "dez": "12",
             "dec": "12",
         }
-        m_textual = re.search(r"\b(\d{1,2})[.\s-]+([A-Za-zÄÖÜäöü]+)[.,\s-]+(\d{2}|\d{4})\b", text)
+        m_textual = re.search(
+            r"\b(\d{1,2})(?:st|nd|rd|th)?[.\s-]+([A-Za-zÄÖÜäöü]+)[.,\s-]+(\d{2}|\d{4})\b",
+            text,
+            re.IGNORECASE,
+        )
         if m_textual:
             day, month_raw, year_raw = m_textual.groups()
             month_key = month_raw.strip(".,").lower()

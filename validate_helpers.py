@@ -16,6 +16,15 @@ Betreff: Wartung März
     fn = suggest_filename_from_text(sample)
     assert fn.endswith(".pdf")
     assert "Rechnung" in fn
+
+    sample_ordinal = """
+Invoice Number: INV-2026-88
+Date: 17th March 2026
+Total: 149.00 EUR
+"""
+    rec_ordinal = build_export_record("demo-ordinal.pdf", sample_ordinal)
+    assert rec_ordinal.datum == "2026-03-17"
+
     print("validate_helpers: OK")
 
 
