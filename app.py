@@ -273,7 +273,15 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                         if not parsed:
                             raise ValueError
                 else:
-                    parsed = datetime.strptime(raw, "%d%m%y")
+                    parsed = None
+                    for fmt in ("%d%m%y", "%m%d%y", "%y%m%d"):
+                        try:
+                            parsed = datetime.strptime(raw, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if not parsed:
+                        raise ValueError
                 date = parsed.strftime("%Y-%m-%d")
             except ValueError:
                 pass
