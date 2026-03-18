@@ -228,6 +228,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             for fmt in (
                 "%d.%m.%Y",
                 "%d.%m.%y",
+                "%m.%d.%Y",
+                "%m.%d.%y",
                 "%Y-%m-%d",
                 "%Y.%m.%d",
                 "%d-%m-%Y",
