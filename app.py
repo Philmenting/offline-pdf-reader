@@ -216,6 +216,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         r"\b(\d{4}/\d{1,2}/\d{1,2})\b",
         r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
         r"\b(\d{1,2}/\d{1,2}/\d{2})\b",
+        r"\b(\d{1,2}\s+\d{1,2}\s+\d{4})\b",
+        r"\b(\d{1,2}\s+\d{1,2}\s+\d{2})\b",
     ]
     date = ""
     for pat in date_patterns:
@@ -236,6 +238,8 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 "%d/%m/%y",
                 "%m/%d/%Y",
                 "%m/%d/%y",
+                "%d %m %Y",
+                "%d %m %y",
             ):
                 try:
                     date = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
