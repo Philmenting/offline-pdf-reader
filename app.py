@@ -263,7 +263,15 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                     if raw.startswith(("19", "20")):
                         parsed = datetime.strptime(raw, "%Y%m%d")
                     else:
-                        parsed = datetime.strptime(raw, "%d%m%Y")
+                        parsed = None
+                        for fmt in ("%d%m%Y", "%m%d%Y"):
+                            try:
+                                parsed = datetime.strptime(raw, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not parsed:
+                            raise ValueError
                 else:
                     parsed = datetime.strptime(raw, "%d%m%y")
                 date = parsed.strftime("%Y-%m-%d")
@@ -280,7 +288,15 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                     if raw.startswith(("19", "20")):
                         parsed = datetime.strptime(raw, "%Y%m%d")
                     else:
-                        parsed = datetime.strptime(raw, "%d%m%Y")
+                        parsed = None
+                        for fmt in ("%d%m%Y", "%m%d%Y"):
+                            try:
+                                parsed = datetime.strptime(raw, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not parsed:
+                            raise ValueError
                 except ValueError:
                     continue
             else:
