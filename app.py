@@ -2726,14 +2726,11 @@ class MainWindow(QMainWindow):
                 seen.add(idx)
                 ordered.append(idx)
 
-        def parse_bound(raw: str, default: int) -> int:
-            token = raw.strip().lower()
-            if not token:
-                return default
-
+        def parse_single(token: str) -> int | None:
+            tk = token.strip().lower()
             alias_with_offset = re.fullmatch(
                 r"(first|start|begin|last|end|current|cur|here)\s*([+-]\s*\d+)?",
-                token,
+                tk,
             )
             if alias_with_offset:
                 base_name, offset_raw = alias_with_offset.groups()
@@ -2746,10 +2743,15 @@ class MainWindow(QMainWindow):
                 if offset_raw:
                     base += int(offset_raw.replace(" ", ""))
                 return base
+            if tk.isdigit():
+                return int(tk)
+            return None
 
-            if token.isdigit():
-                return int(token)
-            return default
+        def parse_bound(raw: str, default: int) -> int:
+            page = parse_single(raw)
+            if page is None:
+                return default
+            return page
 
         def parse_range_with_step(token: str) -> tuple[str, str, int] | None:
             body = token
@@ -2803,6 +2805,12 @@ class MainWindow(QMainWindow):
                     add_page(self.current_page)
                 continue
 
+            page = parse_single(token)
+            if page is not None:
+                if 1 <= page <= total_pages:
+                    add_page(page - 1)
+                continue
+
             range_info = parse_range_with_step(token)
             if range_info is not None:
                 a, b, step = range_info
@@ -2812,10 +2820,6 @@ class MainWindow(QMainWindow):
                 for p in range(start, end + signed_step, signed_step):
                     if 1 <= p <= total_pages:
                         add_page(p - 1)
-            elif token.isdigit():
-                p = int(token)
-                if 1 <= p <= total_pages:
-                    add_page(p - 1)
         return ordered
 
     def _parse_order_spec(self, spec: str, total_pages: int) -> list[int]:
@@ -2880,6 +2884,12 @@ class MainWindow(QMainWindow):
                 ordered.extend(reversed(range(total_pages)))
                 continue
 
+            page = parse_single(token)
+            if page is not None:
+                if 1 <= page <= total_pages:
+                    ordered.append(page - 1)
+                continue
+
             range_info = parse_range_with_step(token)
             if range_info is not None:
                 a, b, step = range_info
@@ -2892,10 +2902,6 @@ class MainWindow(QMainWindow):
                     if 1 <= p <= total_pages:
                         ordered.append(p - 1)
                 continue
-
-            page = parse_single(token)
-            if page is not None and 1 <= page <= total_pages:
-                ordered.append(page - 1)
 
         return ordered
 
