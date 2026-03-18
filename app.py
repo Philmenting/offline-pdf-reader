@@ -2728,12 +2728,23 @@ class MainWindow(QMainWindow):
             token = raw.strip().lower()
             if not token:
                 return default
-            if token in {"first", "start", "begin"}:
-                return 1
-            if token in {"last", "end"}:
-                return total_pages
-            if token in {"current", "cur", "here"}:
-                return self.current_page + 1
+
+            alias_with_offset = re.fullmatch(
+                r"(first|start|begin|last|end|current|cur|here)\s*([+-]\s*\d+)?",
+                token,
+            )
+            if alias_with_offset:
+                base_name, offset_raw = alias_with_offset.groups()
+                if base_name in {"first", "start", "begin"}:
+                    base = 1
+                elif base_name in {"last", "end"}:
+                    base = total_pages
+                else:
+                    base = self.current_page + 1
+                if offset_raw:
+                    base += int(offset_raw.replace(" ", ""))
+                return base
+
             if token.isdigit():
                 return int(token)
             return default
@@ -2800,12 +2811,21 @@ class MainWindow(QMainWindow):
 
         def parse_single(token: str) -> int | None:
             tk = token.strip().lower()
-            if tk in {"first", "start", "begin"}:
-                return 1
-            if tk in {"last", "end"}:
-                return total_pages
-            if tk in {"current", "cur", "here"}:
-                return self.current_page + 1
+            alias_with_offset = re.fullmatch(
+                r"(first|start|begin|last|end|current|cur|here)\s*([+-]\s*\d+)?",
+                tk,
+            )
+            if alias_with_offset:
+                base_name, offset_raw = alias_with_offset.groups()
+                if base_name in {"first", "start", "begin"}:
+                    base = 1
+                elif base_name in {"last", "end"}:
+                    base = total_pages
+                else:
+                    base = self.current_page + 1
+                if offset_raw:
+                    base += int(offset_raw.replace(" ", ""))
+                return base
             if tk.isdigit():
                 return int(tk)
             return None
