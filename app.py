@@ -265,16 +265,27 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 pass
 
     if not date:
-        # Fallback for standalone compact dates like 20260317 or 17032026.
-        for raw in re.findall(r"\b\d{8}\b", text):
+        # Fallback for standalone compact dates like 20260317, 17032026, or 170326.
+        compact_candidates = re.findall(r"\b\d{8}\b", text) + re.findall(r"\b\d{6}\b", text)
+        for raw in compact_candidates:
             parsed = None
-            try:
-                if raw.startswith(("19", "20")):
-                    parsed = datetime.strptime(raw, "%Y%m%d")
-                else:
-                    parsed = datetime.strptime(raw, "%d%m%Y")
-            except ValueError:
-                continue
+            if len(raw) == 8:
+                try:
+                    if raw.startswith(("19", "20")):
+                        parsed = datetime.strptime(raw, "%Y%m%d")
+                    else:
+                        parsed = datetime.strptime(raw, "%d%m%Y")
+                except ValueError:
+                    continue
+            else:
+                for fmt in ("%d%m%y", "%y%m%d"):
+                    try:
+                        parsed = datetime.strptime(raw, fmt)
+                        break
+                    except ValueError:
+                        continue
+                if not parsed:
+                    continue
 
             if 1990 <= parsed.year <= 2100:
                 date = parsed.strftime("%Y-%m-%d")
