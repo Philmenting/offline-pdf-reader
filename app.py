@@ -2934,6 +2934,13 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if not value:
             return None
 
+    # Chat/launcher wrappers sometimes include angle brackets around links,
+    # e.g. <file:///tmp/doc.pdf>. Strip one wrapper pair before parsing.
+    if len(value) >= 2 and value[0] == "<" and value[-1] == ">":
+        value = value[1:-1].strip()
+        if not value:
+            return None
+
     # On Windows, urlparse treats drive-letter paths like C:\foo.pdf as URL schemes
     # (scheme="c"). Detect and normalize those paths before URL parsing.
     if os.name == "nt" and re.match(r"^[A-Za-z]:[\\/].*", value):
