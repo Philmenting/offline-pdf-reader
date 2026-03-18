@@ -2758,9 +2758,15 @@ class MainWindow(QMainWindow):
                 if not step_raw.isdigit() or int(step_raw) <= 0:
                     return None
                 step = int(step_raw)
-            if "-" not in body:
+
+            # Range bounds can themselves contain signed alias offsets like
+            # "last-1" or "current+2". Use a bound-aware regex instead of a
+            # naive split("-", 1), otherwise "last-1-last" is parsed wrongly.
+            bound = r"(?:\d+|first|start|begin|last|end|current|cur|here)(?:\s*[+-]\s*\d+)?"
+            m = re.fullmatch(rf"\s*({bound})\s*-\s*({bound})\s*", body)
+            if not m:
                 return None
-            start_raw, end_raw = body.split("-", 1)
+            start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
         for part in spec.split(","):
@@ -2839,9 +2845,15 @@ class MainWindow(QMainWindow):
                 if not step_raw.isdigit() or int(step_raw) <= 0:
                     return None
                 step = int(step_raw)
-            if "-" not in body:
+
+            # Range bounds can themselves contain signed alias offsets like
+            # "last-1" or "current+2". Use a bound-aware regex instead of a
+            # naive split("-", 1), otherwise "last-1-last" is parsed wrongly.
+            bound = r"(?:\d+|first|start|begin|last|end|current|cur|here)(?:\s*[+-]\s*\d+)?"
+            m = re.fullmatch(rf"\s*({bound})\s*-\s*({bound})\s*", body)
+            if not m:
                 return None
-            start_raw, end_raw = body.split("-", 1)
+            start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
         for part in spec.split(","):
