@@ -380,7 +380,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     # Number (supports common separators like / and _, trims trailing punctuation)
     number = ""
     number_patterns = [
-        r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number)\.?|belegnr\.?|vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?|lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+        r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|belegnr\.?|vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?|lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
         r"(?i)\b(?:inv|doc|po|dn)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b",
     ]
     for pat in number_patterns:
