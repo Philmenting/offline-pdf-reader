@@ -359,7 +359,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
         if not date:
             m_textual_month_first = re.search(
-                r"\b([A-Za-zÄÖÜäöü]+)\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2}|\d{4})\b",
+                r"\b([A-Za-zÄÖÜäöü]+)[.,]?\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2}|\d{4})\b",
                 text,
                 re.IGNORECASE,
             )
