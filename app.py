@@ -2918,13 +2918,20 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         return None
 
     # Some launchers wrap file paths in explicit option forms.
-    # Accept common variants like --file=/tmp/doc.pdf and --open="...".
-    for prefix in ("--file=", "--open=", "--document=", "--pdf="):
-        if value.lower().startswith(prefix):
-            value = value[len(prefix):].strip()
-            if not value:
-                return None
-            break
+    # Accept common variants like --file=/tmp/doc.pdf, --file:/tmp/doc.pdf
+    # and --open="...".
+    for option in ("--file", "--open", "--document", "--pdf"):
+        lower_value = value.lower()
+        for separator in ("=", ":"):
+            prefix = f"{option}{separator}"
+            if lower_value.startswith(prefix):
+                value = value[len(prefix):].strip()
+                if not value:
+                    return None
+                break
+        else:
+            continue
+        break
 
     # Some launch wrappers pass the argument with surrounding quotes intact.
     # Repeatedly unwrap matching quote pairs so doubly-wrapped values like
