@@ -308,7 +308,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                 except ValueError:
                     continue
             else:
-                for fmt in ("%d%m%y", "%y%m%d"):
+                for fmt in ("%d%m%y", "%m%d%y", "%y%m%d"):
                     try:
                         parsed = datetime.strptime(raw, fmt)
                         break

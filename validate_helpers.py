@@ -25,6 +25,13 @@ Total: 149.00 EUR
     rec_ordinal = build_export_record("demo-ordinal.pdf", sample_ordinal)
     assert rec_ordinal.datum == "2026-03-17"
 
+    sample_compact_month_first = """
+Invoice INV-2026-89
+Date 031726
+"""
+    rec_compact_month_first = build_export_record("demo-compact.pdf", sample_compact_month_first)
+    assert rec_compact_month_first.datum == "2026-03-17"
+
     print("validate_helpers: OK")
 
 
