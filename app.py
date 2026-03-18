@@ -2720,6 +2720,8 @@ class MainWindow(QMainWindow):
         seen: set[int] = set()
 
         def add_page(idx: int) -> None:
+            if not (0 <= idx < total_pages):
+                return
             if idx not in seen:
                 seen.add(idx)
                 ordered.append(idx)
