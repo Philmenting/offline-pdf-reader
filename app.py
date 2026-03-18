@@ -2745,6 +2745,9 @@ class MainWindow(QMainWindow):
                 return base
             if tk.isdigit():
                 return int(tk)
+            # Relative shorthand to current page, e.g. "+2" or "-1".
+            if re.fullmatch(r"[+-]\s*\d+", tk):
+                return (self.current_page + 1) + int(tk.replace(" ", ""))
             return None
 
         def parse_bound(raw: str, default: int) -> int:
@@ -2844,6 +2847,9 @@ class MainWindow(QMainWindow):
                 return base
             if tk.isdigit():
                 return int(tk)
+            # Relative shorthand to current page, e.g. "+2" or "-1".
+            if re.fullmatch(r"[+-]\s*\d+", tk):
+                return (self.current_page + 1) + int(tk.replace(" ", ""))
             return None
 
         def parse_range_with_step(token: str) -> tuple[str, str, int] | None:
