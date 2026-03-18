@@ -2935,16 +2935,33 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
     return None
 
 
+def find_startup_pdf_argument(argv: list[str]) -> Path | None:
+    option_names = {"--file", "--open", "--document", "--pdf", "-f"}
+
+    i = 0
+    while i < len(argv):
+        raw = argv[i]
+        if raw in option_names:
+            if i + 1 < len(argv):
+                candidate = resolve_startup_pdf_argument(argv[i + 1])
+                if candidate is not None:
+                    return candidate
+            i += 2
+            continue
+
+        candidate = resolve_startup_pdf_argument(raw)
+        if candidate is not None:
+            return candidate
+        i += 1
+
+    return None
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
 
-    startup_candidate: Path | None = None
-    for raw_arg in sys.argv[1:]:
-        candidate = resolve_startup_pdf_argument(raw_arg)
-        if candidate is not None:
-            startup_candidate = candidate
-            break
+    startup_candidate = find_startup_pdf_argument(sys.argv[1:])
 
     if startup_candidate is not None:
         win._open_pdf_path(str(startup_candidate))
