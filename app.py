@@ -2901,6 +2901,9 @@ class MainWindow(QMainWindow):
             if token in {"last", "end"}:
                 add_page(total_pages - 1)
                 continue
+            if token in {"middle", "mid", "center", "centre"}:
+                add_page((total_pages - 1) // 2)
+                continue
             if token in {"current", "cur", "here"}:
                 if 0 <= self.current_page < total_pages:
                     add_page(self.current_page)
@@ -2986,6 +2989,9 @@ class MainWindow(QMainWindow):
                 continue
             if token in {"reverse", "rev"}:
                 ordered.extend(reversed(range(total_pages)))
+                continue
+            if token in {"middle", "mid", "center", "centre"}:
+                ordered.append((total_pages - 1) // 2)
                 continue
 
             page = parse_single(token)
