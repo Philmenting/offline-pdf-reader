@@ -1068,7 +1068,13 @@ class MainWindow(QMainWindow):
 
     def _save_learning_rules(self) -> None:
         try:
-            payload = json.dumps(self.learning_rules, indent=2, ensure_ascii=False)
+            replacements = self.learning_rules.get("replacements", {})
+            if not isinstance(replacements, dict):
+                replacements = {}
+            normalized_replacements = {
+                k: replacements[k] for k in sorted(replacements.keys(), key=lambda s: s.casefold()) if isinstance(k, str)
+            }
+            payload = json.dumps({"replacements": normalized_replacements}, indent=2, ensure_ascii=False)
             tmp_path = self.learning_rules_path.with_suffix(self.learning_rules_path.suffix + ".tmp")
             tmp_path.write_text(payload, encoding="utf-8")
             tmp_path.replace(self.learning_rules_path)
