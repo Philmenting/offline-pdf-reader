@@ -3044,7 +3044,10 @@ def find_startup_pdf_argument(argv: list[str]) -> Path | None:
                 candidate = resolve_startup_pdf_argument(argv[i + 1])
                 if candidate is not None:
                     return candidate
-            i += 2
+            # If the option has no usable value, keep scanning from the next
+            # token instead of skipping it. This allows chains like
+            # "--file --open=/tmp/doc.pdf" to still resolve the later option.
+            i += 1
             continue
 
         candidate = resolve_startup_pdf_argument(raw)
