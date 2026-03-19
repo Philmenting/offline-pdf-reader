@@ -1071,9 +1071,25 @@ class MainWindow(QMainWindow):
             replacements = self.learning_rules.get("replacements", {})
             if not isinstance(replacements, dict):
                 replacements = {}
-            normalized_replacements = {
-                k: replacements[k] for k in sorted(replacements.keys(), key=lambda s: s.casefold()) if isinstance(k, str)
-            }
+
+            normalized_replacements: dict[str, str] = {}
+            seen_keys: set[str] = set()
+            for key in sorted(replacements.keys(), key=lambda s: s.casefold() if isinstance(s, str) else str(s)):
+                if not isinstance(key, str):
+                    continue
+                value = replacements.get(key)
+                if not isinstance(value, str):
+                    continue
+                clean_key = key.strip()
+                clean_value = value.strip()
+                if not clean_key or not clean_value:
+                    continue
+                casefold_key = clean_key.casefold()
+                if casefold_key in seen_keys:
+                    continue
+                seen_keys.add(casefold_key)
+                normalized_replacements[clean_key] = clean_value
+
             payload = json.dumps({"replacements": normalized_replacements}, indent=2, ensure_ascii=False)
             tmp_path = self.learning_rules_path.with_suffix(self.learning_rules_path.suffix + ".tmp")
             tmp_path.write_text(payload, encoding="utf-8")
