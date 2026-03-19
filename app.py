@@ -1916,7 +1916,7 @@ class MainWindow(QMainWindow):
             or self.search_query.hasFocus()
         ):
             self.close_search_panel()
-            self.pdf_label.setFocus()
+            self.preview.setFocus()
             return
 
         focused = QApplication.focusWidget()
