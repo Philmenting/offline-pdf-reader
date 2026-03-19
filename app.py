@@ -2584,7 +2584,13 @@ class MainWindow(QMainWindow):
         for src in files:
             try:
                 with fitz.open(str(src)) as doc:
-                    first_page_text = doc[0].get_text("text") if len(doc) else ""
+                    first_page_text = doc[0].get_text("text").strip() if len(doc) else ""
+                    if len(first_page_text) < 40 and len(doc):
+                        pix = doc[0].get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+                        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                        ocr_text, _ = self._ocr_image(img, show_error=False)
+                        if ocr_text:
+                            first_page_text = f"{first_page_text}\n{ocr_text}".strip()
                 base_name = suggest_filename_from_text(first_page_text)
             except Exception:
                 base_name = "Dokument.pdf"
