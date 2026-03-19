@@ -2919,9 +2919,18 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
 
     # Some launchers wrap file paths in explicit option forms.
     # Accept common variants like --file=/tmp/doc.pdf, --file:/tmp/doc.pdf,
-    # -f=/tmp/doc.pdf and --open="...".
+    # -f=/tmp/doc.pdf, -f/tmp/doc.pdf and --open="...".
     for option in ("--file", "--open", "--document", "--pdf", "-f"):
         lower_value = value.lower()
+
+        # Also accept short-option concatenation used by some wrappers,
+        # e.g. -f/tmp/doc.pdf or -fC:\\docs\\file.pdf.
+        if option == "-f" and len(value) > 2 and lower_value.startswith(option):
+            value = value[len(option):].strip()
+            if not value:
+                return None
+            break
+
         for separator in ("=", ":"):
             prefix = f"{option}{separator}"
             if lower_value.startswith(prefix):
