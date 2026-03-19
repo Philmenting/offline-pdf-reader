@@ -1055,12 +1055,18 @@ class MainWindow(QMainWindow):
             data = json.loads(self.learning_rules_path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("replacements", {}), dict):
                 sanitized: dict[str, str] = {}
+                seen_keys: set[str] = set()
                 for src, dst in data["replacements"].items():
                     if isinstance(src, str) and isinstance(dst, str):
                         clean_src = src.strip()
                         clean_dst = dst.strip()
-                        if clean_src and clean_dst:
-                            sanitized[clean_src] = clean_dst
+                        if not clean_src or not clean_dst:
+                            continue
+                        casefold_key = clean_src.casefold()
+                        if casefold_key in seen_keys:
+                            continue
+                        seen_keys.add(casefold_key)
+                        sanitized[clean_src] = clean_dst
                 return {"replacements": sanitized}
         except Exception:
             pass
