@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlparse
 import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
-from PIL import Image
+from PIL import Image, ImageOps
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -725,8 +725,8 @@ class MainWindow(QMainWindow):
         self.thumb_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.thumb_list.setIconSize(QSize(90, 130))
         self.thumb_list.setSpacing(6)
-        self.thumb_list.setMinimumWidth(130)
-        self.thumb_list.setMaximumWidth(180)
+        self.thumb_list.setMinimumWidth(120)
+        self.thumb_list.setMaximumWidth(520)
         self.thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.thumb_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumb_list.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
@@ -879,9 +879,17 @@ class MainWindow(QMainWindow):
         ocr_row.addWidget(self.ocr_feedback, 1)
         ocr_row.addWidget(self.btn_cancel_ocr)
 
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(8)
+        self.content_splitter.addWidget(self.thumb_list)
+        self.content_splitter.addWidget(self.preview_scroll)
+        self.content_splitter.setStretchFactor(0, 0)
+        self.content_splitter.setStretchFactor(1, 1)
+        self.content_splitter.setSizes([220, 940])
+
         content_row = QHBoxLayout()
-        content_row.addWidget(self.thumb_list)
-        content_row.addWidget(self.preview_scroll, 1)
+        content_row.addWidget(self.content_splitter, 1)
 
         layout = QVBoxLayout()
         layout.addLayout(name_row)
@@ -2313,10 +2321,31 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_ocr_language_code(self.ocr_lang)
         return normalized or "deu+eng"
 
+    def _prepare_image_for_ocr(self, img: Image.Image) -> Image.Image:
+        prepared = img.convert("L")
+        prepared = ImageOps.autocontrast(prepared)
+        width, height = prepared.size
+        upscale = 1.5
+        resampling = getattr(Image, "Resampling", Image).LANCZOS
+        prepared = prepared.resize((max(1, int(width * upscale)), max(1, int(height * upscale))), resampling)
+        return prepared
+
+    def _postprocess_ocr_text(self, text: str) -> str:
+        out = text
+        if "deu" in self._ocr_lang():
+            # Frequently observed confusions in German OCR runs.
+            out = re.sub(r"(?<=\w)é(?=\w)", "ö", out)
+            out = re.sub(r"(?i)\bfiir\b", "für", out)
+            out = re.sub(r"(?i)\biiber\b", "über", out)
+        return out
+
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         lang = self._ocr_lang()
+        prepared = self._prepare_image_for_ocr(img)
+        config = "--oem 1 --psm 6"
         try:
-            return pytesseract.image_to_string(img, lang=lang).strip(), None
+            raw = pytesseract.image_to_string(prepared, lang=lang, config=config).strip()
+            return self._postprocess_ocr_text(raw), None
         except (FileNotFoundError, TesseractNotFoundError) as e:
             msg = (
                 "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
@@ -2330,7 +2359,8 @@ class MainWindow(QMainWindow):
             # fallback if custom language pack is missing/misconfigured
             if lang != "deu+eng" and ("Failed loading language" in err_text or "Error opening data file" in err_text):
                 try:
-                    return pytesseract.image_to_string(img, lang="deu+eng").strip(), None
+                    raw = pytesseract.image_to_string(prepared, lang="deu+eng", config=config).strip()
+                    return self._postprocess_ocr_text(raw), None
                 except TesseractError:
                     pass
             if show_error:
