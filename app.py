@@ -2928,7 +2928,16 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         # --file/tmp/doc.pdf or --open~/docs/file.pdf.
         if len(value) > len(option) and lower_value.startswith(option):
             remainder = value[len(option):]
-            if option == "-f" or remainder[:1] in {"/", "\\", "~", "."} or re.match(r"^[A-Za-z]:", remainder):
+            # Only treat concatenated short-option payloads as file paths when
+            # the remainder actually looks like a path/URI. This avoids
+            # mis-parsing unrelated flags like "-fullscreen" as "-f" + "...".
+            looks_like_path = (
+                remainder[:1] in {"/", "\\", "~", ".", '"', "'"}
+                or re.match(r"^[A-Za-z]:", remainder)
+                or remainder.lower().startswith(("file://", "./", "../"))
+                or remainder.lower().endswith(".pdf")
+            )
+            if looks_like_path:
                 value = remainder.strip()
                 if not value:
                     return None
