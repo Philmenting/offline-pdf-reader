@@ -1851,6 +1851,15 @@ class MainWindow(QMainWindow):
                 self.next_search_hit()
             return
 
+        if key == Qt.Key.Key_Escape and (
+            self.search_results_list.isVisible()
+            or self.search_query.text().strip()
+            or self.search_query.hasFocus()
+        ):
+            self.close_search_panel()
+            self.pdf_label.setFocus()
+            return
+
         focused = QApplication.focusWidget()
         if isinstance(focused, (QLineEdit, QTextEdit)):
             super().keyPressEvent(event)
