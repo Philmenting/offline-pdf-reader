@@ -14,7 +14,7 @@ import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image, ImageOps
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -689,6 +689,14 @@ def export_records_as_txt(records: list[ExportRecord]) -> str:
     return "\n\n".join(parts)
 
 
+class ThumbnailListWidget(QListWidget):
+    pagesReordered = Signal()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        super().dropEvent(event)
+        self.pagesReordered.emit()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -718,19 +726,25 @@ class MainWindow(QMainWindow):
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.thumb_list = QListWidget()
+        self.thumb_list = ThumbnailListWidget()
         self.thumb_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.thumb_list.setFlow(QListWidget.Flow.TopToBottom)
-        self.thumb_list.setMovement(QListWidget.Movement.Static)
+        self.thumb_list.setMovement(QListWidget.Movement.Snap)
         self.thumb_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.thumb_list.setIconSize(QSize(90, 130))
         self.thumb_list.setSpacing(6)
         self.thumb_list.setMinimumWidth(120)
         self.thumb_list.setMaximumWidth(520)
         self.thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.thumb_list.setDragEnabled(True)
+        self.thumb_list.setAcceptDrops(True)
+        self.thumb_list.setDropIndicatorShown(True)
+        self.thumb_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.thumb_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.thumb_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumb_list.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
         self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
+        self.thumb_list.pagesReordered.connect(self._reorder_pages_by_thumbnail_order)
 
         self.extracted_text = ""
         self.text_dialog: QDialog | None = None
@@ -1258,6 +1272,39 @@ class MainWindow(QMainWindow):
         menu.addAction(delete_action)
         menu.exec(self.thumb_list.mapToGlobal(pos))
 
+    def _reorder_pages_by_thumbnail_order(self) -> None:
+        if not self.doc or self.thumb_list.count() != len(self.doc):
+            return
+
+        new_order = [int(self.thumb_list.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.thumb_list.count())]
+        if sorted(new_order) != list(range(len(self.doc))):
+            return
+        if new_order == list(range(len(self.doc))):
+            return
+
+        self._push_undo_state()
+        old_rotations = dict(self.page_rotations)
+        old_current_page = self.current_page
+
+        self.doc.select(new_order)
+        old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(new_order)}
+        self.page_rotations = {
+            old_to_new[old_idx]: rot
+            for old_idx, rot in old_rotations.items()
+            if old_idx in old_to_new and rot % 360 != 0
+        }
+        self.current_page = old_to_new.get(old_current_page, 0)
+
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self._update_search_counter()
+
+        self._set_dirty(True)
+        self._refresh_thumbnails()
+        self.render_current_page()
+        self.statusBar().showMessage("Seitenreihenfolge per Drag & Drop geändert (noch nicht gespeichert)")
+
     def delete_selected_pages(self) -> None:
         if not self.doc or len(self.doc) == 0:
             return
@@ -1329,6 +1376,17 @@ class MainWindow(QMainWindow):
         self.search_results_list.setVisible(True)
         self.search_all_pages()
 
+    @staticmethod
+    def _normalize_search_text(value: str) -> str:
+        text = (value or "").casefold()
+        # OCR confusions seen in scanned German docs
+        text = text.replace("é", "ö")
+        text = text.replace("ii", "ü")
+        text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+        text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
     def search_all_pages(self) -> None:
         if not self.doc:
             return
@@ -1344,7 +1402,7 @@ class MainWindow(QMainWindow):
 
         self.search_hits = []
         self.search_results_list.clear()
-        needle = query.casefold()
+        needle = self._normalize_search_text(query)
 
         for idx in range(len(self.doc)):
             text = self.doc[idx].get_text("text").strip()
@@ -1355,7 +1413,8 @@ class MainWindow(QMainWindow):
                     text = f"{text}\n{ocr_text}".strip()
 
             for line in text.splitlines():
-                if needle in line.casefold():
+                norm_line = self._normalize_search_text(line)
+                if needle and needle in norm_line:
                     hit = {"page": idx, "snippet": line.strip()[:180]}
                     self.search_hits.append(hit)
 
