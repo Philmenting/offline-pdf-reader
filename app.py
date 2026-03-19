@@ -1054,7 +1054,11 @@ class MainWindow(QMainWindow):
         try:
             data = json.loads(self.learning_rules_path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("replacements", {}), dict):
-                return data
+                sanitized: dict[str, str] = {}
+                for src, dst in data["replacements"].items():
+                    if isinstance(src, str) and isinstance(dst, str) and src.strip():
+                        sanitized[src] = dst
+                return {"replacements": sanitized}
         except Exception:
             pass
         return {"replacements": {}}
