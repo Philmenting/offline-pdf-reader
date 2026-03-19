@@ -2974,9 +2974,12 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if not value:
             return None
 
-    # Chat/launcher wrappers sometimes include angle brackets around links,
-    # e.g. <file:///tmp/doc.pdf>. Strip one wrapper pair before parsing.
-    if len(value) >= 2 and value[0] == "<" and value[-1] == ">":
+    # Chat/launcher wrappers sometimes include surrounding delimiters around
+    # links, e.g. <file:///tmp/doc.pdf> or (file:///tmp/doc.pdf).
+    # Repeatedly unwrap matching outer pairs so doubly-wrapped values still
+    # resolve as file paths.
+    wrapper_pairs = {"<": ">", "(": ")", "[": "]", "{": "}"}
+    while len(value) >= 2 and value[0] in wrapper_pairs and value[-1] == wrapper_pairs[value[0]]:
         value = value[1:-1].strip()
         if not value:
             return None
