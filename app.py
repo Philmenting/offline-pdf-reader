@@ -1056,7 +1056,7 @@ class MainWindow(QMainWindow):
             if isinstance(data, dict) and isinstance(data.get("replacements", {}), dict):
                 sanitized: dict[str, str] = {}
                 seen_keys: set[str] = set()
-                for src, dst in data["replacements"].items():
+                for src, dst in data.get("replacements", {}).items():
                     if isinstance(src, str) and isinstance(dst, str):
                         clean_src = src.strip()
                         clean_dst = dst.strip()
