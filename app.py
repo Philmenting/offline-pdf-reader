@@ -2984,6 +2984,22 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
         if not value:
             return None
 
+    # Some chat surfaces append sentence punctuation to pasted links like
+    # "<file:///tmp/doc.pdf#page=2>.". Trim obvious trailing punctuation so
+    # startup parsing still resolves the PDF path.
+    while value.endswith((".", ",", ";", ":", "!", "?")):
+        trimmed = value.rstrip(".,;:!?").strip()
+        if (
+            trimmed
+            and (
+                trimmed.lower().startswith("file://")
+                or ".pdf" in trimmed.lower()
+            )
+        ):
+            value = trimmed
+            continue
+        break
+
     # On Windows, urlparse treats drive-letter paths like C:\foo.pdf as URL schemes
     # (scheme="c"). Detect and normalize those paths before URL parsing.
     if os.name == "nt" and re.match(r"^[A-Za-z]:[\\/].*", value):
