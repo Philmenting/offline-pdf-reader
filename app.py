@@ -1056,8 +1056,11 @@ class MainWindow(QMainWindow):
             if isinstance(data, dict) and isinstance(data.get("replacements", {}), dict):
                 sanitized: dict[str, str] = {}
                 for src, dst in data["replacements"].items():
-                    if isinstance(src, str) and isinstance(dst, str) and src.strip():
-                        sanitized[src] = dst
+                    if isinstance(src, str) and isinstance(dst, str):
+                        clean_src = src.strip()
+                        clean_dst = dst.strip()
+                        if clean_src and clean_dst:
+                            sanitized[clean_src] = clean_dst
                 return {"replacements": sanitized}
         except Exception:
             pass
