@@ -1068,7 +1068,10 @@ class MainWindow(QMainWindow):
 
     def _save_learning_rules(self) -> None:
         try:
-            self.learning_rules_path.write_text(json.dumps(self.learning_rules, indent=2, ensure_ascii=False), encoding="utf-8")
+            payload = json.dumps(self.learning_rules, indent=2, ensure_ascii=False)
+            tmp_path = self.learning_rules_path.with_suffix(self.learning_rules_path.suffix + ".tmp")
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(self.learning_rules_path)
         except Exception:
             pass
 
