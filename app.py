@@ -1075,6 +1075,25 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _set_learning_replacement(self, src: str, dst: str) -> bool:
+        clean_src = (src or "").strip()
+        clean_dst = (dst or "").strip()
+        if not clean_src or not clean_dst or clean_src.casefold() == clean_dst.casefold():
+            return False
+
+        replacements = self.learning_rules.setdefault("replacements", {})
+        if not isinstance(replacements, dict):
+            replacements = {}
+            self.learning_rules["replacements"] = replacements
+
+        # Keep only one canonical key per token regardless of case.
+        for existing in list(replacements.keys()):
+            if isinstance(existing, str) and existing.casefold() == clean_src.casefold() and existing != clean_src:
+                replacements.pop(existing, None)
+
+        replacements[clean_src] = clean_dst
+        return True
+
     def _apply_learning_rules(self, text: str) -> str:
         replacements = self.learning_rules.get("replacements", {})
         if not replacements:
@@ -1597,8 +1616,7 @@ class MainWindow(QMainWindow):
                     0,
                     False,
                 )
-                if ok and choice and choice != number:
-                    self.learning_rules.setdefault("replacements", {})[number] = choice
+                if ok and choice and choice != number and self._set_learning_replacement(number, choice):
                     self._save_learning_rules()
                     lines.append(f"Lernregel gespeichert: {number} → {choice}")
 
