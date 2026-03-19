@@ -2827,7 +2827,7 @@ class MainWindow(QMainWindow):
         def parse_single(token: str) -> int | None:
             tk = token.strip().lower()
             alias_with_offset = re.fullmatch(
-                r"(first|start|begin|last|end|current|cur|here)\s*([+-]\s*\d+)?",
+                r"(first|start|begin|last|end|middle|mid|center|centre|current|cur|here)\s*([+-]\s*\d+)?",
                 tk,
             )
             if alias_with_offset:
@@ -2836,6 +2836,8 @@ class MainWindow(QMainWindow):
                     base = 1
                 elif base_name in {"last", "end"}:
                     base = total_pages
+                elif base_name in {"middle", "mid", "center", "centre"}:
+                    base = ((total_pages - 1) // 2) + 1
                 else:
                     base = self.current_page + 1
                 if offset_raw:
@@ -2867,7 +2869,7 @@ class MainWindow(QMainWindow):
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
             # naive split("-", 1), otherwise "last-1-last" is parsed wrongly.
-            bound = r"(?:\d+|first|start|begin|last|end|current|cur|here)(?:\s*[+-]\s*\d+)?"
+            bound = r"(?:\d+|first|start|begin|last|end|middle|mid|center|centre|current|cur|here)(?:\s*[+-]\s*\d+)?"
             m = re.fullmatch(rf"\s*({bound})\s*-\s*({bound})\s*", body)
             if not m:
                 return None
@@ -2932,7 +2934,7 @@ class MainWindow(QMainWindow):
         def parse_single(token: str) -> int | None:
             tk = token.strip().lower()
             alias_with_offset = re.fullmatch(
-                r"(first|start|begin|last|end|current|cur|here)\s*([+-]\s*\d+)?",
+                r"(first|start|begin|last|end|middle|mid|center|centre|current|cur|here)\s*([+-]\s*\d+)?",
                 tk,
             )
             if alias_with_offset:
@@ -2941,6 +2943,8 @@ class MainWindow(QMainWindow):
                     base = 1
                 elif base_name in {"last", "end"}:
                     base = total_pages
+                elif base_name in {"middle", "mid", "center", "centre"}:
+                    base = ((total_pages - 1) // 2) + 1
                 else:
                     base = self.current_page + 1
                 if offset_raw:
@@ -2966,7 +2970,7 @@ class MainWindow(QMainWindow):
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
             # naive split("-", 1), otherwise "last-1-last" is parsed wrongly.
-            bound = r"(?:\d+|first|start|begin|last|end|current|cur|here)(?:\s*[+-]\s*\d+)?"
+            bound = r"(?:\d+|first|start|begin|last|end|middle|mid|center|centre|current|cur|here)(?:\s*[+-]\s*\d+)?"
             m = re.fullmatch(rf"\s*({bound})\s*-\s*({bound})\s*", body)
             if not m:
                 return None
