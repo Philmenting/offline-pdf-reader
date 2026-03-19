@@ -2923,13 +2923,16 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
     for option in ("--file", "--open", "--document", "--pdf", "-f"):
         lower_value = value.lower()
 
-        # Also accept short-option concatenation used by some wrappers,
-        # e.g. -f/tmp/doc.pdf or -fC:\\docs\\file.pdf.
-        if option == "-f" and len(value) > 2 and lower_value.startswith(option):
-            value = value[len(option):].strip()
-            if not value:
-                return None
-            break
+        # Accept option+path concatenation used by some wrappers,
+        # e.g. -f/tmp/doc.pdf, -fC:\\docs\\file.pdf,
+        # --file/tmp/doc.pdf or --open~/docs/file.pdf.
+        if len(value) > len(option) and lower_value.startswith(option):
+            remainder = value[len(option):]
+            if option == "-f" or remainder[:1] in {"/", "\\", "~", "."} or re.match(r"^[A-Za-z]:", remainder):
+                value = remainder.strip()
+                if not value:
+                    return None
+                break
 
         for separator in ("=", ":"):
             prefix = f"{option}{separator}"
