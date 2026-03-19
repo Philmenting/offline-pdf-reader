@@ -762,6 +762,7 @@ class MainWindow(QMainWindow):
 
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
+        self.search_query.setClearButtonEnabled(True)
         self.search_results_list = QListWidget()
         self.search_results_list.setMinimumHeight(140)
         self.search_results_list.setVisible(False)
@@ -789,22 +790,22 @@ class MainWindow(QMainWindow):
         btn_rotate_reset = QPushButton("⟲")
         self.btn_undo = QPushButton("↶")
         self.btn_redo = QPushButton("↷")
-        btn_extract = QPushButton("OCR")
-        btn_extract_all = QPushButton("Text alle")
-        btn_ocr_all = QPushButton("OCR alle")
+        btn_extract = QPushButton("Text Seite")
+        btn_extract_all = QPushButton("Text alle Seiten")
         btn_saveas = QPushButton("Speichern")
         btn_merge = QPushButton("Merge")
         btn_split = QPushButton("Extrakt")
         btn_reorder = QPushButton("Sortieren")
         btn_remove_empty = QPushButton("Leer entfernen")
         btn_search = QPushButton("Suchen")
+        btn_search_close = QPushButton("✕")
         btn_hit_prev = QPushButton("Treffer ◀")
         btn_hit_next = QPushButton("Treffer ▶")
         self.search_counter = QLabel("Treffer: 0/0")
         self.btn_cancel_ocr = QPushButton("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_ocr_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_hit_prev, btn_hit_next, self.btn_cancel_ocr]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_search_close, btn_hit_prev, btn_hit_next]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.setToolTip("PDF öffnen")
@@ -822,6 +823,7 @@ class MainWindow(QMainWindow):
         self.btn_undo.setToolTip("Rückgängig (Ctrl+Z)")
         self.btn_redo.setToolTip("Wiederholen (Ctrl+Y)")
         btn_search.setToolTip("Text in allen Seiten suchen")
+        btn_search_close.setToolTip("Suche schließen")
         btn_hit_prev.setToolTip("Vorherigen Treffer")
         btn_hit_next.setToolTip("Nächsten Treffer")
         self.btn_cancel_ocr.setToolTip("Laufenden OCR-Vorgang abbrechen")
@@ -841,14 +843,14 @@ class MainWindow(QMainWindow):
         self.btn_undo.clicked.connect(self.undo_last_change)
         self.btn_redo.clicked.connect(self.redo_last_change)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
-        btn_extract_all.clicked.connect(self.extract_text_all_pages_and_suggest)
-        btn_ocr_all.clicked.connect(self.ocr_all_pages_and_suggest)
+        btn_extract_all.clicked.connect(self.recognize_text_all_pages_and_suggest)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
         btn_search.clicked.connect(self.open_search_and_run)
+        btn_search_close.clicked.connect(self.close_search_panel)
         self.search_query.returnPressed.connect(self.search_all_pages)
         btn_hit_prev.clicked.connect(self.prev_search_hit)
         btn_hit_next.clicked.connect(self.next_search_hit)
@@ -885,13 +887,13 @@ class MainWindow(QMainWindow):
         search_row.addWidget(QLabel("Suche:"))
         search_row.addWidget(self.search_query, 1)
         search_row.addWidget(btn_search)
+        search_row.addWidget(btn_search_close)
         search_row.addWidget(btn_hit_prev)
         search_row.addWidget(btn_hit_next)
         search_row.addWidget(self.search_counter)
 
         ocr_row = QHBoxLayout()
         ocr_row.addWidget(self.ocr_feedback, 1)
-        ocr_row.addWidget(self.btn_cancel_ocr)
 
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
@@ -949,25 +951,21 @@ class MainWindow(QMainWindow):
         menu_file.addAction(act_redo)
 
         menu_ocr = self.menuBar().addMenu("OCR & Text")
-        act_extract_current = QAction("Aktuelle Seite extrahieren", self)
+        act_extract_current = QAction("Text der aktuellen Seite erkennen", self)
         act_extract_current.setShortcut("Ctrl+E")
         act_extract_current.triggered.connect(self.extract_text_and_suggest)
         menu_ocr.addAction(act_extract_current)
 
-        act_extract = QAction("Alle Seiten extrahieren", self)
+        act_extract = QAction("Text aller Seiten erkennen", self)
         act_extract.setShortcut("Ctrl+Shift+E")
-        act_extract.triggered.connect(self.extract_text_all_pages_and_suggest)
+        act_extract.triggered.connect(self.recognize_text_all_pages_and_suggest)
         menu_ocr.addAction(act_extract)
-
-        act_ocr_all = QAction("OCR alle Seiten", self)
-        act_ocr_all.triggered.connect(self.ocr_all_pages_and_suggest)
-        menu_ocr.addAction(act_ocr_all)
 
         act_ocr_lang = QAction("OCR-Sprache wählen …", self)
         act_ocr_lang.triggered.connect(self.choose_ocr_language)
         menu_ocr.addAction(act_ocr_lang)
 
-        act_show_text = QAction("Extrahierten Text anzeigen", self)
+        act_show_text = QAction("Erkannten Text anzeigen", self)
         act_show_text.setShortcut("Ctrl+T")
         act_show_text.triggered.connect(self.show_extracted_text_window)
         menu_ocr.addAction(act_show_text)
@@ -1084,7 +1082,7 @@ class MainWindow(QMainWindow):
     def show_extracted_text_window(self) -> None:
         if self.text_dialog is None:
             dlg = QDialog(self)
-            dlg.setWindowTitle("Extrahierter OCR/Text")
+            dlg.setWindowTitle("Erkannter Text")
             dlg.resize(880, 620)
             lay = QVBoxLayout(dlg)
             view = QTextEdit()
@@ -1375,6 +1373,14 @@ class MainWindow(QMainWindow):
     def open_search_and_run(self) -> None:
         self.search_results_list.setVisible(True)
         self.search_all_pages()
+
+    def close_search_panel(self) -> None:
+        self.search_query.clear()
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self.search_results_list.setVisible(False)
+        self._update_search_counter()
 
     @staticmethod
     def _normalize_search_text(value: str) -> str:
@@ -2036,80 +2042,15 @@ class MainWindow(QMainWindow):
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(text))
         self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
-        self.statusBar().showMessage("Text aus aktueller Seite extrahiert.")
+        self.statusBar().showMessage("Text der aktuellen Seite erkannt.")
 
     def extract_text_all_pages_and_suggest(self) -> None:
-        if not self.doc:
-            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
-            return
-
-        total = len(self.doc)
-        if total == 0:
-            QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
-            return
-
-        progress = QProgressDialog("Extrahiere Text aus allen Seiten …", "Abbrechen", 0, total, self)
-        progress.setWindowTitle("Bitte warten")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
-        all_text_parts: list[str] = []
-        all_low_conf_tokens: list[str] = []
-        ocr_failed_pages: list[int] = []
-        ocr_error_preview: str = ""
-
-        self._set_ocr_running(True)
-        try:
-            for idx in range(total):
-                progress.setValue(idx)
-                progress.setLabelText(f"Seite {idx + 1}/{total} wird verarbeitet …")
-                QApplication.processEvents()
-                if progress.wasCanceled() or self.ocr_cancel_requested:
-                    QMessageBox.information(self, "Abgebrochen", "Extraktion wurde abgebrochen.")
-                    return
-
-                page = self.doc[idx]
-                text = page.get_text("text").strip()
-
-                if len(text) < 40:
-                    rotation = self.page_rotations.get(idx, 0)
-                    text, ocr_error, low_conf_tokens = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
-                    all_low_conf_tokens.extend(low_conf_tokens)
-                    if ocr_error:
-                        ocr_failed_pages.append(idx + 1)
-                        if not ocr_error_preview:
-                            ocr_error_preview = ocr_error
-                        text = ""
-
-                if text:
-                    all_text_parts.append(text)
-        finally:
-            self._set_ocr_running(False)
-
-        progress.setValue(total)
-
-        combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
-        combined_text = self._apply_learning_rules(combined_text)
-        self._set_extracted_text(combined_text)
-        self.show_extracted_text_window()
-        self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
-        self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
-        self.statusBar().showMessage(f"Text aus {total} Seiten extrahiert.")
-
-        if ocr_failed_pages:
-            pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
-            if len(ocr_failed_pages) > 10:
-                pages += ", …"
-            QMessageBox.warning(
-                self,
-                "OCR teilweise fehlgeschlagen",
-                "Die Extraktion wurde fortgesetzt, aber OCR schlug auf einigen Seiten fehl."
-                f"\n\nSeiten: {pages}"
-                f"\nFehleranzahl: {len(ocr_failed_pages)}"
-                f"\n\nErster Fehler:\n{ocr_error_preview}",
-            )
+        self.recognize_text_all_pages_and_suggest()
 
     def ocr_all_pages_and_suggest(self) -> None:
+        self.recognize_text_all_pages_and_suggest()
+
+    def recognize_text_all_pages_and_suggest(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
             return
@@ -2119,7 +2060,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
             return
 
-        progress = QProgressDialog("Führe OCR auf allen Seiten aus …", "Abbrechen", 0, total, self)
+        progress = QProgressDialog("Erkenne Text auf allen Seiten …", "Abbrechen", 0, total, self)
         progress.setWindowTitle("Bitte warten")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
@@ -2133,10 +2074,10 @@ class MainWindow(QMainWindow):
         try:
             for idx in range(total):
                 progress.setValue(idx)
-                progress.setLabelText(f"OCR Seite {idx + 1}/{total} …")
+                progress.setLabelText(f"Erkennung Seite {idx + 1}/{total} …")
                 QApplication.processEvents()
                 if progress.wasCanceled() or self.ocr_cancel_requested:
-                    QMessageBox.information(self, "Abgebrochen", "OCR wurde abgebrochen.")
+                    QMessageBox.information(self, "Abgebrochen", "Texterkennung wurde abgebrochen.")
                     return
 
                 rotation = self.page_rotations.get(idx, 0)
@@ -2162,7 +2103,7 @@ class MainWindow(QMainWindow):
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
-        self.statusBar().showMessage(f"OCR für {total} Seiten abgeschlossen.")
+        self.statusBar().showMessage(f"Text auf {total} Seiten erkannt.")
 
         if ocr_failed_pages:
             pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
@@ -2171,7 +2112,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "OCR teilweise fehlgeschlagen",
-                "OCR wurde fortgesetzt, aber auf einigen Seiten ist ein Fehler aufgetreten."
+                "Texterkennung wurde fortgesetzt, aber auf einigen Seiten ist ein Fehler aufgetreten."
                 f"\n\nSeiten: {pages}"
                 f"\nFehleranzahl: {len(ocr_failed_pages)}"
                 f"\n\nErster Fehler:\n{ocr_error_preview}",
