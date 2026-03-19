@@ -1077,8 +1077,10 @@ class MainWindow(QMainWindow):
         if not replacements:
             return text
         out = text
-        for src, dst in replacements.items():
-            out = re.sub(rf"\b{re.escape(src)}\b", dst, out)
+        # Apply longer keys first (e.g. RE-100 before RE-10) and match case-insensitively.
+        for src in sorted(replacements.keys(), key=len, reverse=True):
+            dst = replacements[src]
+            out = re.sub(rf"\b{re.escape(src)}\b", dst, out, flags=re.IGNORECASE)
         return out
 
     def _set_extracted_text(self, text: str) -> None:
