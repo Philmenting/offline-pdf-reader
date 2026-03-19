@@ -1102,11 +1102,12 @@ class MainWindow(QMainWindow):
 
     def _apply_learning_rules(self, text: str) -> str:
         replacements = self.learning_rules.get("replacements", {})
-        if not replacements:
+        if not isinstance(replacements, dict) or not replacements:
             return text
         out = text
         # Apply longer keys first (e.g. RE-100 before RE-10) and match case-insensitively.
-        for src in sorted(replacements.keys(), key=len, reverse=True):
+        valid_sources = [src for src, dst in replacements.items() if isinstance(src, str) and isinstance(dst, str)]
+        for src in sorted(valid_sources, key=len, reverse=True):
             dst = replacements[src]
             out = re.sub(rf"\b{re.escape(src)}\b", dst, out, flags=re.IGNORECASE)
         return out
