@@ -2912,6 +2912,18 @@ class MainWindow(QMainWindow):
         return ordered
 
 
+STARTUP_PDF_OPTION_NAMES = {
+    "--file",
+    "--open",
+    "--document",
+    "--pdf",
+    "--filename",
+    "--input",
+    "--path",
+    "-f",
+}
+
+
 def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
     value = (raw_arg or "").strip()
     if not value:
@@ -2920,7 +2932,7 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
     # Some launchers wrap file paths in explicit option forms.
     # Accept common variants like --file=/tmp/doc.pdf, --file:/tmp/doc.pdf,
     # -f=/tmp/doc.pdf, -f/tmp/doc.pdf and --open="...".
-    for option in ("--file", "--open", "--document", "--pdf", "-f"):
+    for option in STARTUP_PDF_OPTION_NAMES:
         lower_value = value.lower()
 
         # Accept option+path concatenation used by some wrappers,
@@ -3021,12 +3033,10 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
 
 
 def find_startup_pdf_argument(argv: list[str]) -> Path | None:
-    option_names = {"--file", "--open", "--document", "--pdf", "-f"}
-
     i = 0
     while i < len(argv):
         raw = argv[i]
-        if raw in option_names:
+        if raw in STARTUP_PDF_OPTION_NAMES:
             if i + 1 < len(argv):
                 candidate = resolve_startup_pdf_argument(argv[i + 1])
                 if candidate is not None:
