@@ -2878,8 +2878,8 @@ class MainWindow(QMainWindow):
                     return None
                 step = int(step_raw)
 
-            # Accept textual range connectors as well, e.g. "1 to 5" / "1 bis 5".
-            body = re.sub(r"\b(?:to|bis)\b", "-", body, flags=re.IGNORECASE)
+            # Accept textual range connectors as well, e.g. "1 to/through 5" / "1 bis/durch 5".
+            body = re.sub(r"\b(?:to|through|bis|durch)\b", "-", body, flags=re.IGNORECASE)
 
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
@@ -2982,8 +2982,8 @@ class MainWindow(QMainWindow):
                     return None
                 step = int(step_raw)
 
-            # Accept textual range connectors as well, e.g. "1 to 5" / "1 bis 5".
-            body = re.sub(r"\b(?:to|bis)\b", "-", body, flags=re.IGNORECASE)
+            # Accept textual range connectors as well, e.g. "1 to/through 5" / "1 bis/durch 5".
+            body = re.sub(r"\b(?:to|through|bis|durch)\b", "-", body, flags=re.IGNORECASE)
 
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
