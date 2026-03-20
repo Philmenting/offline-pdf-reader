@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlparse
 import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -39,6 +39,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
 )
 
+try:
+    import cv2  # type: ignore[import-not-found]
+except Exception:
+    cv2 = None
+
+try:
+    import numpy as np  # type: ignore[import-not-found]
+except Exception:
+    np = None
+
 
 @dataclass
 class ParsedDocInfo:
@@ -61,6 +71,14 @@ class ExportRecord:
     waehrung: str
     text_laenge: int
     text_auszug: str
+
+
+@dataclass
+class OCRPassResult:
+    text: str
+    mean_confidence: float
+    low_conf_tokens: list[str]
+    low_conf_lines: list[str]
 
 
 def _normalize_filename_part(value: str, max_len: int = 48) -> str:
@@ -755,7 +773,7 @@ class MainWindow(QMainWindow):
 
         self.ocr_lang = "deu+eng"
         self.ocr_cancel_requested = False
-        self.ocr_cache: dict[str, tuple[str, str | None, list[str]]] = {}
+        self.ocr_cache: dict[str, tuple[str, str | None, list[str], list[str]]] = {}
         self.ocr_cache_order: list[str] = []
         self.ocr_cache_max_entries = 80
         self.doc_revision = 0
@@ -1445,9 +1463,9 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _normalize_search_text(value: str) -> str:
         text = (value or "").casefold()
-        # OCR confusions seen in scanned German docs
+        # Keep common OCR confusions searchable, but only inside word-like tokens.
         text = text.replace("é", "ö")
-        text = text.replace("ii", "ü")
+        text = MainWindow._fix_german_umlaut_confusions(text)
         text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
         # Treat punctuation/separators as spaces so searches like
@@ -1477,7 +1495,7 @@ class MainWindow(QMainWindow):
             text = self.doc[idx].get_text("text").strip()
             if len(text) < 20:
                 rotation = self.page_rotations.get(idx, 0)
-                ocr_text, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
+                ocr_text, _, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
                 if ocr_text:
                     text = f"{text}\n{ocr_text}".strip()
 
@@ -1553,7 +1571,7 @@ class MainWindow(QMainWindow):
                 path_part = str(self.pdf_path)
         return f"{path_part}|rev:{self.doc_revision}|p{page_index}|r{rotation % 360}|lang:{self._ocr_lang()}|mode:{mode}"
 
-    def _ocr_cache_get(self, key: str) -> tuple[str, str | None, list[str]] | None:
+    def _ocr_cache_get(self, key: str) -> tuple[str, str | None, list[str], list[str]] | None:
         value = self.ocr_cache.get(key)
         if value is None:
             return None
@@ -1562,7 +1580,7 @@ class MainWindow(QMainWindow):
         self.ocr_cache_order.append(key)
         return value
 
-    def _ocr_cache_put(self, key: str, value: tuple[str, str | None, list[str]]) -> None:
+    def _ocr_cache_put(self, key: str, value: tuple[str, str | None, list[str], list[str]]) -> None:
         self.ocr_cache[key] = value
         if key in self.ocr_cache_order:
             self.ocr_cache_order.remove(key)
@@ -1576,9 +1594,9 @@ class MainWindow(QMainWindow):
         page_index: int,
         rotation: int,
         retries: int = 1,
-    ) -> tuple[str, str | None, list[str]]:
+    ) -> tuple[str, str | None, list[str], list[str]]:
         if not self.doc or not (0 <= page_index < len(self.doc)):
-            return "", "Ungültige Seite", []
+            return "", "Ungültige Seite", [], []
 
         key = self._ocr_cache_key(page_index, rotation, mode="confidence")
         cached = self._ocr_cache_get(key)
@@ -1594,37 +1612,243 @@ class MainWindow(QMainWindow):
         self._ocr_cache_put(key, result)
         return result
 
-    def _ocr_with_retry(self, img: Image.Image, retries: int = 1) -> tuple[str, str | None, list[str]]:
+    def _ocr_with_retry(self, img: Image.Image, retries: int = 1) -> tuple[str, str | None, list[str], list[str]]:
         last_err: str | None = None
+        last_tokens: list[str] = []
+        last_lines: list[str] = []
         for _ in range(retries + 1):
-            text, err, tokens = self._ocr_image_with_confidence(img, show_error=False)
+            text, err, tokens, low_conf_lines = self._ocr_image_with_confidence(img, show_error=False)
             if not err:
-                return text, None, tokens
+                return text, None, tokens, low_conf_lines
             last_err = err
-        return "", last_err, []
+            last_tokens = tokens
+            last_lines = low_conf_lines
+        return "", last_err, last_tokens, last_lines
 
-    def _ocr_image_with_confidence(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None, list[str]]:
-        text, err = self._ocr_image(img, show_error=show_error)
-        if err:
-            return text, err, []
+    @staticmethod
+    def _restore_word_case(source: str, replacement: str) -> str:
+        if source.isupper():
+            return replacement.upper()
+        if len(source) > 1 and source[0].isupper() and source[1:].islower():
+            return replacement.capitalize()
+        return replacement
+
+    @staticmethod
+    def _fix_german_umlaut_confusions(text: str) -> str:
+        if "ii" not in (text or "").casefold():
+            return text
+
+        consonants = "bcdfghjklmnpqrstvwxyz"
+        patterns = (
+            rf"(?i)^ii(?=[{consonants}])",
+            rf"(?i)(?<=[{consonants}])ii(?=[{consonants}])",
+            rf"(?i)(?<=[{consonants}])ii$",
+        )
+
+        def replace_word(match: re.Match[str]) -> str:
+            word = match.group(0)
+            fixed = word.casefold()
+            for pattern in patterns:
+                fixed = re.sub(pattern, "ü", fixed)
+            if fixed == word.casefold():
+                return word
+            return MainWindow._restore_word_case(word, fixed)
+
+        # Restrict replacements to alphabetic words so IDs like RE-2026-II remain untouched.
+        return re.sub(r"\b[^\W\d_]{3,}\b", replace_word, text, flags=re.UNICODE)
+
+    @staticmethod
+    def _compute_otsu_threshold(img: Image.Image) -> int:
+        hist = img.histogram()
+        total = sum(hist)
+        if total <= 0:
+            return 127
+
+        sum_total = sum(idx * count for idx, count in enumerate(hist))
+        sum_back = 0.0
+        weight_back = 0
+        max_variance = -1.0
+        threshold = 127
+
+        for idx, count in enumerate(hist):
+            weight_back += count
+            if weight_back == 0:
+                continue
+            weight_fore = total - weight_back
+            if weight_fore == 0:
+                break
+            sum_back += idx * count
+            mean_back = sum_back / weight_back
+            mean_fore = (sum_total - sum_back) / weight_fore
+            variance = weight_back * weight_fore * (mean_back - mean_fore) ** 2
+            if variance > max_variance:
+                max_variance = variance
+                threshold = idx
+        return threshold
+
+    def _prepare_image_for_ocr_pillow(self, gray: Image.Image, variant: str) -> Image.Image:
+        denoised = gray.filter(ImageFilter.MedianFilter(size=3))
+        if variant == "otsu":
+            threshold = self._compute_otsu_threshold(denoised)
+            return denoised.point(lambda px: 255 if px > threshold else 0, mode="L")
+
+        # Approximate adaptive thresholding by comparing against a blurred local baseline.
+        baseline = denoised.filter(ImageFilter.GaussianBlur(radius=8))
+        adaptive_pixels = [
+            255 if src > max(0, local - 12) else 0
+            for src, local in zip(denoised.getdata(), baseline.getdata())
+        ]
+        adaptive = Image.new("L", denoised.size)
+        adaptive.putdata(adaptive_pixels)
+        return adaptive
+
+    def _prepare_image_for_ocr_cv2(self, gray: Image.Image, variant: str) -> Image.Image:
+        if cv2 is None or np is None:
+            return self._prepare_image_for_ocr_pillow(gray, variant)
+
+        arr = np.array(gray)
+        denoised = cv2.fastNlMeansDenoising(arr, None, 12, 7, 21)
+        if variant == "otsu":
+            _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        else:
+            thresh = cv2.adaptiveThreshold(
+                denoised,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                31,
+                12,
+            )
+        return Image.fromarray(thresh)
+
+    def _prepare_image_for_ocr(self, img: Image.Image, variant: str = "adaptive") -> Image.Image:
+        prepared = ImageOps.autocontrast(img.convert("L"))
+        width, height = prepared.size
+        max_dim = max(width, height)
+        upscale = 1.75 if max_dim < 1400 else 1.25 if max_dim < 2200 else 1.0
+        if upscale != 1.0:
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            prepared = prepared.resize((max(1, int(width * upscale)), max(1, int(height * upscale))), resampling)
+        if cv2 is not None and np is not None:
+            return self._prepare_image_for_ocr_cv2(prepared, variant)
+        return self._prepare_image_for_ocr_pillow(prepared, variant)
+
+    def _extract_confidence_signals(self, data: dict) -> tuple[list[str], list[str], float]:
         low_conf_tokens: list[str] = []
-        try:
-            data = pytesseract.image_to_data(img, lang=self._ocr_lang(), output_type=Output.DICT)
-            for token, conf in zip(data.get("text", []), data.get("conf", [])):
-                tk = (token or "").strip()
-                if not tk:
-                    continue
-                try:
-                    score = float(conf)
-                except Exception:
-                    continue
-                if 0 <= score < 55 and len(tk) >= 2:
-                    low_conf_tokens.append(tk)
-        except Exception:
-            pass
-        return text, None, low_conf_tokens[:20]
+        line_scores: dict[tuple[int, int, int], list[float]] = {}
+        line_tokens: dict[tuple[int, int, int], list[str]] = {}
+        all_scores: list[float] = []
 
-    def _build_ocr_feedback(self, text: str, low_conf_tokens: list[str]) -> str:
+        rows = zip(
+            data.get("text", []),
+            data.get("conf", []),
+            data.get("block_num", []),
+            data.get("par_num", []),
+            data.get("line_num", []),
+        )
+        for token, conf, block_num, par_num, line_num in rows:
+            tk = (token or "").strip()
+            if not tk:
+                continue
+            try:
+                score = float(conf)
+            except Exception:
+                continue
+            if score < 0:
+                continue
+
+            all_scores.append(score)
+            line_key = (int(block_num), int(par_num), int(line_num))
+            line_scores.setdefault(line_key, []).append(score)
+            line_tokens.setdefault(line_key, []).append(tk)
+            if score < 55 and len(tk) >= 2:
+                low_conf_tokens.append(tk)
+
+        low_conf_lines: list[str] = []
+        for line_key, scores in line_scores.items():
+            avg_score = sum(scores) / len(scores)
+            snippet = " ".join(line_tokens.get(line_key, [])).strip()
+            if snippet and avg_score < 60:
+                low_conf_lines.append(snippet[:120])
+
+        mean_conf = sum(all_scores) / len(all_scores) if all_scores else 0.0
+        return low_conf_tokens[:20], low_conf_lines[:6], mean_conf
+
+    def _run_ocr_pass(self, img: Image.Image, lang: str, psm: int, variant: str) -> OCRPassResult:
+        prepared = self._prepare_image_for_ocr(img, variant=variant)
+        config = f"--oem 1 --psm {psm}"
+        raw = pytesseract.image_to_string(prepared, lang=lang, config=config).strip()
+        data = pytesseract.image_to_data(prepared, lang=lang, config=config, output_type=Output.DICT)
+        low_conf_tokens, low_conf_lines, mean_conf = self._extract_confidence_signals(data)
+        return OCRPassResult(
+            text=self._postprocess_ocr_text(raw),
+            mean_confidence=mean_conf,
+            low_conf_tokens=low_conf_tokens,
+            low_conf_lines=low_conf_lines,
+        )
+
+    @staticmethod
+    def _ocr_result_score(result: OCRPassResult) -> tuple[float, int, int]:
+        return (
+            round(result.mean_confidence - (len(result.low_conf_lines) * 5.0) - (len(result.low_conf_tokens) * 1.2), 3),
+            len(result.text),
+            -len(result.low_conf_tokens),
+        )
+
+    @staticmethod
+    def _should_retry_ocr_pass(result: OCRPassResult) -> bool:
+        if not result.text.strip():
+            return True
+        if result.mean_confidence < 72:
+            return True
+        if len(result.low_conf_lines) >= 2:
+            return True
+        return len(result.low_conf_tokens) >= 8
+
+    def _run_ocr_passes(self, img: Image.Image, lang: str) -> OCRPassResult:
+        primary = self._run_ocr_pass(img, lang=lang, psm=6, variant="adaptive")
+        best = primary
+        if self._should_retry_ocr_pass(primary):
+            fallback = self._run_ocr_pass(img, lang=lang, psm=4, variant="otsu")
+            if self._ocr_result_score(fallback) > self._ocr_result_score(best):
+                best = fallback
+        return best
+
+    def _ocr_image_with_confidence(
+        self,
+        img: Image.Image,
+        show_error: bool = True,
+    ) -> tuple[str, str | None, list[str], list[str]]:
+        lang = self._ocr_lang()
+        try:
+            result = self._run_ocr_passes(img, lang=lang)
+            return result.text, None, result.low_conf_tokens, result.low_conf_lines
+        except (FileNotFoundError, TesseractNotFoundError) as e:
+            msg = (
+                "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
+                "dass der Befehl 'tesseract' im PATH verfügbar ist."
+            )
+            if show_error:
+                QMessageBox.warning(self, "OCR-Fehler", f"{msg}\n\nDetails:\n{e}")
+            return "", f"{msg} Details: {e}", [], []
+        except TesseractError as e:
+            err_text = str(e)
+            if lang != "deu+eng" and ("Failed loading language" in err_text or "Error opening data file" in err_text):
+                try:
+                    result = self._run_ocr_passes(img, lang="deu+eng")
+                    return result.text, None, result.low_conf_tokens, result.low_conf_lines
+                except TesseractError:
+                    pass
+            if show_error:
+                QMessageBox.warning(
+                    self,
+                    "OCR-Fehler",
+                    "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
+                    f"\n\nDetails:\n{e}",
+                )
+            return "", err_text, [], []
+
+    def _build_ocr_feedback(self, text: str, low_conf_tokens: list[str], low_conf_lines: list[str]) -> str:
         info = parse_doc_info(text)
         amount, currency = extract_total_amount_info(text)
         lines = []
@@ -1634,6 +1858,12 @@ class MainWindow(QMainWindow):
                 if t not in unique_tokens:
                     unique_tokens.append(t)
             lines.append("Unsichere OCR-Tokens: " + ", ".join(unique_tokens[:8]))
+        if low_conf_lines:
+            unique_lines = []
+            for line in low_conf_lines:
+                if line not in unique_lines:
+                    unique_lines.append(line)
+            lines.append("Unsichere Zeilen: " + " | ".join(unique_lines[:3]))
 
         number = info.number
         if number:
@@ -2102,11 +2332,12 @@ class MainWindow(QMainWindow):
         page = self.doc[self.current_page]
         text = page.get_text("text").strip()
         low_conf_tokens: list[str] = []
+        low_conf_lines: list[str] = []
 
         if len(text) < 40:
             # OCR fallback on current page image (respect UI rotation for better OCR)
             rotation = self.page_rotations.get(self.current_page, 0)
-            text, _, low_conf_tokens = self._ocr_page_with_retry_cached(self.current_page, rotation, retries=1)
+            text, _, low_conf_tokens, low_conf_lines = self._ocr_page_with_retry_cached(self.current_page, rotation, retries=1)
 
         if not text:
             text = "(Kein Text erkannt)"
@@ -2115,7 +2346,7 @@ class MainWindow(QMainWindow):
         self._set_extracted_text(text)
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(text))
-        self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens))
+        self.ocr_feedback.setText(self._build_ocr_feedback(text, low_conf_tokens, low_conf_lines))
         self.statusBar().showMessage("Text der aktuellen Seite erkannt.")
 
     def extract_text_all_pages_and_suggest(self) -> None:
@@ -2141,6 +2372,7 @@ class MainWindow(QMainWindow):
 
         all_text_parts: list[str] = []
         all_low_conf_tokens: list[str] = []
+        all_low_conf_lines: list[str] = []
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
 
@@ -2155,8 +2387,9 @@ class MainWindow(QMainWindow):
                     return
 
                 rotation = self.page_rotations.get(idx, 0)
-                text, ocr_error, low_conf_tokens = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
+                text, ocr_error, low_conf_tokens, low_conf_lines = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
                 all_low_conf_tokens.extend(low_conf_tokens)
+                all_low_conf_lines.extend(low_conf_lines)
                 if ocr_error:
                     ocr_failed_pages.append(idx + 1)
                     if not ocr_error_preview:
@@ -2176,7 +2409,7 @@ class MainWindow(QMainWindow):
         self._set_extracted_text(combined_text)
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
-        self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens))
+        self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens, all_low_conf_lines))
         self.statusBar().showMessage(f"Text auf {total} Seiten erkannt.")
 
         if ocr_failed_pages:
@@ -2323,7 +2556,7 @@ class MainWindow(QMainWindow):
 
         # Fallback to OCR for scanned/low-quality first pages
         rotation = self.page_rotations.get(0, 0)
-        ocr_text, _, _ = self._ocr_page_with_retry_cached(0, rotation, retries=1)
+        ocr_text, _, _, _ = self._ocr_page_with_retry_cached(0, rotation, retries=1)
         if ocr_text:
             suggestion = suggest_filename_from_text(ocr_text)
             if suggestion != "Dokument.pdf":
@@ -2395,56 +2628,17 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_ocr_language_code(self.ocr_lang)
         return normalized or "deu+eng"
 
-    def _prepare_image_for_ocr(self, img: Image.Image) -> Image.Image:
-        prepared = img.convert("L")
-        prepared = ImageOps.autocontrast(prepared)
-        width, height = prepared.size
-        upscale = 1.5
-        resampling = getattr(Image, "Resampling", Image).LANCZOS
-        prepared = prepared.resize((max(1, int(width * upscale)), max(1, int(height * upscale))), resampling)
-        return prepared
-
     def _postprocess_ocr_text(self, text: str) -> str:
         out = text
         if "deu" in self._ocr_lang():
-            # Frequently observed confusions in German OCR runs.
+            # Keep this conservative so invoice numbers and IDs are not rewritten.
             out = re.sub(r"(?<=\w)é(?=\w)", "ö", out)
-            out = re.sub(r"(?i)\bfiir\b", "für", out)
-            out = re.sub(r"(?i)\biiber\b", "über", out)
+            out = self._fix_german_umlaut_confusions(out)
         return out
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
-        lang = self._ocr_lang()
-        prepared = self._prepare_image_for_ocr(img)
-        config = "--oem 1 --psm 6"
-        try:
-            raw = pytesseract.image_to_string(prepared, lang=lang, config=config).strip()
-            return self._postprocess_ocr_text(raw), None
-        except (FileNotFoundError, TesseractNotFoundError) as e:
-            msg = (
-                "Tesseract wurde nicht gefunden. Bitte Tesseract installieren und sicherstellen, "
-                "dass der Befehl 'tesseract' im PATH verfügbar ist."
-            )
-            if show_error:
-                QMessageBox.warning(self, "OCR-Fehler", f"{msg}\n\nDetails:\n{e}")
-            return "", f"{msg} Details: {e}"
-        except TesseractError as e:
-            err_text = str(e)
-            # fallback if custom language pack is missing/misconfigured
-            if lang != "deu+eng" and ("Failed loading language" in err_text or "Error opening data file" in err_text):
-                try:
-                    raw = pytesseract.image_to_string(prepared, lang="deu+eng", config=config).strip()
-                    return self._postprocess_ocr_text(raw), None
-                except TesseractError:
-                    pass
-            if show_error:
-                QMessageBox.warning(
-                    self,
-                    "OCR-Fehler",
-                    "OCR konnte nicht ausgeführt werden. Bitte Tesseract/Sprachdaten prüfen."
-                    f"\n\nDetails:\n{e}",
-                )
-            return "", err_text
+        text, err, _, _ = self._ocr_image_with_confidence(img, show_error=show_error)
+        return text, err
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
