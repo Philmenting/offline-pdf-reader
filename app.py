@@ -1450,6 +1450,9 @@ class MainWindow(QMainWindow):
         text = text.replace("ii", "ü")
         text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        # Treat punctuation/separators as spaces so searches like
+        # "RE 2026 001" match lines containing "RE-2026/001".
+        text = re.sub(r"[^a-z0-9]+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
