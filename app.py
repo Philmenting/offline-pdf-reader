@@ -3080,39 +3080,49 @@ def resolve_startup_pdf_argument(raw_arg: str) -> Path | None:
             continue
         break
 
-    # Some launch wrappers pass the argument with surrounding quotes intact.
-    # Repeatedly unwrap matching quote pairs so doubly-wrapped values like
-    # '"/tmp/doc.pdf"' still resolve as file paths.
-    while len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        value = value[1:-1].strip()
-        if not value:
-            return None
-
-    # Chat/launcher wrappers sometimes include surrounding delimiters around
-    # links, e.g. <file:///tmp/doc.pdf> or (file:///tmp/doc.pdf).
-    # Repeatedly unwrap matching outer pairs so doubly-wrapped values still
-    # resolve as file paths.
+    # Normalize common chat/launcher wrapping artifacts. We loop until stable
+    # so values like "<file:///tmp/doc.pdf>." first lose punctuation and then
+    # lose the remaining wrappers.
     wrapper_pairs = {"<": ">", "(": ")", "[": "]", "{": "}"}
-    while len(value) >= 2 and value[0] in wrapper_pairs and value[-1] == wrapper_pairs[value[0]]:
-        value = value[1:-1].strip()
-        if not value:
-            return None
+    while True:
+        changed = False
 
-    # Some chat surfaces append sentence punctuation to pasted links like
-    # "<file:///tmp/doc.pdf#page=2>.". Trim obvious trailing punctuation so
-    # startup parsing still resolves the PDF path.
-    while value.endswith((".", ",", ";", ":", "!", "?")):
-        trimmed = value.rstrip(".,;:!?").strip()
-        if (
-            trimmed
-            and (
-                trimmed.lower().startswith("file://")
-                or ".pdf" in trimmed.lower()
-            )
-        ):
-            value = trimmed
-            continue
-        break
+        # Some launch wrappers pass the argument with surrounding quotes intact.
+        # Repeatedly unwrap matching quote pairs so doubly-wrapped values like
+        # '"/tmp/doc.pdf"' still resolve as file paths.
+        while len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1].strip()
+            changed = True
+            if not value:
+                return None
+
+        # Chat/launcher wrappers sometimes include surrounding delimiters around
+        # links, e.g. <file:///tmp/doc.pdf> or (file:///tmp/doc.pdf).
+        while len(value) >= 2 and value[0] in wrapper_pairs and value[-1] == wrapper_pairs[value[0]]:
+            value = value[1:-1].strip()
+            changed = True
+            if not value:
+                return None
+
+        # Some chat surfaces append sentence punctuation to pasted links like
+        # "<file:///tmp/doc.pdf#page=2>.". Trim obvious trailing punctuation so
+        # startup parsing still resolves the PDF path.
+        while value.endswith((".", ",", ";", ":", "!", "?")):
+            trimmed = value.rstrip(".,;:!?").strip()
+            if (
+                trimmed
+                and (
+                    trimmed.lower().startswith("file://")
+                    or ".pdf" in trimmed.lower()
+                )
+            ):
+                value = trimmed
+                changed = True
+                continue
+            break
+
+        if not changed:
+            break
 
     # On Windows, urlparse treats drive-letter paths like C:\foo.pdf as URL schemes
     # (scheme="c"). Detect and normalize those paths before URL parsing.
