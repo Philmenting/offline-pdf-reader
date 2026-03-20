@@ -2887,7 +2887,7 @@ class MainWindow(QMainWindow):
             if not token:
                 continue
 
-            if token in {"all", "*"}:
+            if token in {"all", "alle", "*"}:
                 for idx in range(total_pages):
                     add_page(idx)
                 continue
@@ -2899,7 +2899,7 @@ class MainWindow(QMainWindow):
                 for idx in range(1, total_pages, 2):
                     add_page(idx)
                 continue
-            if token in {"reverse", "rev"}:
+            if token in {"reverse", "rev", "rückwärts", "rueckwaerts", "umgekehrt"}:
                 for idx in reversed(range(total_pages)):
                     add_page(idx)
                 continue
@@ -2988,7 +2988,7 @@ class MainWindow(QMainWindow):
             if not token:
                 continue
 
-            if token in {"all", "*"}:
+            if token in {"all", "alle", "*"}:
                 ordered.extend(range(total_pages))
                 continue
             if token in {"odd", "ungerade"}:
@@ -2997,7 +2997,7 @@ class MainWindow(QMainWindow):
             if token in {"even", "gerade"}:
                 ordered.extend(range(1, total_pages, 2))
                 continue
-            if token in {"reverse", "rev"}:
+            if token in {"reverse", "rev", "rückwärts", "rueckwaerts", "umgekehrt"}:
                 ordered.extend(reversed(range(total_pages)))
                 continue
             if token in {"middle", "mid", "center", "centre", "mitte"}:
