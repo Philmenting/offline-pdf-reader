@@ -2085,6 +2085,9 @@ class MainWindow(QMainWindow):
     def reset_rotation(self) -> None:
         if not self.doc:
             return
+        current = self.page_rotations.get(self.current_page, 0)
+        if current == 0:
+            return
         self._push_undo_state()
         self.page_rotations[self.current_page] = 0
         self._set_dirty(True)
