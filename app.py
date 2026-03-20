@@ -2880,6 +2880,8 @@ class MainWindow(QMainWindow):
 
             # Accept textual range connectors as well, e.g. "1 to/through 5" / "1 bis/durch 5".
             body = re.sub(r"\b(?:to|through|bis|durch)\b", "-", body, flags=re.IGNORECASE)
+            # Normalize Unicode dashes users often paste from rich text.
+            body = re.sub(r"[–—−]", "-", body)
 
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
@@ -2984,6 +2986,8 @@ class MainWindow(QMainWindow):
 
             # Accept textual range connectors as well, e.g. "1 to/through 5" / "1 bis/durch 5".
             body = re.sub(r"\b(?:to|through|bis|durch)\b", "-", body, flags=re.IGNORECASE)
+            # Normalize Unicode dashes users often paste from rich text.
+            body = re.sub(r"[–—−]", "-", body)
 
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
