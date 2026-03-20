@@ -3072,8 +3072,8 @@ class MainWindow(QMainWindow):
                     return None
                 step = int(step_raw)
 
-            # Accept textual range connectors as well, e.g. "1 to/thru/through/until 5" / "1 bis/durch 5".
-            body = re.sub(r"\b(?:to|thru|through|until|till|bis|durch)\b", "-", body, flags=re.IGNORECASE)
+            # Accept textual range connectors as well, e.g. "1 up to 5", "1 to/thru/through/until 5" / "1 bis zu/durch 5".
+            body = re.sub(r"\b(?:up\s+to|bis\s+zu|to|thru|through|until|till|bis|durch)\b", "-", body, flags=re.IGNORECASE)
             # Normalize Unicode dashes users often paste from rich text.
             body = re.sub(r"[–—−]", "-", body)
 
@@ -3178,8 +3178,8 @@ class MainWindow(QMainWindow):
                     return None
                 step = int(step_raw)
 
-            # Accept textual range connectors as well, e.g. "1 to/thru/through/until 5" / "1 bis/durch 5".
-            body = re.sub(r"\b(?:to|thru|through|until|till|bis|durch)\b", "-", body, flags=re.IGNORECASE)
+            # Accept textual range connectors as well, e.g. "1 up to 5", "1 to/thru/through/until 5" / "1 bis zu/durch 5".
+            body = re.sub(r"\b(?:up\s+to|bis\s+zu|to|thru|through|until|till|bis|durch)\b", "-", body, flags=re.IGNORECASE)
             # Normalize Unicode dashes users often paste from rich text.
             body = re.sub(r"[–—−]", "-", body)
 
