@@ -2872,6 +2872,9 @@ class MainWindow(QMainWindow):
                     return None
                 step = int(step_raw)
 
+            # Accept textual range connectors as well, e.g. "1 to 5" / "1 bis 5".
+            body = re.sub(r"\b(?:to|bis)\b", "-", body, flags=re.IGNORECASE)
+
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
             # naive split("-", 1), otherwise "last-1-last" is parsed wrongly.
@@ -2972,6 +2975,9 @@ class MainWindow(QMainWindow):
                 if not step_raw.isdigit() or int(step_raw) <= 0:
                     return None
                 step = int(step_raw)
+
+            # Accept textual range connectors as well, e.g. "1 to 5" / "1 bis 5".
+            body = re.sub(r"\b(?:to|bis)\b", "-", body, flags=re.IGNORECASE)
 
             # Range bounds can themselves contain signed alias offsets like
             # "last-1" or "current+2". Use a bound-aware regex instead of a
