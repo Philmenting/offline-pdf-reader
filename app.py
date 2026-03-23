@@ -2492,6 +2492,10 @@ class MainWindow(QMainWindow):
             self.preview.setFocus()
             return
 
+        if key == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.open_search()
+            return
+
         focused = QApplication.focusWidget()
         if isinstance(focused, (QLineEdit, QTextEdit)):
             super().keyPressEvent(event)
@@ -2499,11 +2503,6 @@ class MainWindow(QMainWindow):
 
         if key == Qt.Key.Key_Delete and self.thumb_list.hasFocus():
             self.delete_selected_pages()
-            return
-        if key == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.search_results_list.setVisible(True)
-            self.search_query.setFocus()
-            self.search_query.selectAll()
             return
 
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
