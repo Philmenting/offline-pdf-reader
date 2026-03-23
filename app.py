@@ -2700,6 +2700,7 @@ class MainWindow(QMainWindow):
 
         remaining_failed: list[int] = []
         first_error = ""
+        canceled = False
 
         self._set_ocr_running(True)
         try:
@@ -2708,6 +2709,8 @@ class MainWindow(QMainWindow):
                 progress.setLabelText(f"OCR Retry Seite {page_no} ({i + 1}/{len(pages_to_retry)}) …")
                 QApplication.processEvents()
                 if progress.wasCanceled() or self.ocr_cancel_requested:
+                    remaining_failed.extend(pages_to_retry[i:])
+                    canceled = True
                     break
 
                 idx = page_no - 1
@@ -2733,7 +2736,18 @@ class MainWindow(QMainWindow):
             self.show_extracted_text_window()
             self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
 
-        if remaining_failed:
+        if canceled:
+            preview = ", ".join(str(p) for p in remaining_failed[:10])
+            if len(remaining_failed) > 10:
+                preview += ", …"
+            QMessageBox.information(
+                self,
+                "OCR Retry abgebrochen",
+                "OCR-Retry wurde abgebrochen. Nicht verarbeitete Seiten bleiben als fehlgeschlagen markiert."
+                f"\n\nOffene Seiten: {preview or '-'}"
+                f"\nAnzahl: {len(remaining_failed)}",
+            )
+        elif remaining_failed:
             preview = ", ".join(str(p) for p in remaining_failed[:10])
             if len(remaining_failed) > 10:
                 preview += ", …"
