@@ -487,34 +487,52 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         return cleaned
 
     number = ""
-    number_patterns = [
-        r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|belegnr\.?|vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?|lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
-        r"(?i)\b(?:inv|doc|po|dn)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b",
-    ]
-    for pat in number_patterns:
-        m_num = re.search(pat, text)
-        if m_num:
-            number = _normalize_doc_number(m_num.group(1))
-            break
+    value_re = re.compile(r"^[A-Z0-9][A-Z0-9/_-]{2,}$", re.IGNORECASE)
 
-    if not number:
-        label_re = re.compile(
-            r"(?i)^(?:rechnungs(?:nr|nummer)|rechn\.?\s*nr\.?|re\.?\s*nr\.?|rg\.?\s*nr\.?|invoice\s*(?:no|number|nr)|belegnr\.?|vorgangs(?:nr|nummer)|bestell(?:nr|nummer)|order\s*(?:no|number)|purchase\s*order\s*(?:no|number)|lieferschein(?:nr|nummer)|delivery\s*note\s*(?:no|number)|nr\.?)\s*[:#-]?\s*(.*)$"
-        )
-        value_re = re.compile(r"^[A-Z0-9][A-Z0-9/_-]{2,}$", re.IGNORECASE)
-        for idx, ln in enumerate(lines[:80]):
-            m_label = label_re.match(ln.strip())
-            if not m_label:
-                continue
-            inline_val = _normalize_doc_number(m_label.group(1))
-            if inline_val and value_re.match(inline_val):
-                number = inline_val
-                break
-            if idx + 1 < len(lines):
-                next_line = _normalize_doc_number(lines[idx + 1])
-                if value_re.match(next_line):
-                    number = next_line
-                    break
+    number_candidates: dict[str, int] = {}
+
+    def _add_number_candidate(raw_val: str, score: int) -> None:
+        val = _normalize_doc_number(raw_val)
+        if not val or not value_re.match(val):
+            return
+        number_candidates[val] = number_candidates.get(val, 0) + score
+
+    strict_patterns = [
+        (r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|belegnr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 10),
+        (r"(?i)(?:vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 6),
+        (r"(?i)(?:lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 7),
+        (r"(?i)\b(?:inv|doc|po|dn)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b", 4),
+    ]
+    for pat, pts in strict_patterns:
+        for m_num in re.finditer(pat, text):
+            _add_number_candidate(m_num.group(1), pts)
+
+    label_re = re.compile(
+        r"(?i)^(?:rechnungs(?:nr|nummer)|rechn\.?\s*nr\.?|re\.?\s*nr\.?|rg\.?\s*nr\.?|invoice\s*(?:no|number|nr)|belegnr\.?|vorgangs(?:nr|nummer)|bestell(?:nr|nummer)|order\s*(?:no|number)|purchase\s*order\s*(?:no|number)|lieferschein(?:nr|nummer)|delivery\s*note\s*(?:no|number)|nr\.?)\s*[:#-]?\s*(.*)$"
+    )
+    for idx, ln in enumerate(lines[:80]):
+        m_label = label_re.match(ln.strip())
+        if not m_label:
+            continue
+        ll = ln.lower()
+        base_score = 9 if any(k in ll for k in ["rechnung", "invoice", "beleg"]) else 6
+        inline_val = _normalize_doc_number(m_label.group(1))
+        if inline_val:
+            _add_number_candidate(inline_val, base_score)
+        if idx + 1 < len(lines):
+            _add_number_candidate(lines[idx + 1], base_score - 1)
+
+    # Prefer candidates that look like typical invoice IDs (contain digit + separator/letters)
+    for cand in list(number_candidates.keys()):
+        bonus = 0
+        if re.search(r"\d", cand) and re.search(r"[A-Z]", cand, re.IGNORECASE):
+            bonus += 2
+        if any(sep in cand for sep in ["/", "-", "_"]):
+            bonus += 1
+        number_candidates[cand] += bonus
+
+    if number_candidates:
+        number = max(number_candidates.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
 
     def is_address_like(line: str) -> bool:
         l = line.lower()
