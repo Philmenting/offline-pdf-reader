@@ -916,7 +916,9 @@ class MainWindow(QMainWindow):
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
-        self.ocr_lang = "deu+eng"
+        self.ocr_lang = str(self.app_settings.get("ocrLang", "deu+eng"))
+        if not self._normalize_ocr_language_code(self.ocr_lang):
+            self.ocr_lang = "deu+eng"
         self.ocr_correction_mode = str(self.app_settings.get("ocrCorrectionMode", "konservativ"))
         if self.ocr_correction_mode not in {"konservativ", "aggressiv"}:
             self.ocr_correction_mode = "konservativ"
@@ -1278,17 +1280,23 @@ class MainWindow(QMainWindow):
         return {"replacements": {}}
 
     def _load_app_settings(self) -> dict:
+        defaults = {"ocrCorrectionMode": "konservativ", "ocrLang": "deu+eng"}
         if not self.app_settings_path.exists():
-            return {"ocrCorrectionMode": "konservativ"}
+            return dict(defaults)
         try:
             data = json.loads(self.app_settings_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                mode = data.get("ocrCorrectionMode", "konservativ")
+                mode = data.get("ocrCorrectionMode", defaults["ocrCorrectionMode"])
+                lang = data.get("ocrLang", defaults["ocrLang"])
+                loaded = dict(defaults)
                 if isinstance(mode, str) and mode in {"konservativ", "aggressiv"}:
-                    return {"ocrCorrectionMode": mode}
+                    loaded["ocrCorrectionMode"] = mode
+                if isinstance(lang, str) and self._normalize_ocr_language_code(lang):
+                    loaded["ocrLang"] = self._normalize_ocr_language_code(lang)
+                return loaded
         except Exception:
             pass
-        return {"ocrCorrectionMode": "konservativ"}
+        return dict(defaults)
 
     def _save_app_settings(self) -> None:
         try:
@@ -1296,7 +1304,8 @@ class MainWindow(QMainWindow):
                 {
                     "ocrCorrectionMode": self.ocr_correction_mode
                     if self.ocr_correction_mode in {"konservativ", "aggressiv"}
-                    else "konservativ"
+                    else "konservativ",
+                    "ocrLang": self._ocr_lang(),
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -3016,6 +3025,7 @@ class MainWindow(QMainWindow):
             self.ocr_lang = dict(options)[choice]
 
         self._clear_ocr_cache()
+        self._save_app_settings()
         self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
 
     def choose_ocr_correction_mode(self) -> None:
