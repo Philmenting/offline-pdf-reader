@@ -160,6 +160,10 @@ def sanitize_filename(name: str) -> str:
     return name or "Dokument"
 
 
+def _list_pdf_files(folder: Path) -> list[Path]:
+    return sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"])
+
+
 def _looks_like_subject_line(line: str) -> bool:
     ln = (line or "").strip()
     if len(ln) < 10:
@@ -2959,7 +2963,7 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "PDF-Ordner auswählen")
         if not folder:
             return
-        pdfs = sorted(Path(folder).glob("*.pdf"))
+        pdfs = _list_pdf_files(Path(folder))
         if not pdfs:
             QMessageBox.information(self, "Hinweis", "Keine PDFs im Ordner gefunden.")
             return
@@ -3015,7 +3019,7 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         folder_path = Path(folder)
-        files = sorted(folder_path.glob("*.pdf"))
+        files = _list_pdf_files(folder_path)
         if not files:
             QMessageBox.information(self, "Hinweis", "Keine PDFs gefunden.")
             return
