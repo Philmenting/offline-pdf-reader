@@ -2536,18 +2536,26 @@ class MainWindow(QMainWindow):
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
 
+        processed_pages = 0
+        canceled = False
+
         self._set_ocr_running(True)
         try:
             for idx in range(total):
+                ok_count = len(all_text_parts)
+                fail_count = len(ocr_failed_pages)
                 progress.setValue(idx)
-                progress.setLabelText(f"Erkennung Seite {idx + 1}/{total} …")
+                progress.setLabelText(
+                    f"Erkennung Seite {idx + 1}/{total} … (OK: {ok_count} | Fehler: {fail_count})"
+                )
                 QApplication.processEvents()
                 if progress.wasCanceled() or self.ocr_cancel_requested:
-                    QMessageBox.information(self, "Abgebrochen", "Texterkennung wurde abgebrochen.")
-                    return
+                    canceled = True
+                    break
 
                 rotation = self.page_rotations.get(idx, 0)
                 text, ocr_error, low_conf_tokens, low_conf_lines = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
+                processed_pages = idx + 1
                 all_low_conf_tokens.extend(low_conf_tokens)
                 all_low_conf_lines.extend(low_conf_lines)
                 if ocr_error:
@@ -2564,13 +2572,29 @@ class MainWindow(QMainWindow):
 
         progress.setValue(total)
 
+        if canceled and not all_text_parts:
+            QMessageBox.information(self, "Abgebrochen", "Texterkennung wurde abgebrochen (keine verwertbaren Ergebnisse).")
+            return
+
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
         self._set_extracted_text(combined_text)
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens, all_low_conf_lines))
-        self.statusBar().showMessage(f"Text auf {total} Seiten erkannt.")
+        if canceled:
+            self.statusBar().showMessage(
+                f"OCR abgebrochen nach {processed_pages}/{total} Seiten (OK: {len(all_text_parts)} | Fehler: {len(ocr_failed_pages)})."
+            )
+            QMessageBox.information(
+                self,
+                "Abgebrochen (Teilergebnis)",
+                "Texterkennung wurde abgebrochen. Das bisherige Teilergebnis wurde übernommen.",
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Text auf {total} Seiten erkannt (OK: {len(all_text_parts)} | Fehler: {len(ocr_failed_pages)})."
+            )
 
         if ocr_failed_pages:
             pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
