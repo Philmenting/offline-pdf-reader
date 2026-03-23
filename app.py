@@ -3038,7 +3038,21 @@ class MainWindow(QMainWindow):
 
         proposals: list[tuple[Path, Path, str]] = []
         used_targets: set[str] = set()
-        for src in files:
+        analysis_errors: list[str] = []
+
+        progress = QProgressDialog("Analysiere PDFs für Batch-Rename …", "Abbrechen", 0, len(files), self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        for idx, src in enumerate(files):
+            progress.setValue(idx)
+            progress.setLabelText(f"Analysiere {src.name} ({idx + 1}/{len(files)}) …")
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                QMessageBox.information(self, "Abgebrochen", "Batch-Rename Analyse wurde abgebrochen.")
+                return
+
             try:
                 with fitz.open(str(src)) as doc:
                     first_page_text = doc[0].get_text("text").strip() if len(doc) else ""
@@ -3050,7 +3064,8 @@ class MainWindow(QMainWindow):
                             first_page_text = f"{first_page_text}\n{ocr_text}".strip()
                 base_name = suggest_filename_from_text(first_page_text)
                 info = parse_doc_info(first_page_text)
-            except Exception:
+            except Exception as e:
+                analysis_errors.append(f"{src.name}: {e}")
                 base_name = "Dokument.pdf"
                 info = ParsedDocInfo()
 
@@ -3083,6 +3098,8 @@ class MainWindow(QMainWindow):
             reason = ", ".join(reason_parts) if reason_parts else "ok"
             proposals.append((src, folder_path / candidate, reason))
 
+        progress.setValue(len(files))
+
         if not proposals:
             QMessageBox.information(self, "Hinweis", "Für den gewählten Modus gibt es keine umbenennbaren Dateien.")
             return
@@ -3105,12 +3122,23 @@ class MainWindow(QMainWindow):
             return
 
         renamed = 0
+        rename_errors: list[str] = []
         for src, dst, _ in proposals:
             if src == dst:
                 continue
-            src.rename(dst)
-            renamed += 1
-        QMessageBox.information(self, "Fertig", f"Batch-Rename abgeschlossen: {renamed} Datei(en) umbenannt.")
+            try:
+                src.rename(dst)
+                renamed += 1
+            except Exception as e:
+                rename_errors.append(f"{src.name} -> {dst.name}: {e}")
+
+        summary = f"Batch-Rename abgeschlossen: {renamed} Datei(en) umbenannt."
+        if analysis_errors:
+            summary += f"\nAnalysefehler: {len(analysis_errors)}"
+        if rename_errors:
+            summary += f"\nRename-Fehler: {len(rename_errors)}"
+
+        QMessageBox.information(self, "Fertig", summary)
 
     def merge_pdfs(self) -> None:
         file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF files (*.pdf)")
