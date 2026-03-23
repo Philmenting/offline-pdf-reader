@@ -959,6 +959,7 @@ class MainWindow(QMainWindow):
         self.doc_revision = 0
         self.last_ocr_failed_pages: list[int] = []
         self.last_recognized_page_texts: dict[int, str] = {}
+        self._installed_ocr_langs_cache: set[str] | None = None
 
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
@@ -3040,6 +3041,7 @@ class MainWindow(QMainWindow):
         if not ok:
             return
 
+        selected_lang = ""
         if choice == "Benutzerdefiniert …":
             custom, ok_custom = QInputDialog.getText(
                 self,
@@ -3058,10 +3060,22 @@ class MainWindow(QMainWindow):
                     "Bitte einen gültigen Tesseract-Sprachcode eingeben (z. B. deu, eng oder deu+eng).",
                 )
                 return
-            self.ocr_lang = normalized
+            selected_lang = normalized
         else:
-            self.ocr_lang = dict(options)[choice]
+            selected_lang = dict(options)[choice]
 
+        missing_langs = self._missing_ocr_language_codes(selected_lang)
+        if missing_langs:
+            QMessageBox.warning(
+                self,
+                "OCR-Sprache nicht installiert",
+                "Folgende Tesseract-Sprachdaten fehlen: "
+                + ", ".join(missing_langs)
+                + "\n\nBitte Sprachpakete installieren und erneut wählen.",
+            )
+            return
+
+        self.ocr_lang = selected_lang
         self._clear_ocr_cache()
         self._save_app_settings()
         self._update_ocr_mode_label()
@@ -3111,6 +3125,26 @@ class MainWindow(QMainWindow):
         if not re.fullmatch(r"[a-z_]+(?:\+[a-z_]+)*", normalized):
             return ""
         return normalized
+
+    def _get_installed_ocr_languages(self) -> set[str] | None:
+        if self._installed_ocr_langs_cache is not None:
+            return self._installed_ocr_langs_cache
+        try:
+            langs = pytesseract.get_languages(config="")
+        except (TesseractNotFoundError, TesseractError, OSError):
+            return None
+        self._installed_ocr_langs_cache = {str(lang).strip().lower() for lang in langs if str(lang).strip()}
+        return self._installed_ocr_langs_cache
+
+    def _missing_ocr_language_codes(self, code: str | None) -> list[str]:
+        normalized = self._normalize_ocr_language_code(code)
+        if not normalized:
+            return []
+        installed = self._get_installed_ocr_languages()
+        if not installed:
+            return []
+        requested = [part for part in normalized.split("+") if part]
+        return [part for part in requested if part not in installed]
 
     def _ocr_lang(self) -> str:
         normalized = self._normalize_ocr_language_code(self.ocr_lang)
