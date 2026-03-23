@@ -501,10 +501,23 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             return
         number_candidates[val] = number_candidates.get(val, 0) + score
 
+    invoice_like = doc_type in {"Rechnung", "Gutschrift", "Mahnung"}
+    order_like = doc_type in {"Bestellung", "Auftragsbestaetigung"}
+    delivery_like = doc_type == "Lieferschein"
+
     strict_patterns = [
-        (r"(?i)(?:rechnungs\s*[-_]?\s*(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|beleg\s*[-_]?\s*nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 10),
-        (r"(?i)(?:vorgangs\s*[-_]?\s*(?:nr|nummer)\.?|bestell\s*[-_]?\s*(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 6),
-        (r"(?i)(?:lieferschein\s*[-_]?\s*(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 7),
+        (
+            r"(?i)(?:rechnungs\s*[-_]?\s*(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|beleg\s*[-_]?\s*nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+            12 if invoice_like else 10,
+        ),
+        (
+            r"(?i)(?:vorgangs\s*[-_]?\s*(?:nr|nummer)\.?|bestell\s*[-_]?\s*(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+            9 if order_like else 6,
+        ),
+        (
+            r"(?i)(?:lieferschein\s*[-_]?\s*(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
+            10 if delivery_like else 7,
+        ),
         (r"(?i)\b(?:inv|doc|po|dn)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b", 4),
     ]
     for pat, pts in strict_patterns:
@@ -519,7 +532,14 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         if not m_label:
             continue
         ll = ln.lower()
-        base_score = 9 if any(k in ll for k in ["rechnung", "invoice", "beleg"]) else 6
+        if any(k in ll for k in ["rechnung", "invoice", "beleg"]):
+            base_score = 11 if invoice_like else 9
+        elif any(k in ll for k in ["bestell", "order", "purchase"]):
+            base_score = 8 if order_like else 6
+        elif any(k in ll for k in ["lieferschein", "delivery note"]):
+            base_score = 9 if delivery_like else 6
+        else:
+            base_score = 6
         inline_val = _normalize_doc_number(m_label.group(1))
         if inline_val:
             _add_number_candidate(inline_val, base_score)
