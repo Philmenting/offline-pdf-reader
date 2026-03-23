@@ -498,9 +498,9 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         number_candidates[val] = number_candidates.get(val, 0) + score
 
     strict_patterns = [
-        (r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|belegnr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 10),
-        (r"(?i)(?:vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 6),
-        (r"(?i)(?:lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 7),
+        (r"(?i)(?:rechnungs\s*[-_]?\s*(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|beleg\s*[-_]?\s*nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 10),
+        (r"(?i)(?:vorgangs\s*[-_]?\s*(?:nr|nummer)\.?|bestell\s*[-_]?\s*(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 6),
+        (r"(?i)(?:lieferschein\s*[-_]?\s*(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})", 7),
         (r"(?i)\b(?:inv|doc|po|dn)\s*[-_]?\s*([A-Z0-9][A-Z0-9/_-]{2,})\b", 4),
     ]
     for pat, pts in strict_patterns:
@@ -508,7 +508,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             _add_number_candidate(m_num.group(1), pts)
 
     label_re = re.compile(
-        r"(?i)^(?:rechnungs(?:nr|nummer)|rechn\.?\s*nr\.?|re\.?\s*nr\.?|rg\.?\s*nr\.?|invoice\s*(?:no|number|nr)|belegnr\.?|vorgangs(?:nr|nummer)|bestell(?:nr|nummer)|order\s*(?:no|number)|purchase\s*order\s*(?:no|number)|lieferschein(?:nr|nummer)|delivery\s*note\s*(?:no|number)|nr\.?)\s*[:#-]?\s*(.*)$"
+        r"(?i)^(?:rechnungs\s*[-_]?\s*(?:nr|nummer)|rechn\.?\s*nr\.?|re\.?\s*nr\.?|rg\.?\s*nr\.?|invoice\s*(?:no|number|nr)|beleg\s*[-_]?\s*nr\.?|vorgangs\s*[-_]?\s*(?:nr|nummer)|bestell\s*[-_]?\s*(?:nr|nummer)|order\s*(?:no|number)|purchase\s*order\s*(?:no|number)|lieferschein\s*[-_]?\s*(?:nr|nummer)|delivery\s*note\s*(?:no|number)|nr\.?)\s*[:#-]?\s*(.*)$"
     )
     for idx, ln in enumerate(lines[:80]):
         m_label = label_re.match(ln.strip())
