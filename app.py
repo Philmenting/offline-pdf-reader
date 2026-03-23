@@ -1687,8 +1687,25 @@ class MainWindow(QMainWindow):
 
         for idx in range(len(self.doc)):
             page = self.doc[idx]
-            native_text = page.get_text("text").strip()
             page_hits_before = len(self.search_hits)
+
+            # Native PDF hit detection via exact text search to allow precise jump/highlight.
+            rect_hits: list[fitz.Rect] = []
+            try:
+                rect_hits = page.search_for(query)
+            except Exception:
+                rect_hits = []
+
+            for rect_idx, rect in enumerate(rect_hits, start=1):
+                snippet = (page.get_textbox(rect) or "").strip() or query
+                hit = {
+                    "page": idx,
+                    "line": rect_idx,
+                    "snippet": snippet[:180],
+                    "source": "native",
+                    "rect": (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
+                }
+                self.search_hits.append(hit)
 
             def scan_text_block(text_block: str, source: str) -> None:
                 for line_no, line in enumerate(text_block.splitlines(), start=1):
@@ -1701,9 +1718,10 @@ class MainWindow(QMainWindow):
                         hit = {"page": idx, "line": line_no, "snippet": snippet[:180], "source": source}
                         self.search_hits.append(hit)
 
-            scan_text_block(native_text, "native")
-
-            # If no hit on this page, try OCR as fallback even when native text exists.
+            # OCR fallback only if no native rect hit was found on this page.
+            if len(self.search_hits) == page_hits_before:
+                native_text = page.get_text("text").strip()
+                scan_text_block(native_text, "native")
             if len(self.search_hits) == page_hits_before:
                 rotation = self.page_rotations.get(idx, 0)
                 ocr_text, _, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
@@ -2312,14 +2330,20 @@ class MainWindow(QMainWindow):
             hit = self.search_hits[self.current_search_hit]
             if hit.get("page") == self.current_page:
                 try:
-                    rects = page.search_for(self.search_query.text().strip())
-                    if rects:
+                    draw_rects: list[fitz.Rect] = []
+                    if hit.get("rect"):
+                        x0, y0, x1, y1 = hit["rect"]
+                        draw_rects = [fitz.Rect(x0, y0, x1, y1)]
+                    else:
+                        draw_rects = page.search_for(self.search_query.text().strip())[:1]
+
+                    if draw_rects:
                         painter = QPainter(qpix)
                         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                         pen = QPen(QColor(255, 196, 0))
                         pen.setWidth(3)
                         painter.setPen(pen)
-                        for r in rects[:6]:
+                        for r in draw_rects:
                             box = self._map_search_rect_to_view(
                                 rect=r,
                                 page_width=float(page.rect.width),
