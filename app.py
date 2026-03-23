@@ -945,6 +945,8 @@ class MainWindow(QMainWindow):
 
         self.ocr_feedback = QLabel("OCR-Hinweise: -")
         self.ocr_feedback.setWordWrap(True)
+        self.ocr_mode_label = QLabel()
+        self.ocr_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         btn_open = QPushButton("Öffnen")
         btn_first = QPushButton("⏮")
@@ -1073,6 +1075,7 @@ class MainWindow(QMainWindow):
 
         ocr_row = QHBoxLayout()
         ocr_row.addWidget(self.ocr_feedback, 1)
+        ocr_row.addWidget(self.ocr_mode_label)
         ocr_row.addWidget(self.btn_retry_failed_ocr)
 
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1223,6 +1226,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._update_undo_redo_buttons()
+        self._update_ocr_mode_label()
         self._apply_styles()
 
     def _configure_tesseract_runtime(self) -> None:
@@ -3026,7 +3030,12 @@ class MainWindow(QMainWindow):
 
         self._clear_ocr_cache()
         self._save_app_settings()
+        self._update_ocr_mode_label()
         self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
+
+    def _update_ocr_mode_label(self) -> None:
+        mode = self.ocr_correction_mode if self.ocr_correction_mode in {"konservativ", "aggressiv"} else "konservativ"
+        self.ocr_mode_label.setText(f"OCR: {self._ocr_lang()} | Modus: {mode}")
 
     def choose_ocr_correction_mode(self) -> None:
         options = ["konservativ", "aggressiv"]
@@ -3043,6 +3052,7 @@ class MainWindow(QMainWindow):
             return
         self.ocr_correction_mode = choice
         self._save_app_settings()
+        self._update_ocr_mode_label()
         self.statusBar().showMessage(f"OCR-Korrekturmodus gesetzt: {choice}", 4000)
 
     def _normalize_ocr_language_code(self, code: str | None) -> str:
