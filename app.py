@@ -3778,7 +3778,8 @@ class MainWindow(QMainWindow):
             start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
-        for part in re.split(r"[;,]", spec):
+        # Support comma/semicolon lists plus line-based pasted input.
+        for part in re.split(r"[;,\n\r]+", spec):
             token = part.strip().lower()
             if not token:
                 continue
@@ -3884,7 +3885,8 @@ class MainWindow(QMainWindow):
             start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
-        for part in re.split(r"[;,]", spec):
+        # Support comma/semicolon lists plus line-based pasted input.
+        for part in re.split(r"[;,\n\r]+", spec):
             token = part.strip().lower()
             if not token:
                 continue
