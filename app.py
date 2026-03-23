@@ -2807,7 +2807,7 @@ class MainWindow(QMainWindow):
 
         pages_to_retry = sorted({p for p in self.last_ocr_failed_pages if 1 <= p <= len(self.doc)})
         if not pages_to_retry:
-            QMessageBox.information(self, "Hinweis", "Keine gültigen Seiten für Retry gefunden.")
+            QMessageBox.information(self, "Hinweis", "Keine gültigen Seiten für erneuten OCR-Versuch gefunden.")
             return
 
         # Avoid stale failed OCR cache entries for retry.
@@ -2826,7 +2826,7 @@ class MainWindow(QMainWindow):
         try:
             for i, page_no in enumerate(pages_to_retry):
                 progress.setValue(i)
-                progress.setLabelText(f"OCR Retry Seite {page_no} ({i + 1}/{len(pages_to_retry)}) …")
+                progress.setLabelText(f"OCR erneut: Seite {page_no} ({i + 1}/{len(pages_to_retry)}) …")
                 QApplication.processEvents()
                 if progress.wasCanceled() or self.ocr_cancel_requested:
                     remaining_failed.extend(pages_to_retry[i:])
@@ -2862,8 +2862,8 @@ class MainWindow(QMainWindow):
                 preview += ", …"
             QMessageBox.information(
                 self,
-                "OCR Retry abgebrochen",
-                "OCR-Retry wurde abgebrochen. Nicht verarbeitete Seiten bleiben als fehlgeschlagen markiert."
+                "OCR erneut abgebrochen",
+                "Erneuter OCR-Versuch wurde abgebrochen. Nicht verarbeitete Seiten bleiben als fehlgeschlagen markiert."
                 f"\n\nOffene Seiten: {preview or '-'}"
                 f"\nAnzahl: {len(remaining_failed)}",
             )
@@ -2873,14 +2873,14 @@ class MainWindow(QMainWindow):
                 preview += ", …"
             QMessageBox.warning(
                 self,
-                "OCR Retry teilweise fehlgeschlagen",
+                "OCR erneut teilweise fehlgeschlagen",
                 "Einige Seiten konnten weiterhin nicht erkannt werden."
                 f"\n\nSeiten: {preview}"
                 f"\nAnzahl: {len(remaining_failed)}"
                 f"\n\nErster Fehler:\n{first_error or '-'}",
             )
         else:
-            QMessageBox.information(self, "Fertig", "OCR-Retry abgeschlossen. Alle vorher fehlgeschlagenen Seiten wurden erkannt.")
+            QMessageBox.information(self, "Fertig", "Erneuter OCR-Versuch abgeschlossen. Alle vorher fehlgeschlagenen Seiten wurden erkannt.")
 
     def _is_page_likely_empty(self, page: fitz.Page) -> bool:
         text = page.get_text("text")
