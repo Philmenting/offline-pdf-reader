@@ -2043,6 +2043,12 @@ class MainWindow(QMainWindow):
             fallback = self._run_ocr_pass(img, lang=lang, psm=4, variant="otsu")
             if self._ocr_result_score(fallback) > self._ocr_result_score(best):
                 best = fallback
+
+            # Third pass for noisy scans: sparse text mode can recover fragmented glyphs
+            # (helps with umlauts / ß confusions on low-quality pages).
+            sparse = self._run_ocr_pass(img, lang=lang, psm=11, variant="adaptive")
+            if self._ocr_result_score(sparse) > self._ocr_result_score(best):
+                best = sparse
         return best
 
     def _ocr_image_with_confidence(
@@ -2995,6 +3001,11 @@ class MainWindow(QMainWindow):
             # Keep this conservative so invoice numbers and IDs are not rewritten.
             out = re.sub(r"(?<=\w)é(?=\w)", "ö", out)
             out = self._fix_german_umlaut_confusions(out)
+            # Common OCR confusion in German words: internal uppercase R -> ß (e.g. StraRe -> Straße).
+            out = re.sub(r"(?<=[a-zäöü])R(?=[a-zäöü])", "ß", out)
+            # Conservative token-level fixes for very frequent umlaut misses.
+            out = re.sub(r"(?i)\bfur\b", lambda m: self._restore_word_case(m.group(0), "für"), out)
+            out = re.sub(r"(?i)\buber\b", lambda m: self._restore_word_case(m.group(0), "über"), out)
         return out
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
