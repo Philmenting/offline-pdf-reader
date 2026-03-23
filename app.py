@@ -3127,14 +3127,14 @@ class MainWindow(QMainWindow):
 
         renamed = 0
         rename_errors: list[str] = []
-        renamed_pairs: list[tuple[str, str]] = []
-        for src, dst, _ in proposals:
+        renamed_pairs: list[tuple[str, str, str]] = []
+        for src, dst, reason in proposals:
             if src == dst:
                 continue
             try:
                 src.rename(dst)
                 renamed += 1
-                renamed_pairs.append((src.name, dst.name))
+                renamed_pairs.append((src.name, dst.name, reason))
             except Exception as e:
                 rename_errors.append(f"{src.name} -> {dst.name}: {e}")
 
@@ -3176,16 +3176,16 @@ class MainWindow(QMainWindow):
                         out = Path(log_path)
                         if log_fmt == "CSV":
                             rows: list[dict[str, str]] = []
-                            for old, new in renamed_pairs:
-                                rows.append({"status": "renamed", "old": old, "new": new, "detail": ""})
+                            for old, new, reason in renamed_pairs:
+                                rows.append({"status": "renamed", "old": old, "new": new, "reason": reason, "detail": ""})
                             for err in analysis_errors:
-                                rows.append({"status": "analysis_error", "old": "", "new": "", "detail": err})
+                                rows.append({"status": "analysis_error", "old": "", "new": "", "reason": "", "detail": err})
                             for err in rename_errors:
-                                rows.append({"status": "rename_error", "old": "", "new": "", "detail": err})
+                                rows.append({"status": "rename_error", "old": "", "new": "", "reason": "", "detail": err})
                             if out.suffix.lower() != ".csv":
                                 out = out.with_suffix(".csv")
                             with out.open("w", encoding="utf-8", newline="") as f:
-                                writer = csv.DictWriter(f, fieldnames=["status", "old", "new", "detail"])
+                                writer = csv.DictWriter(f, fieldnames=["status", "old", "new", "reason", "detail"])
                                 writer.writeheader()
                                 writer.writerows(rows)
                         else:
@@ -3197,8 +3197,8 @@ class MainWindow(QMainWindow):
                             lines_out.append("")
                             if renamed_pairs:
                                 lines_out.append("=== Renamed ===")
-                                for old, new in renamed_pairs:
-                                    lines_out.append(f"{old} -> {new}")
+                                for old, new, reason in renamed_pairs:
+                                    lines_out.append(f"{old} -> {new} [{reason}]")
                                 lines_out.append("")
                             if analysis_errors:
                                 lines_out.append("=== Analysefehler ===")
