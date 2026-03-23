@@ -3020,7 +3020,23 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Keine PDFs gefunden.")
             return
 
-        proposals: list[tuple[Path, Path]] = []
+        mode_labels = [
+            "Alle Dateien",
+            "Nur unsichere Vorschläge",
+            "Nur Fallback-Namen (Dokument.pdf)",
+        ]
+        selected_mode, ok_mode = QInputDialog.getItem(
+            self,
+            "Batch-Rename Modus",
+            "Welche Dateien sollen umbenannt werden?",
+            mode_labels,
+            0,
+            False,
+        )
+        if not ok_mode:
+            return
+
+        proposals: list[tuple[Path, Path, str]] = []
         used_targets: set[str] = set()
         for src in files:
             try:
@@ -3033,8 +3049,11 @@ class MainWindow(QMainWindow):
                         if ocr_text:
                             first_page_text = f"{first_page_text}\n{ocr_text}".strip()
                 base_name = suggest_filename_from_text(first_page_text)
+                info = parse_doc_info(first_page_text)
             except Exception:
                 base_name = "Dokument.pdf"
+                info = ParsedDocInfo()
+
             stem = Path(base_name).stem
             candidate = f"{stem}.pdf"
             n = 1
@@ -3042,9 +3061,33 @@ class MainWindow(QMainWindow):
                 candidate = f"{stem}({n}).pdf"
                 n += 1
             used_targets.add(candidate.lower())
-            proposals.append((src, folder_path / candidate))
 
-        preview = "\n".join([f"{src.name} -> {dst.name}" for src, dst in proposals[:30]])
+            is_fallback = Path(base_name).name.lower() == "dokument.pdf"
+            is_uncertain = is_fallback or not info.date or not info.number
+
+            include = (
+                selected_mode == "Alle Dateien"
+                or (selected_mode == "Nur unsichere Vorschläge" and is_uncertain)
+                or (selected_mode == "Nur Fallback-Namen (Dokument.pdf)" and is_fallback)
+            )
+            if not include:
+                continue
+
+            reason_parts: list[str] = []
+            if is_fallback:
+                reason_parts.append("Fallback")
+            if not info.date:
+                reason_parts.append("kein Datum")
+            if not info.number:
+                reason_parts.append("keine Nummer")
+            reason = ", ".join(reason_parts) if reason_parts else "ok"
+            proposals.append((src, folder_path / candidate, reason))
+
+        if not proposals:
+            QMessageBox.information(self, "Hinweis", "Für den gewählten Modus gibt es keine umbenennbaren Dateien.")
+            return
+
+        preview = "\n".join([f"{src.name} -> {dst.name} [{reason}]" for src, dst, reason in proposals[:30]])
         if len(proposals) > 30:
             preview += "\n…"
 
@@ -3053,6 +3096,7 @@ class MainWindow(QMainWindow):
             "Batch-Rename Vorschau (Dry-Run)",
             "Vorschau (es wurde noch nichts umbenannt):\n\n"
             f"{preview}\n\n"
+            f"Ausgewählter Modus: {selected_mode}\n"
             "Jetzt wirklich umbenennen?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -3061,7 +3105,7 @@ class MainWindow(QMainWindow):
             return
 
         renamed = 0
-        for src, dst in proposals:
+        for src, dst, _ in proposals:
             if src == dst:
                 continue
             src.rename(dst)
