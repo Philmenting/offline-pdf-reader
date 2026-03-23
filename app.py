@@ -968,6 +968,8 @@ class MainWindow(QMainWindow):
         self.search_counter = QLabel("Treffer: 0/0")
         self.btn_cancel_ocr = QPushButton("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
+        self.btn_retry_failed_ocr = QPushButton("OCR-Fehler erneut")
+        self.btn_retry_failed_ocr.setEnabled(False)
 
         for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_auto_ocr_name, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_search_close, btn_hit_prev, btn_hit_next]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -992,6 +994,7 @@ class MainWindow(QMainWindow):
         btn_hit_prev.setToolTip("Vorherigen Treffer")
         btn_hit_next.setToolTip("Nächsten Treffer")
         self.btn_cancel_ocr.setToolTip("Laufenden OCR-Vorgang abbrechen")
+        self.btn_retry_failed_ocr.setToolTip("Nur fehlgeschlagene OCR-Seiten erneut versuchen")
 
         btn_open.clicked.connect(self.open_pdf)
         btn_first.clicked.connect(self.first_page)
@@ -1021,6 +1024,7 @@ class MainWindow(QMainWindow):
         btn_hit_prev.clicked.connect(self.prev_search_hit)
         btn_hit_next.clicked.connect(self.next_search_hit)
         self.btn_cancel_ocr.clicked.connect(self.cancel_ocr)
+        self.btn_retry_failed_ocr.clicked.connect(self.retry_failed_ocr_pages)
 
         toolbar_top = QHBoxLayout()
         toolbar_top.addWidget(btn_open)
@@ -1062,6 +1066,7 @@ class MainWindow(QMainWindow):
 
         ocr_row = QHBoxLayout()
         ocr_row.addWidget(self.ocr_feedback, 1)
+        ocr_row.addWidget(self.btn_retry_failed_ocr)
 
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
@@ -1761,6 +1766,7 @@ class MainWindow(QMainWindow):
 
     def _set_ocr_running(self, running: bool) -> None:
         self.btn_cancel_ocr.setEnabled(running)
+        self.btn_retry_failed_ocr.setEnabled((not running) and bool(self.last_ocr_failed_pages))
         if running:
             self.ocr_cancel_requested = False
 
@@ -2138,6 +2144,9 @@ class MainWindow(QMainWindow):
         self.redo_stack.clear()
         self.doc_revision = 0
         self._clear_ocr_cache()
+        self.last_ocr_failed_pages = []
+        self.last_recognized_page_texts = {}
+        self.btn_retry_failed_ocr.setEnabled(False)
         self.preview.setText("Kein PDF geladen")
         self.page_info.setText("Seite: -/- | Zoom: 100%")
         self._set_extracted_text("")
@@ -2184,6 +2193,9 @@ class MainWindow(QMainWindow):
         self.redo_stack.clear()
         self.doc_revision = 0
         self._clear_ocr_cache()
+        self.last_ocr_failed_pages = []
+        self.last_recognized_page_texts = {}
+        self.btn_retry_failed_ocr.setEnabled(False)
         self._refresh_thumbnails()
         self.render_current_page()
         self._set_extracted_text("")
@@ -2630,6 +2642,7 @@ class MainWindow(QMainWindow):
 
         self.last_ocr_failed_pages = list(ocr_failed_pages)
         self.last_recognized_page_texts = dict(page_texts)
+        self.btn_retry_failed_ocr.setEnabled(bool(self.last_ocr_failed_pages))
 
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
@@ -2711,6 +2724,7 @@ class MainWindow(QMainWindow):
             progress.setValue(len(pages_to_retry))
 
         self.last_ocr_failed_pages = remaining_failed
+        self.btn_retry_failed_ocr.setEnabled(bool(self.last_ocr_failed_pages))
 
         combined_parts = [self.last_recognized_page_texts[k] for k in sorted(self.last_recognized_page_texts.keys()) if self.last_recognized_page_texts.get(k)]
         if combined_parts:
