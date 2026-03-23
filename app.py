@@ -273,9 +273,12 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     date = ""
 
     # Prefer explicit date labels (often more accurate than first free date in OCR text).
-    date_label_re = re.compile(
-        r"(?i)^(?:datum|date|rechnungsdatum|belegdatum|invoice\s+date|document\s+date|issue\s+date)\s*[:#-]?\s*(.*)$"
+    date_label_pattern = (
+        r"(?:datum|date|rechnungs\s*[-_]?\s*datum|beleg\s*[-_]?\s*datum|"
+        r"ausstellungs\s*[-_]?\s*datum|leistungs\s*[-_]?\s*datum|"
+        r"invoice\s+date|document\s+date|issue\s+date)"
     )
+    date_label_re = re.compile(rf"(?i)^{date_label_pattern}\s*[:#-]?\s*(.*)$")
     inline_date_re = re.compile(r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{8}|\d{6})\b")
     for idx, ln in enumerate(lines[:80]):
         m_label = date_label_re.match(ln)
@@ -307,7 +310,7 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
     if not date:
         m_compact = re.search(
-            r"(?i)\b(?:datum|date|rechnungsdatum|belegdatum|invoice\s+date)\s*[:\-]?\s*(\d{8}|\d{6})\b",
+            rf"(?i)\b{date_label_pattern}\s*[:\-]?\s*(\d{{8}}|\d{{6}})\b",
             text,
         )
         if m_compact:
