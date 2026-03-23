@@ -157,7 +157,37 @@ class ReorderPagesDialog(QDialog):
 
 def sanitize_filename(name: str) -> str:
     name = _normalize_filename_part(name, max_len=140)
-    return name or "Dokument"
+    if not name:
+        return "Dokument"
+
+    # Avoid Windows reserved device names (CON, PRN, AUX, NUL, COM1..9, LPT1..9).
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    }
+    if name.upper() in reserved:
+        return f"{name}_"
+    return name
 
 
 def _list_pdf_files(folder: Path) -> list[Path]:
