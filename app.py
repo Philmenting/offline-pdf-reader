@@ -1250,7 +1250,7 @@ class MainWindow(QMainWindow):
         act_delete_pages.triggered.connect(self.delete_selected_pages)
         menu_tools.addAction(act_delete_pages)
 
-        menu_export = self.menuBar().addMenu("Export")
+        menu_export = self.menuBar().addMenu("Exportieren")
         act_export_current = QAction("Aktuelle Datei exportieren …", self)
         act_export_current.triggered.connect(self.export_current_file)
         menu_export.addAction(act_export_current)
@@ -3626,7 +3626,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Bitte mindestens zwei PDFs auswählen.")
             return
 
-        out_path, _ = QFileDialog.getSaveFileName(self, "Gemergte PDF speichern", "merged.pdf", "PDF files (*.pdf)")
+        out_path, _ = QFileDialog.getSaveFileName(self, "Zusammengeführte PDF speichern", "zusammengefuehrt.pdf", "PDF files (*.pdf)")
         if not out_path:
             return
         out_path = self._ensure_pdf_suffix(out_path)
@@ -3643,9 +3643,9 @@ class MainWindow(QMainWindow):
                         src.close()
             merged.save(out_path)
             QMessageBox.information(self, "Erfolg", f"Gemergte PDF gespeichert:\n{out_path}")
-            self.statusBar().showMessage(f"Merge erstellt: {Path(out_path).name}")
+            self.statusBar().showMessage(f"Zusammenführung erstellt: {Path(out_path).name}")
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Merge fehlgeschlagen:\n{e}")
+            QMessageBox.critical(self, "Fehler", f"Zusammenführung fehlgeschlagen:\n{e}")
         finally:
             merged.close()
 
