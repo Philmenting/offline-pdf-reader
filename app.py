@@ -1191,6 +1191,10 @@ class MainWindow(QMainWindow):
         act_ocr_correction_mode.triggered.connect(self.choose_ocr_correction_mode)
         menu_ocr.addAction(act_ocr_correction_mode)
 
+        act_ocr_reset = QAction("OCR-Einstellungen zurücksetzen", self)
+        act_ocr_reset.triggered.connect(self.reset_ocr_preferences)
+        menu_ocr.addAction(act_ocr_reset)
+
         act_show_text = QAction("Erkannten Text anzeigen", self)
         act_show_text.setShortcut("Ctrl+T")
         act_show_text.triggered.connect(self.show_extracted_text_window)
@@ -3087,6 +3091,14 @@ class MainWindow(QMainWindow):
         self._save_app_settings()
         self._update_ocr_mode_label()
         self.statusBar().showMessage(f"OCR-Korrekturmodus gesetzt: {choice}", 4000)
+
+    def reset_ocr_preferences(self) -> None:
+        self.ocr_lang = "deu+eng"
+        self.ocr_correction_mode = "konservativ"
+        self._clear_ocr_cache()
+        self._save_app_settings()
+        self._update_ocr_mode_label()
+        self.statusBar().showMessage("OCR-Einstellungen auf Standard zurückgesetzt.", 4000)
 
     def _normalize_ocr_language_code(self, code: str | None) -> str:
         normalized = (code or "").strip().lower().replace(",", "+")
