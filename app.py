@@ -920,6 +920,8 @@ class MainWindow(QMainWindow):
         self.ocr_cache_order: list[str] = []
         self.ocr_cache_max_entries = 80
         self.doc_revision = 0
+        self.last_ocr_failed_pages: list[int] = []
+        self.last_recognized_page_texts: dict[int, str] = {}
 
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
@@ -1126,6 +1128,10 @@ class MainWindow(QMainWindow):
         act_extract.setShortcut("Ctrl+Shift+E")
         act_extract.triggered.connect(self.recognize_text_all_pages_and_suggest)
         menu_ocr.addAction(act_extract)
+
+        act_retry_failed_ocr = QAction("Nur fehlgeschlagene OCR-Seiten erneut versuchen", self)
+        act_retry_failed_ocr.triggered.connect(self.retry_failed_ocr_pages)
+        menu_ocr.addAction(act_retry_failed_ocr)
 
         act_ocr_and_name = QAction("OCR + Dateinamen vorschlagen", self)
         act_ocr_and_name.setShortcut("Ctrl+Shift+R")
@@ -2579,6 +2585,7 @@ class MainWindow(QMainWindow):
         all_low_conf_lines: list[str] = []
         ocr_failed_pages: list[int] = []
         ocr_error_preview: str = ""
+        page_texts: dict[int, str] = {}
 
         processed_pages = 0
         canceled = False
@@ -2611,6 +2618,7 @@ class MainWindow(QMainWindow):
                 text = text.strip()
                 if text:
                     all_text_parts.append(text)
+                    page_texts[idx] = text
         finally:
             self._set_ocr_running(False)
 
@@ -2619,6 +2627,9 @@ class MainWindow(QMainWindow):
         if canceled and not all_text_parts:
             QMessageBox.information(self, "Abgebrochen", "Texterkennung wurde abgebrochen (keine verwertbaren Ergebnisse).")
             return
+
+        self.last_ocr_failed_pages = list(ocr_failed_pages)
+        self.last_recognized_page_texts = dict(page_texts)
 
         combined_text = "\n\n".join(all_text_parts).strip() or "(Kein Text erkannt)"
         combined_text = self._apply_learning_rules(combined_text)
@@ -2652,6 +2663,76 @@ class MainWindow(QMainWindow):
                 f"\nFehleranzahl: {len(ocr_failed_pages)}"
                 f"\n\nErster Fehler:\n{ocr_error_preview}",
             )
+
+    def retry_failed_ocr_pages(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        if not self.last_ocr_failed_pages:
+            QMessageBox.information(self, "Hinweis", "Es gibt keine fehlgeschlagenen OCR-Seiten zum Wiederholen.")
+            return
+
+        pages_to_retry = sorted({p for p in self.last_ocr_failed_pages if 1 <= p <= len(self.doc)})
+        if not pages_to_retry:
+            QMessageBox.information(self, "Hinweis", "Keine gültigen Seiten für Retry gefunden.")
+            return
+
+        # Avoid stale failed OCR cache entries for retry.
+        self._clear_ocr_cache()
+
+        progress = QProgressDialog("Wiederhole OCR für fehlgeschlagene Seiten …", "Abbrechen", 0, len(pages_to_retry), self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        remaining_failed: list[int] = []
+        first_error = ""
+
+        self._set_ocr_running(True)
+        try:
+            for i, page_no in enumerate(pages_to_retry):
+                progress.setValue(i)
+                progress.setLabelText(f"OCR Retry Seite {page_no} ({i + 1}/{len(pages_to_retry)}) …")
+                QApplication.processEvents()
+                if progress.wasCanceled() or self.ocr_cancel_requested:
+                    break
+
+                idx = page_no - 1
+                rotation = self.page_rotations.get(idx, 0)
+                text, err, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=2)
+                if err or not text.strip():
+                    remaining_failed.append(page_no)
+                    if err and not first_error:
+                        first_error = err
+                    continue
+                self.last_recognized_page_texts[idx] = text.strip()
+        finally:
+            self._set_ocr_running(False)
+            progress.setValue(len(pages_to_retry))
+
+        self.last_ocr_failed_pages = remaining_failed
+
+        combined_parts = [self.last_recognized_page_texts[k] for k in sorted(self.last_recognized_page_texts.keys()) if self.last_recognized_page_texts.get(k)]
+        if combined_parts:
+            combined_text = self._apply_learning_rules("\n\n".join(combined_parts).strip())
+            self._set_extracted_text(combined_text)
+            self.show_extracted_text_window()
+            self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
+
+        if remaining_failed:
+            preview = ", ".join(str(p) for p in remaining_failed[:10])
+            if len(remaining_failed) > 10:
+                preview += ", …"
+            QMessageBox.warning(
+                self,
+                "OCR Retry teilweise fehlgeschlagen",
+                "Einige Seiten konnten weiterhin nicht erkannt werden."
+                f"\n\nSeiten: {preview}"
+                f"\nAnzahl: {len(remaining_failed)}"
+                f"\n\nErster Fehler:\n{first_error or '-'}",
+            )
+        else:
+            QMessageBox.information(self, "Fertig", "OCR-Retry abgeschlossen. Alle vorher fehlgeschlagenen Seiten wurden erkannt.")
 
     def _is_page_likely_empty(self, page: fitz.Page) -> bool:
         text = page.get_text("text")
