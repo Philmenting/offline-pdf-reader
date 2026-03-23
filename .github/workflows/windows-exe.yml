@@ -6,8 +6,7 @@ on:
     branches: [ master, main ]
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 concurrency:
   group: windows-exe-${{ github.ref }}
@@ -52,38 +51,23 @@ jobs:
         run: |
           pyinstaller --noconfirm --windowed --onedir --name offline-pdf-reader --add-data "bundle/tesseract;tesseract" app.py
 
-      - name: Cleanup old workflow artifacts (keep latest 3)
-        uses: actions/github-script@v7
+      - name: Package portable build as ZIP
+        shell: powershell
+        run: |
+          $zipName = "offline-pdf-reader-windows-portable.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+          Compress-Archive -Path "dist/offline-pdf-reader/*" -DestinationPath $zipName -Force
+
+      - name: Publish/overwrite nightly release asset
+        uses: softprops/action-gh-release@v2
         with:
-          script: |
-            const { owner, repo } = context.repo;
-            const targetName = 'offline-pdf-reader-windows-portable';
-            const keep = 3;
-
-            const artifacts = await github.paginate(
-              github.rest.actions.listArtifactsForRepo,
-              { owner, repo, per_page: 100 }
-            );
-
-            const matching = artifacts
-              .filter(a => a.name === targetName && !a.expired)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-            const toDelete = matching.slice(keep);
-            core.info(`Found ${matching.length} artifacts named ${targetName}; deleting ${toDelete.length}.`);
-
-            for (const artifact of toDelete) {
-              await github.rest.actions.deleteArtifact({
-                owner,
-                repo,
-                artifact_id: artifact.id,
-              });
-              core.info(`Deleted artifact ${artifact.id} (${artifact.created_at})`);
-            }
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: offline-pdf-reader-windows-portable
-          path: dist/offline-pdf-reader
-          retention-days: 2
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          make_latest: false
+          files: offline-pdf-reader-windows-portable.zip
+          overwrite_files: true
+          generate_release_notes: false
+          body: |
+            Auto-updated nightly Windows portable build.
+            This release is overwritten until the first stable version is published.
