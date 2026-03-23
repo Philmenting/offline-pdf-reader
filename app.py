@@ -238,38 +238,72 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         r"\b(\d{1,2}\s+\d{1,2}\s+\d{2})\b",
         r"\b(\d{4}\s+\d{1,2}\s+\d{1,2})\b",
     ]
+    def _parse_date_token(raw: str) -> str:
+        token = (raw or "").strip().strip(".,;:)")
+        if not token:
+            return ""
+        for fmt in (
+            "%d.%m.%Y",
+            "%d.%m.%y",
+            "%m.%d.%Y",
+            "%m.%d.%y",
+            "%Y-%m-%d",
+            "%Y.%m.%d",
+            "%d-%m-%Y",
+            "%d-%m-%y",
+            "%m-%d-%Y",
+            "%m-%d-%y",
+            "%Y/%m/%d",
+            "%d/%m/%Y",
+            "%d/%m/%y",
+            "%m/%d/%Y",
+            "%m/%d/%y",
+            "%d %m %Y",
+            "%d %m %y",
+            "%Y %m %d",
+        ):
+            try:
+                parsed = datetime.strptime(token, fmt)
+                if 1990 <= parsed.year <= 2100:
+                    return parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return ""
+
     date = ""
-    for pat in date_patterns:
-        m = re.search(pat, text)
-        if m:
-            raw = m.group(1)
-            for fmt in (
-                "%d.%m.%Y",
-                "%d.%m.%y",
-                "%m.%d.%Y",
-                "%m.%d.%y",
-                "%Y-%m-%d",
-                "%Y.%m.%d",
-                "%d-%m-%Y",
-                "%d-%m-%y",
-                "%m-%d-%Y",
-                "%m-%d-%y",
-                "%Y/%m/%d",
-                "%d/%m/%Y",
-                "%d/%m/%y",
-                "%m/%d/%Y",
-                "%m/%d/%y",
-                "%d %m %Y",
-                "%d %m %y",
-                "%Y %m %d",
-            ):
-                try:
-                    date = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                    break
-                except ValueError:
-                    pass
-            if date:
+
+    # Prefer explicit date labels (often more accurate than first free date in OCR text).
+    date_label_re = re.compile(
+        r"(?i)^(?:datum|date|rechnungsdatum|belegdatum|invoice\s+date|document\s+date|issue\s+date)\s*[:#-]?\s*(.*)$"
+    )
+    inline_date_re = re.compile(r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{8}|\d{6})\b")
+    for idx, ln in enumerate(lines[:80]):
+        m_label = date_label_re.match(ln)
+        if not m_label:
+            continue
+        tail = (m_label.group(1) or "").strip()
+        m_inline = inline_date_re.search(tail)
+        if m_inline:
+            parsed_inline = _parse_date_token(m_inline.group(1))
+            if parsed_inline:
+                date = parsed_inline
                 break
+        if idx + 1 < len(lines):
+            m_next = inline_date_re.search(lines[idx + 1])
+            if m_next:
+                parsed_next = _parse_date_token(m_next.group(1))
+                if parsed_next:
+                    date = parsed_next
+                    break
+
+    if not date:
+        for pat in date_patterns:
+            m = re.search(pat, text)
+            if m:
+                parsed_generic = _parse_date_token(m.group(1))
+                if parsed_generic:
+                    date = parsed_generic
+                    break
 
     if not date:
         m_compact = re.search(
