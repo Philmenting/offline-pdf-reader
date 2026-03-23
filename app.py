@@ -1146,6 +1146,16 @@ class MainWindow(QMainWindow):
         act_search.triggered.connect(self.open_search)
         menu_ocr.addAction(act_search)
 
+        act_search_next = QAction("Nächsten Suchtreffer", self)
+        act_search_next.setShortcut("F3")
+        act_search_next.triggered.connect(self.next_search_hit)
+        menu_ocr.addAction(act_search_next)
+
+        act_search_prev = QAction("Vorherigen Suchtreffer", self)
+        act_search_prev.setShortcut("Shift+F3")
+        act_search_prev.triggered.connect(self.prev_search_hit)
+        menu_ocr.addAction(act_search_prev)
+
         act_searchable_pdf = QAction("Durchsuchbare PDF-Kopie erstellen …", self)
         act_searchable_pdf.triggered.connect(self.export_searchable_pdf_copy)
         menu_ocr.addAction(act_searchable_pdf)
