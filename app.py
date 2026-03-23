@@ -1623,13 +1623,28 @@ class MainWindow(QMainWindow):
         # Keep common OCR confusions searchable, but only inside word-like tokens.
         text = text.replace("é", "ö")
         text = MainWindow._fix_german_umlaut_confusions(text)
-        text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+        # Normalize umlauts to base vowels for tolerant matching.
+        text = text.replace("ä", "a").replace("ö", "o").replace("ü", "u").replace("ß", "ss")
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
         # Treat punctuation/separators as spaces so searches like
         # "RE 2026 001" match lines containing "RE-2026/001".
         text = re.sub(r"[^a-z0-9]+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         return text
+
+    @staticmethod
+    def _search_variants(normalized_text: str) -> set[str]:
+        base = (normalized_text or "").strip()
+        if not base:
+            return set()
+
+        variants = {base}
+        # OCR confusion: ß can become R/r
+        variants.add(base.replace("ss", "r"))
+        # OCR confusion: ü can become i (normalize u<->i between consonants)
+        variants.add(re.sub(r"(?i)(?<=[bcdfghjklmnpqrstvwxyz])i(?=[bcdfghjklmnpqrstvwxyz])", "u", base))
+        variants.add(re.sub(r"(?i)(?<=[bcdfghjklmnpqrstvwxyz])u(?=[bcdfghjklmnpqrstvwxyz])", "i", base))
+        return {v for v in variants if v}
 
     def search_all_pages(self) -> None:
         if not self.doc:
@@ -1647,23 +1662,38 @@ class MainWindow(QMainWindow):
         self.search_hits = []
         self.search_results_list.clear()
         needle = self._normalize_search_text(query)
+        needle_variants = self._search_variants(needle)
 
         for idx in range(len(self.doc)):
-            text = self.doc[idx].get_text("text").strip()
-            if len(text) < 20:
+            page = self.doc[idx]
+            native_text = page.get_text("text").strip()
+            page_hits_before = len(self.search_hits)
+
+            def scan_text_block(text_block: str, source: str) -> None:
+                for line_no, line in enumerate(text_block.splitlines(), start=1):
+                    snippet = line.strip()
+                    if not snippet:
+                        continue
+                    norm_line = self._normalize_search_text(snippet)
+                    line_variants = self._search_variants(norm_line)
+                    if needle_variants and any(nv in lv for lv in line_variants for nv in needle_variants):
+                        hit = {"page": idx, "line": line_no, "snippet": snippet[:180], "source": source}
+                        self.search_hits.append(hit)
+
+            scan_text_block(native_text, "native")
+
+            # If no hit on this page, try OCR as fallback even when native text exists.
+            if len(self.search_hits) == page_hits_before:
                 rotation = self.page_rotations.get(idx, 0)
                 ocr_text, _, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=1)
                 if ocr_text:
-                    text = f"{text}\n{ocr_text}".strip()
-
-            for line in text.splitlines():
-                norm_line = self._normalize_search_text(line)
-                if needle and needle in norm_line:
-                    hit = {"page": idx, "snippet": line.strip()[:180]}
-                    self.search_hits.append(hit)
+                    scan_text_block(ocr_text, "ocr")
 
         for hit_idx, hit in enumerate(self.search_hits, start=1):
-            item = QListWidgetItem(f"{hit_idx}. S.{hit['page'] + 1}: {hit['snippet']}")
+            src = "OCR" if hit.get("source") == "ocr" else "PDF"
+            item = QListWidgetItem(
+                f"{hit_idx}. S.{hit['page'] + 1}/Z.{hit.get('line', '-')}: {hit['snippet']} ({src})"
+            )
             item.setData(Qt.ItemDataRole.UserRole, hit_idx - 1)
             self.search_results_list.addItem(item)
 
@@ -1694,6 +1724,10 @@ class MainWindow(QMainWindow):
         self.search_results_list.setCurrentRow(hit_idx)
         self.search_results_list.blockSignals(False)
         self._update_search_counter()
+        src = "OCR" if hit.get("source") == "ocr" else "PDF"
+        self.statusBar().showMessage(
+            f"Treffer {hit_idx + 1}/{len(self.search_hits)}: Seite {hit['page'] + 1}, Zeile {hit.get('line', '-') } ({src})"
+        )
 
     def next_search_hit(self) -> None:
         if not self.search_hits:
