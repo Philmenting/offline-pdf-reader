@@ -2906,7 +2906,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
 
     def save_as_suggested(self) -> None:
-        if not self.pdf_path:
+        if not self.pdf_path or not self.doc:
             QMessageBox.information(self, "Hinweis", "Kein PDF geladen.")
             return
 
