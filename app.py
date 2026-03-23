@@ -1259,7 +1259,7 @@ class MainWindow(QMainWindow):
         act_export_folder.triggered.connect(self.export_folder_aggregate)
         menu_export.addAction(act_export_folder)
 
-        act_batch_rename = QAction("Ordner Batch-Rename …", self)
+        act_batch_rename = QAction("Ordner stapelweise umbenennen …", self)
         act_batch_rename.triggered.connect(self.batch_rename_folder)
         menu_export.addAction(act_batch_rename)
 
@@ -3435,7 +3435,7 @@ class MainWindow(QMainWindow):
         ]
         selected_mode, ok_mode = QInputDialog.getItem(
             self,
-            "Batch-Rename Modus",
+            "Stapel-Umbenennen Modus",
             "Welche Dateien sollen umbenannt werden?",
             mode_labels,
             0,
@@ -3448,7 +3448,7 @@ class MainWindow(QMainWindow):
         used_targets: set[str] = set()
         analysis_errors: list[str] = []
 
-        progress = QProgressDialog("Analysiere PDFs für Batch-Rename …", "Abbrechen", 0, len(files), self)
+        progress = QProgressDialog("Analysiere PDFs für Stapel-Umbenennen …", "Abbrechen", 0, len(files), self)
         progress.setWindowTitle("Bitte warten")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
@@ -3458,7 +3458,7 @@ class MainWindow(QMainWindow):
             progress.setLabelText(f"Analysiere {src.name} ({idx + 1}/{len(files)}) …")
             QApplication.processEvents()
             if progress.wasCanceled():
-                QMessageBox.information(self, "Abgebrochen", "Batch-Rename Analyse wurde abgebrochen.")
+                QMessageBox.information(self, "Abgebrochen", "Analyse für Stapel-Umbenennen wurde abgebrochen.")
                 return
 
             try:
@@ -3521,7 +3521,7 @@ class MainWindow(QMainWindow):
 
         confirm = QMessageBox.question(
             self,
-            "Batch-Rename Vorschau (Dry-Run)",
+            "Stapel-Umbenennen Vorschau (Testlauf)",
             "Vorschau (es wurde noch nichts umbenannt):\n\n"
             f"{preview}\n\n"
             f"Ausgewählter Modus: {selected_mode}\n"
@@ -3546,7 +3546,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 rename_errors.append(f"{src.name} -> {dst.name}: {e}")
 
-        summary = f"Batch-Rename abgeschlossen: {renamed} Datei(en) umbenannt."
+        summary = f"Stapel-Umbenennen abgeschlossen: {renamed} Datei(en) umbenannt."
         if analysis_errors:
             summary += f"\nAnalysefehler: {len(analysis_errors)}"
         if rename_errors:
