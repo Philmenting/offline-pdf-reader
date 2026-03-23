@@ -3708,7 +3708,7 @@ class MainWindow(QMainWindow):
             start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
-        for part in spec.split(","):
+        for part in re.split(r"[;,]", spec):
             token = part.strip().lower()
             if not token:
                 continue
@@ -3814,7 +3814,7 @@ class MainWindow(QMainWindow):
             start_raw, end_raw = m.groups()
             return start_raw, end_raw, step
 
-        for part in spec.split(","):
+        for part in re.split(r"[;,]", spec):
             token = part.strip().lower()
             if not token:
                 continue
