@@ -189,39 +189,60 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
     # Doc type
     doc_type = "Dokument"
-    has_order_confirmation = (
-        "auftragsbestätigung" in lower
-        or "auftragsbestaetigung" in lower
-        or "order confirmation" in lower
-    )
-    has_delivery_note = (
-        "lieferschein" in lower
-        or "delivery note" in lower
-        or "dispatch note" in lower
-        or "despatch note" in lower
-        or "packing slip" in lower
-    )
 
-    if "gutschrift" in lower or "credit note" in lower or "credit memo" in lower:
-        doc_type = "Gutschrift"
-    elif "mahnung" in lower or "zahlungserinnerung" in lower or "payment reminder" in lower:
-        doc_type = "Mahnung"
-    elif has_order_confirmation:
-        doc_type = "Auftragsbestaetigung"
-    elif has_delivery_note:
-        doc_type = "Lieferschein"
-    elif "rechnung" in lower or "invoice" in lower:
-        doc_type = "Rechnung"
-    elif "angebot" in lower or "quote" in lower:
-        doc_type = "Angebot"
-    elif (
-        "bestellung" in lower
-        or "purchase order" in lower
-        or re.search(r"\border\b", lower)
-    ):
-        doc_type = "Bestellung"
-    elif "vertrag" in lower or "contract" in lower:
-        doc_type = "Vertrag"
+    type_patterns: dict[str, list[str]] = {
+        "Gutschrift": [r"\bgutschrift\b", r"\bcredit\s+note\b", r"\bcredit\s+memo\b"],
+        "Mahnung": [r"\bmahnung\b", r"\bzahlungserinnerung\b", r"\bpayment\s+reminder\b"],
+        "Auftragsbestaetigung": [r"\bauftragsbest[aä]tigung\b", r"\border\s+confirmation\b"],
+        "Lieferschein": [r"\blieferschein\b", r"\bdelivery\s+note\b", r"\bdispatch\s+note\b", r"\bdespatch\s+note\b", r"\bpacking\s+slip\b"],
+        "Rechnung": [r"\brechnung\b", r"\binvoice\b"],
+        "Angebot": [r"\bangebot\b", r"\bquote\b", r"\bquotation\b"],
+        "Bestellung": [r"\bbestellung\b", r"\bpurchase\s+order\b", r"\border\b"],
+        "Vertrag": [r"\bvertrag\b", r"\bcontract\b"],
+    }
+
+    type_scores: dict[str, int] = {k: 0 for k in type_patterns}
+
+    # Strong signal: explicit labels like "Dokumenttyp: ..." or "Type: ..."
+    type_label_re = re.compile(r"(?i)^(?:dokumenttyp|typ|type|document\s+type)\s*[:#-]?\s*(.+)$")
+    for idx, ln in enumerate(lines[:60]):
+        m_type = type_label_re.match(ln)
+        if not m_type:
+            continue
+        tail = m_type.group(1).lower()
+        for t_name, patterns in type_patterns.items():
+            if any(re.search(p, tail) for p in patterns):
+                type_scores[t_name] += 10
+        if idx + 1 < len(lines):
+            nxt = lines[idx + 1].lower()
+            for t_name, patterns in type_patterns.items():
+                if any(re.search(p, nxt) for p in patterns):
+                    type_scores[t_name] += 7
+
+    # Global signal: score full text + top lines (headings weigh more)
+    top_chunk = "\n".join(lines[:30]).lower()
+    for t_name, patterns in type_patterns.items():
+        for pat in patterns:
+            if re.search(pat, lower):
+                type_scores[t_name] += 2
+            if re.search(pat, top_chunk):
+                type_scores[t_name] += 2
+
+    # Prefer specific types over generic "order" when same score.
+    type_priority = {
+        "Gutschrift": 8,
+        "Mahnung": 7,
+        "Auftragsbestaetigung": 6,
+        "Lieferschein": 5,
+        "Rechnung": 4,
+        "Angebot": 3,
+        "Bestellung": 2,
+        "Vertrag": 1,
+    }
+
+    best_type = max(type_scores.items(), key=lambda kv: (kv[1], type_priority.get(kv[0], 0)))
+    if best_type[1] > 0:
+        doc_type = best_type[0]
 
     # Date
     date_patterns = [
