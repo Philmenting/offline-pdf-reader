@@ -2325,7 +2325,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
-        file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF files (*.pdf)")
+        file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF-Dateien (*.pdf)")
         if not file_name:
             return
         self._open_pdf_path(file_name)
@@ -3199,7 +3199,7 @@ class MainWindow(QMainWindow):
             self,
             "Durchsuchbare PDF speichern",
             str(default_out),
-            "PDF files (*.pdf)",
+            "PDF-Dateien (*.pdf)",
         )
         if not out_path:
             return
@@ -3299,7 +3299,7 @@ class MainWindow(QMainWindow):
             self,
             "PDF speichern als",
             str(self.pdf_path.with_name(default_name)),
-            "PDF files (*.pdf)",
+            "PDF-Dateien (*.pdf)",
         )
         if not out_path:
             return
@@ -3578,7 +3578,7 @@ class MainWindow(QMainWindow):
                         self,
                         "Batch-Rename Protokoll speichern",
                         str(default_log),
-                        "Text files (*.txt);;CSV files (*.csv)",
+                        "Textdateien (*.txt);;CSV-Dateien (*.csv)",
                     )
                     if log_path:
                         out = Path(log_path)
@@ -3621,12 +3621,12 @@ class MainWindow(QMainWindow):
                         self.statusBar().showMessage(f"Batch-Rename Log gespeichert: {out.name}")
 
     def merge_pdfs(self) -> None:
-        file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF files (*.pdf)")
+        file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF-Dateien (*.pdf)")
         if not file_names or len(file_names) < 2:
             QMessageBox.information(self, "Hinweis", "Bitte mindestens zwei PDFs auswählen.")
             return
 
-        out_path, _ = QFileDialog.getSaveFileName(self, "Zusammengeführte PDF speichern", "zusammengefuehrt.pdf", "PDF files (*.pdf)")
+        out_path, _ = QFileDialog.getSaveFileName(self, "Zusammengeführte PDF speichern", "zusammengefuehrt.pdf", "PDF-Dateien (*.pdf)")
         if not out_path:
             return
         out_path = self._ensure_pdf_suffix(out_path)
@@ -3736,7 +3736,7 @@ class MainWindow(QMainWindow):
             return
 
         default_name = f"{self.pdf_path.stem}_extract.pdf"
-        out_path, _ = QFileDialog.getSaveFileName(self, "Extrakt speichern", str(self.pdf_path.with_name(default_name)), "PDF files (*.pdf)")
+        out_path, _ = QFileDialog.getSaveFileName(self, "Extrakt speichern", str(self.pdf_path.with_name(default_name)), "PDF-Dateien (*.pdf)")
         if not out_path:
             return
         out_path = self._ensure_pdf_suffix(out_path)
