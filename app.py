@@ -422,6 +422,12 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
                         pass
 
     # Number (supports common separators like / and _, trims trailing punctuation)
+    def _normalize_doc_number(raw: str) -> str:
+        cleaned = (raw or "").strip().strip(".,;:)")
+        cleaned = re.sub(r"^[#:\-\s]+", "", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        return cleaned
+
     number = ""
     number_patterns = [
         r"(?i)(?:rechnungs(?:nr|nummer)\.?|rechn\.?\s*[-/]?\s*nr\.?|re\.?\s*[-/]?\s*nr\.?|rg\.?\s*[-/]?\s*nr\.?|invoice\s*(?:no|number|nr)\.?|invoice\s*#|belegnr\.?|vorgangs(?:nr|nummer)\.?|bestell(?:nr|nummer)\.?|order\s*(?:no|number)\.?|purchase\s*order\s*(?:no|number)\.?|lieferschein(?:nr|nummer)\.?|delivery\s*note\s*(?:no|number)\.?|nr\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})",
@@ -430,8 +436,27 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     for pat in number_patterns:
         m_num = re.search(pat, text)
         if m_num:
-            number = m_num.group(1).strip(".,;:)")
+            number = _normalize_doc_number(m_num.group(1))
             break
+
+    if not number:
+        label_re = re.compile(
+            r"(?i)^(?:rechnungs(?:nr|nummer)|rechn\.?\s*nr\.?|re\.?\s*nr\.?|rg\.?\s*nr\.?|invoice\s*(?:no|number|nr)|belegnr\.?|vorgangs(?:nr|nummer)|bestell(?:nr|nummer)|order\s*(?:no|number)|purchase\s*order\s*(?:no|number)|lieferschein(?:nr|nummer)|delivery\s*note\s*(?:no|number)|nr\.?)\s*[:#-]?\s*(.*)$"
+        )
+        value_re = re.compile(r"^[A-Z0-9][A-Z0-9/_-]{2,}$", re.IGNORECASE)
+        for idx, ln in enumerate(lines[:80]):
+            m_label = label_re.match(ln.strip())
+            if not m_label:
+                continue
+            inline_val = _normalize_doc_number(m_label.group(1))
+            if inline_val and value_re.match(inline_val):
+                number = inline_val
+                break
+            if idx + 1 < len(lines):
+                next_line = _normalize_doc_number(lines[idx + 1])
+                if value_re.match(next_line):
+                    number = next_line
+                    break
 
     def is_address_like(line: str) -> bool:
         l = line.lower()
