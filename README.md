@@ -45,6 +45,7 @@ python app.py
 - Zoom controls (+/−/reset) and page rotation
 - Suche über alle Seiten mit Trefferliste, klickbaren Treffern und Trefferzähler (z. B. 3/18)
 - Extrakt/OCR mit Fortschritt pro Seite, Abbruchbutton und robustem Fehlerverhalten (Einzelseitenfehler stoppen nicht den gesamten Lauf)
+- Ein-Klick-Flow „OCR + Dateinamen vorschlagen“ (Toolbar + Menü)
 - One-click: durchsuchbare PDF-Kopie direkt aus OCR erzeugen (lokal, ohne Cloud)
 - Extract text (native PDF text, fallback OCR)
 - Force OCR for all pages via dedicated button

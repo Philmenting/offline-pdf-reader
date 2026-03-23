@@ -810,6 +810,7 @@ class MainWindow(QMainWindow):
         self.btn_redo = QPushButton("↷")
         btn_extract = QPushButton("Text Seite")
         btn_extract_all = QPushButton("Text alle Seiten")
+        btn_auto_ocr_name = QPushButton("OCR + Name")
         btn_saveas = QPushButton("Speichern")
         btn_merge = QPushButton("Merge")
         btn_split = QPushButton("Extrakt")
@@ -823,7 +824,7 @@ class MainWindow(QMainWindow):
         self.btn_cancel_ocr = QPushButton("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
 
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_search_close, btn_hit_prev, btn_hit_next]:
+        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_auto_ocr_name, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_search_close, btn_hit_prev, btn_hit_next]:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.setToolTip("PDF öffnen")
@@ -841,6 +842,7 @@ class MainWindow(QMainWindow):
         self.btn_undo.setToolTip("Rückgängig (Ctrl+Z)")
         self.btn_redo.setToolTip("Wiederholen (Ctrl+Y)")
         btn_search.setToolTip("Text in allen Seiten suchen")
+        btn_auto_ocr_name.setToolTip("OCR für alle Seiten starten und Dateinamen vorschlagen")
         btn_search_close.setToolTip("Suche schließen")
         btn_hit_prev.setToolTip("Vorherigen Treffer")
         btn_hit_next.setToolTip("Nächsten Treffer")
@@ -862,6 +864,7 @@ class MainWindow(QMainWindow):
         self.btn_redo.clicked.connect(self.redo_last_change)
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.recognize_text_all_pages_and_suggest)
+        btn_auto_ocr_name.clicked.connect(self.ocr_and_suggest_filename)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
@@ -894,6 +897,8 @@ class MainWindow(QMainWindow):
         toolbar_top.addSpacing(8)
         toolbar_top.addWidget(self.btn_undo)
         toolbar_top.addWidget(self.btn_redo)
+        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(btn_auto_ocr_name)
         toolbar_top.addStretch(1)
 
         name_row = QHBoxLayout()
@@ -978,6 +983,11 @@ class MainWindow(QMainWindow):
         act_extract.setShortcut("Ctrl+Shift+E")
         act_extract.triggered.connect(self.recognize_text_all_pages_and_suggest)
         menu_ocr.addAction(act_extract)
+
+        act_ocr_and_name = QAction("OCR + Dateinamen vorschlagen", self)
+        act_ocr_and_name.setShortcut("Ctrl+Shift+R")
+        act_ocr_and_name.triggered.connect(self.ocr_and_suggest_filename)
+        menu_ocr.addAction(act_ocr_and_name)
 
         act_ocr_lang = QAction("OCR-Sprache wählen …", self)
         act_ocr_lang.triggered.connect(self.choose_ocr_language)
@@ -2357,6 +2367,9 @@ class MainWindow(QMainWindow):
         self.recognize_text_all_pages_and_suggest()
 
     def ocr_all_pages_and_suggest(self) -> None:
+        self.recognize_text_all_pages_and_suggest()
+
+    def ocr_and_suggest_filename(self) -> None:
         self.recognize_text_all_pages_and_suggest()
 
     def recognize_text_all_pages_and_suggest(self) -> None:
