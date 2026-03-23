@@ -871,7 +871,9 @@ class MainWindow(QMainWindow):
         self.zoom_factor = 1.35
         self.page_rotations: dict[int, int] = {}
         self.learning_rules_path = Path(__file__).with_name("learning_rules.json")
+        self.app_settings_path = Path(__file__).with_name("app_settings.json")
         self.learning_rules = self._load_learning_rules()
+        self.app_settings = self._load_app_settings()
         self._configure_tesseract_runtime()
 
         self.undo_stack: list[tuple[bytes, dict[int, int], int]] = []
@@ -915,7 +917,9 @@ class MainWindow(QMainWindow):
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
         self.ocr_lang = "deu+eng"
-        self.ocr_correction_mode = "konservativ"
+        self.ocr_correction_mode = str(self.app_settings.get("ocrCorrectionMode", "konservativ"))
+        if self.ocr_correction_mode not in {"konservativ", "aggressiv"}:
+            self.ocr_correction_mode = "konservativ"
         self.ocr_cancel_requested = False
         self.ocr_cache: dict[str, tuple[str, str | None, list[str], list[str]]] = {}
         self.ocr_cache_order: list[str] = []
@@ -1272,6 +1276,36 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return {"replacements": {}}
+
+    def _load_app_settings(self) -> dict:
+        if not self.app_settings_path.exists():
+            return {"ocrCorrectionMode": "konservativ"}
+        try:
+            data = json.loads(self.app_settings_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                mode = data.get("ocrCorrectionMode", "konservativ")
+                if isinstance(mode, str) and mode in {"konservativ", "aggressiv"}:
+                    return {"ocrCorrectionMode": mode}
+        except Exception:
+            pass
+        return {"ocrCorrectionMode": "konservativ"}
+
+    def _save_app_settings(self) -> None:
+        try:
+            payload = json.dumps(
+                {
+                    "ocrCorrectionMode": self.ocr_correction_mode
+                    if self.ocr_correction_mode in {"konservativ", "aggressiv"}
+                    else "konservativ"
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            tmp_path = self.app_settings_path.with_suffix(self.app_settings_path.suffix + ".tmp")
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(self.app_settings_path)
+        except Exception:
+            pass
 
     def _save_learning_rules(self) -> None:
         try:
@@ -2998,6 +3032,7 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         self.ocr_correction_mode = choice
+        self._save_app_settings()
         self.statusBar().showMessage(f"OCR-Korrekturmodus gesetzt: {choice}", 4000)
 
     def _normalize_ocr_language_code(self, code: str | None) -> str:
