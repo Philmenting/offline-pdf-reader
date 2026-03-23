@@ -3150,39 +3150,67 @@ class MainWindow(QMainWindow):
             save_log = QMessageBox.question(
                 self,
                 "Batch-Rename Protokoll speichern",
-                "Möchtest du ein Protokoll (TXT) mit den Umbenennungen/Fehlern speichern?",
+                "Möchtest du ein Protokoll mit den Umbenennungen/Fehlern speichern?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
             )
             if save_log == QMessageBox.StandardButton.Yes:
-                default_log = folder_path / "batch-rename-log.txt"
-                log_path, _ = QFileDialog.getSaveFileName(
+                log_fmt, ok_log_fmt = QInputDialog.getItem(
                     self,
-                    "Batch-Rename Protokoll speichern",
-                    str(default_log),
-                    "Text files (*.txt)",
+                    "Log-Format",
+                    "Format:",
+                    ["TXT", "CSV"],
+                    0,
+                    False,
                 )
-                if log_path:
-                    lines_out: list[str] = []
-                    lines_out.append(f"Modus: {selected_mode}")
-                    lines_out.append(f"Umbenannt: {renamed}")
-                    lines_out.append("")
-                    if renamed_pairs:
-                        lines_out.append("=== Renamed ===")
-                        for old, new in renamed_pairs:
-                            lines_out.append(f"{old} -> {new}")
-                        lines_out.append("")
-                    if analysis_errors:
-                        lines_out.append("=== Analysefehler ===")
-                        lines_out.extend(analysis_errors)
-                        lines_out.append("")
-                    if rename_errors:
-                        lines_out.append("=== Rename-Fehler ===")
-                        lines_out.extend(rename_errors)
-                        lines_out.append("")
+                if ok_log_fmt:
+                    suffix = ".txt" if log_fmt == "TXT" else ".csv"
+                    default_log = folder_path / f"batch-rename-log{suffix}"
+                    log_path, _ = QFileDialog.getSaveFileName(
+                        self,
+                        "Batch-Rename Protokoll speichern",
+                        str(default_log),
+                        "Text files (*.txt);;CSV files (*.csv)",
+                    )
+                    if log_path:
+                        out = Path(log_path)
+                        if log_fmt == "CSV":
+                            rows: list[dict[str, str]] = []
+                            for old, new in renamed_pairs:
+                                rows.append({"status": "renamed", "old": old, "new": new, "detail": ""})
+                            for err in analysis_errors:
+                                rows.append({"status": "analysis_error", "old": "", "new": "", "detail": err})
+                            for err in rename_errors:
+                                rows.append({"status": "rename_error", "old": "", "new": "", "detail": err})
+                            if out.suffix.lower() != ".csv":
+                                out = out.with_suffix(".csv")
+                            with out.open("w", encoding="utf-8", newline="") as f:
+                                writer = csv.DictWriter(f, fieldnames=["status", "old", "new", "detail"])
+                                writer.writeheader()
+                                writer.writerows(rows)
+                        else:
+                            if out.suffix.lower() != ".txt":
+                                out = out.with_suffix(".txt")
+                            lines_out: list[str] = []
+                            lines_out.append(f"Modus: {selected_mode}")
+                            lines_out.append(f"Umbenannt: {renamed}")
+                            lines_out.append("")
+                            if renamed_pairs:
+                                lines_out.append("=== Renamed ===")
+                                for old, new in renamed_pairs:
+                                    lines_out.append(f"{old} -> {new}")
+                                lines_out.append("")
+                            if analysis_errors:
+                                lines_out.append("=== Analysefehler ===")
+                                lines_out.extend(analysis_errors)
+                                lines_out.append("")
+                            if rename_errors:
+                                lines_out.append("=== Rename-Fehler ===")
+                                lines_out.extend(rename_errors)
+                                lines_out.append("")
+                            out.write_text("\n".join(lines_out).strip() + "\n", encoding="utf-8")
 
-                    Path(log_path).write_text("\n".join(lines_out).strip() + "\n", encoding="utf-8")
-                    self.statusBar().showMessage(f"Batch-Rename Log gespeichert: {Path(log_path).name}")
+                        self.statusBar().showMessage(f"Batch-Rename Log gespeichert: {out.name}")
 
     def merge_pdfs(self) -> None:
         file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF files (*.pdf)")
