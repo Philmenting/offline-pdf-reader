@@ -7,7 +7,7 @@ Goal: deliver a local desktop PDF app with practical parity on core personal wor
 2. Rotate/crop pages
 3. OCR whole document with progress + language selection
 4. Batch rename based on extracted entities
-5. Export searchable PDF copy after OCR
+5. Searchable PDF copy after OCR (✅ basic implementation)
 
 ## Mid-term
 1. Password protect/decrypt PDFs (local)

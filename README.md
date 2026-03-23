@@ -45,6 +45,7 @@ python app.py
 - Zoom controls (+/−/reset) and page rotation
 - Suche über alle Seiten mit Trefferliste, klickbaren Treffern und Trefferzähler (z. B. 3/18)
 - Extrakt/OCR mit Fortschritt pro Seite, Abbruchbutton und robustem Fehlerverhalten (Einzelseitenfehler stoppen nicht den gesamten Lauf)
+- One-click: durchsuchbare PDF-Kopie direkt aus OCR erzeugen (lokal, ohne Cloud)
 - Extract text (native PDF text, fallback OCR)
 - Force OCR for all pages via dedicated button
 - Suggest filename from priorisierten Feldern `Datum_Typ_Absender_Nummer` mit konsistenter Normalisierung
@@ -79,4 +80,4 @@ python3 validate_helpers.py
 ## Next steps
 - OCR confidence highlighting direkt in der Seitenansicht (Overlay)
 - Verbesserte Korrekturvorschläge für Datum/Betrag/Nummer
-- One-click OCR to new searchable PDF
+- OCR-Export optional mit Originallayout überlageren (statt reinem OCR-Seitenbild)

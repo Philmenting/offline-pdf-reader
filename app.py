@@ -993,6 +993,10 @@ class MainWindow(QMainWindow):
         act_search.triggered.connect(self.open_search)
         menu_ocr.addAction(act_search)
 
+        act_searchable_pdf = QAction("Durchsuchbare PDF-Kopie erstellen …", self)
+        act_searchable_pdf.triggered.connect(self.export_searchable_pdf_copy)
+        menu_ocr.addAction(act_searchable_pdf)
+
         menu_tools = self.menuBar().addMenu("PDF-Werkzeuge")
         act_split = QAction("Seiten extrahieren", self)
         act_split.triggered.connect(self.extract_pages_to_new_pdf)
@@ -2639,6 +2643,111 @@ class MainWindow(QMainWindow):
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
         text, err, _, _ = self._ocr_image_with_confidence(img, show_error=show_error)
         return text, err
+
+    def export_searchable_pdf_copy(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        total = len(self.doc)
+        if total == 0:
+            QMessageBox.information(self, "Hinweis", "Das PDF enthält keine Seiten.")
+            return
+
+        default_out = self.pdf_path.with_name(f"{self.pdf_path.stem}_searchable.pdf")
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Durchsuchbare PDF speichern",
+            str(default_out),
+            "PDF files (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+
+        progress = QProgressDialog("Erzeuge durchsuchbare PDF …", "Abbrechen", 0, total, self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        out_doc = fitz.open()
+        failed_pages: list[int] = []
+        failed_reason = ""
+
+        self._set_ocr_running(True)
+        try:
+            for idx in range(total):
+                progress.setValue(idx)
+                progress.setLabelText(f"OCR-Seite {idx + 1}/{total} …")
+                QApplication.processEvents()
+
+                if progress.wasCanceled() or self.ocr_cancel_requested:
+                    QMessageBox.information(self, "Abgebrochen", "Export wurde abgebrochen.")
+                    return
+
+                try:
+                    rotation = self.page_rotations.get(idx, 0)
+                    page = self.doc[idx]
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0).prerotate(rotation), alpha=False)
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+                    pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                        img,
+                        extension="pdf",
+                        lang=self._ocr_lang(),
+                        config="--psm 6",
+                    )
+                    ocr_page_doc = fitz.open("pdf", pdf_bytes)
+                    try:
+                        out_doc.insert_pdf(ocr_page_doc)
+                    finally:
+                        ocr_page_doc.close()
+                except (TesseractError, TesseractNotFoundError, RuntimeError, ValueError) as e:
+                    failed_pages.append(idx + 1)
+                    if not failed_reason:
+                        failed_reason = str(e)
+                except Exception as e:
+                    failed_pages.append(idx + 1)
+                    if not failed_reason:
+                        failed_reason = str(e)
+        finally:
+            self._set_ocr_running(False)
+            progress.setValue(total)
+
+        if len(out_doc) == 0:
+            out_doc.close()
+            QMessageBox.critical(
+                self,
+                "Fehler",
+                "Es konnte keine durchsuchbare PDF erstellt werden.\n\n"
+                f"Fehler: {failed_reason or 'Unbekannter OCR-Fehler'}",
+            )
+            return
+
+        try:
+            out_doc.save(out_path)
+            self.statusBar().showMessage(f"Durchsuchbare PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konnte durchsuchbare PDF nicht speichern:\n{e}")
+            out_doc.close()
+            return
+        finally:
+            out_doc.close()
+
+        if failed_pages:
+            preview = ", ".join(str(p) for p in failed_pages[:12])
+            if len(failed_pages) > 12:
+                preview += ", …"
+            QMessageBox.warning(
+                self,
+                "Teilweise OCR-Fehler",
+                "Die durchsuchbare PDF wurde erstellt, aber einige Seiten konnten nicht verarbeitet werden."
+                f"\n\nFehlerseiten: {preview}"
+                f"\nAnzahl: {len(failed_pages)}"
+                f"\n\nErster Fehler:\n{failed_reason or '-'}",
+            )
+        else:
+            QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path:
