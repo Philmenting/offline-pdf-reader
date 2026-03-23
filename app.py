@@ -995,7 +995,7 @@ class MainWindow(QMainWindow):
         self.btn_redo = QPushButton("↷")
         btn_extract = QPushButton("Text Seite")
         btn_extract_all = QPushButton("Text alle Seiten")
-        btn_auto_ocr_name = QPushButton("OCR + Name")
+        btn_auto_ocr_name = QPushButton("OCR + Benennen")
         btn_saveas = QPushButton("Speichern")
         btn_merge = QPushButton("Zusammenführen")
         btn_split = QPushButton("Extrahieren")
