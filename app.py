@@ -3065,7 +3065,10 @@ class MainWindow(QMainWindow):
 
     def _update_ocr_mode_label(self) -> None:
         mode = self.ocr_correction_mode if self.ocr_correction_mode in {"konservativ", "aggressiv"} else "konservativ"
-        self.ocr_mode_label.setText(f"OCR: {self._ocr_lang()} | Modus: {mode}")
+        label_text = f"OCR: {self._ocr_lang()} | Modus: {mode}"
+        self.ocr_mode_label.setText(label_text)
+        self.ocr_mode_label.setToolTip(label_text)
+        self.setWindowTitle(f"Offline PDF Reader — MVP ({label_text})")
 
     def choose_ocr_correction_mode(self) -> None:
         options = ["konservativ", "aggressiv"]
