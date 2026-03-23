@@ -915,6 +915,7 @@ class MainWindow(QMainWindow):
         self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
 
         self.ocr_lang = "deu+eng"
+        self.ocr_correction_mode = "konservativ"
         self.ocr_cancel_requested = False
         self.ocr_cache: dict[str, tuple[str, str | None, list[str], list[str]]] = {}
         self.ocr_cache_order: list[str] = []
@@ -1146,6 +1147,10 @@ class MainWindow(QMainWindow):
         act_ocr_lang = QAction("OCR-Sprache wählen …", self)
         act_ocr_lang.triggered.connect(self.choose_ocr_language)
         menu_ocr.addAction(act_ocr_lang)
+
+        act_ocr_correction_mode = QAction("OCR-Korrekturmodus wählen …", self)
+        act_ocr_correction_mode.triggered.connect(self.choose_ocr_correction_mode)
+        menu_ocr.addAction(act_ocr_correction_mode)
 
         act_show_text = QAction("Erkannten Text anzeigen", self)
         act_show_text.setShortcut("Ctrl+T")
@@ -2979,6 +2984,22 @@ class MainWindow(QMainWindow):
         self._clear_ocr_cache()
         self.statusBar().showMessage(f"OCR-Sprache gesetzt: {self._ocr_lang()}", 4000)
 
+    def choose_ocr_correction_mode(self) -> None:
+        options = ["konservativ", "aggressiv"]
+        current = self.ocr_correction_mode if self.ocr_correction_mode in options else "konservativ"
+        choice, ok = QInputDialog.getItem(
+            self,
+            "OCR-Korrekturmodus",
+            "Modus:",
+            options,
+            options.index(current),
+            False,
+        )
+        if not ok:
+            return
+        self.ocr_correction_mode = choice
+        self.statusBar().showMessage(f"OCR-Korrekturmodus gesetzt: {choice}", 4000)
+
     def _normalize_ocr_language_code(self, code: str | None) -> str:
         normalized = (code or "").strip().lower().replace(",", "+")
         normalized = re.sub(r"\s*\+\s*", "+", normalized)
@@ -3006,6 +3027,20 @@ class MainWindow(QMainWindow):
             # Conservative token-level fixes for very frequent umlaut misses.
             out = re.sub(r"(?i)\bfur\b", lambda m: self._restore_word_case(m.group(0), "für"), out)
             out = re.sub(r"(?i)\buber\b", lambda m: self._restore_word_case(m.group(0), "über"), out)
+
+            if self.ocr_correction_mode == "aggressiv":
+                consonants = "bcdfghjklmnpqrstvwxyz"
+                # Aggressive heuristic for scanned German text; avoid digits/IDs by restricting to words.
+                out = re.sub(
+                    rf"(?i)\b[^{consonants}\W\d_]*([{consonants}])o([{consonants}])[^{consonants}\W\d_]*\b",
+                    lambda m: m.group(0).replace("o", "ö", 1).replace("O", "Ö", 1),
+                    out,
+                )
+                out = re.sub(
+                    rf"(?i)(?<=[{consonants}])i(?=[{consonants}])",
+                    "ü",
+                    out,
+                )
         return out
 
     def _ocr_image(self, img: Image.Image, show_error: bool = True) -> tuple[str, str | None]:
