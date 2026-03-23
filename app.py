@@ -3108,6 +3108,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Für den gewählten Modus gibt es keine umbenennbaren Dateien.")
             return
 
+        unchanged_count = sum(1 for src, dst, _ in proposals if src == dst)
+        actionable_count = len(proposals) - unchanged_count
+
         preview = "\n".join([f"{src.name} -> {dst.name} [{reason}]" for src, dst, reason in proposals[:30]])
         if len(proposals) > 30:
             preview += "\n…"
@@ -3118,6 +3121,7 @@ class MainWindow(QMainWindow):
             "Vorschau (es wurde noch nichts umbenannt):\n\n"
             f"{preview}\n\n"
             f"Ausgewählter Modus: {selected_mode}\n"
+            f"Gefundene Dateien: {len(proposals)} | Umbenennbar: {actionable_count} | Unverändert: {unchanged_count}\n"
             "Jetzt wirklich umbenennen?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
