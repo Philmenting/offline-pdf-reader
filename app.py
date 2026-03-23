@@ -472,6 +472,12 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     # Sender/vendor heuristic:
     # top-left often recipient; skip address-like and subject/doc lines and prefer company-like names
     company_tokens = ["gmbh", "ag", "ug", "kg", "ohg", "inc", "llc", "ltd", "corp", "s.a.", "sarl", "e.k."]
+    recipient_tokens = ["herr", "frau", "empfaenger", "empfänger", "kunde", "an:", "z. hd", "z.hd", "attn", "recipient"]
+
+    def _clean_vendor_prefix(raw: str) -> str:
+        cleaned = re.sub(r"(?i)^\s*(firma|company|vendor|lieferant|sender|absender)\s*[:\-]\s*", "", raw).strip()
+        return cleaned
+
     candidates: list[str] = []
     for ln in lines[:30]:
         ll = ln.lower()
@@ -483,15 +489,27 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
             continue
         if re.fullmatch(r"[\d\W_]+", ln):
             continue
-        candidates.append(ln)
+        candidates.append(_clean_vendor_prefix(ln))
 
     vendor = ""
-    for ln in candidates:
-        if any(tok in ln.lower() for tok in company_tokens):
-            vendor = ln
-            break
-    if not vendor and candidates:
-        vendor = candidates[0]
+    if candidates:
+        scored: list[tuple[int, str]] = []
+        for idx, ln in enumerate(candidates):
+            ll = ln.lower()
+            score = 0
+            if any(tok in ll for tok in company_tokens):
+                score += 8
+            if any(tok in ll for tok in recipient_tokens):
+                score -= 6
+            if re.search(r"\b(gbr|kg|gmbh|ag|inc|llc|ltd|corp)\b", ll):
+                score += 3
+            if idx < 8:
+                score += 1
+            score += min(3, len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", ln)))
+            scored.append((score, ln))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        vendor = scored[0][1]
 
     return ParsedDocInfo(date=date, vendor=vendor, doc_type=doc_type, number=number, subject=subject)
 
