@@ -1168,7 +1168,7 @@ class MainWindow(QMainWindow):
         act_redo.triggered.connect(self.redo_last_change)
         menu_file.addAction(act_redo)
 
-        menu_ocr = self.menuBar().addMenu("OCR & Text")
+        menu_ocr = self.menuBar().addMenu("OCR und Text")
         act_extract_current = QAction("Text der aktuellen Seite erkennen", self)
         act_extract_current.setShortcut("Ctrl+E")
         act_extract_current.triggered.connect(self.extract_text_and_suggest)
