@@ -80,6 +80,16 @@ Für echte Run-Dokumentation: siehe `WINDOWS_SMOKETEST.md` (ausfüllbares Report
 
 ## Lightweight validation
 ```bash
+./scripts/run_local_checks.sh
+```
+
+Optional (strict wie CI):
+```bash
+VALIDATION_STRICT=1 ./scripts/run_local_checks.sh
+```
+
+Die Einzelchecks funktionieren weiterhin auch direkt:
+```bash
 python3 validate_helpers.py
 python3 validate_parser_regression.py
 ```
