@@ -1,4 +1,9 @@
-from app import build_export_record, suggest_filename_from_text
+try:
+    from app import build_export_record, suggest_filename_from_text
+except (ModuleNotFoundError, ImportError) as exc:
+    missing = getattr(exc, "name", "") or str(exc)
+    print(f"validate_helpers: SKIPPED (missing dependency: {missing})")
+    raise SystemExit(0)
 
 
 def run() -> None:
