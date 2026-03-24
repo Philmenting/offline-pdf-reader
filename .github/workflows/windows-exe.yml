@@ -3,7 +3,9 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
   push:
-    branches: [ master, main ]
+    branches:
+      - master
+      - main
 
 permissions:
   contents: write
@@ -23,7 +25,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         shell: bash
@@ -39,15 +41,6 @@ jobs:
         run: |
           python validate_helpers.py
           python validate_parser_regression.py
-
-      - name: Validation summary
-        shell: powershell
-        run: |
-          if ($env:GITHUB_STEP_SUMMARY) {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Validation checks"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- ✅ validate_helpers.py"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- ✅ validate_parser_regression.py"
-          }
 
       - name: Install Tesseract (bundle for portable OCR)
         shell: powershell
@@ -85,15 +78,6 @@ jobs:
           name: offline-pdf-reader-windows-portable
           path: offline-pdf-reader-windows-portable.zip
           if-no-files-found: error
-
-      - name: Artifact summary
-        shell: powershell
-        run: |
-          if ($env:GITHUB_STEP_SUMMARY) {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Artifact"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- 📦 Name: offline-pdf-reader-windows-portable"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- 📁 File: offline-pdf-reader-windows-portable.zip"
-          }
 
       - name: Generate smoke-test report template for this run
         shell: powershell
