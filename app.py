@@ -300,6 +300,23 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         token = (raw or "").strip().strip(".,;:)")
         if not token:
             return ""
+
+        # Compact numeric dates like 20260324 or 240326 are common in OCR output.
+        compact = re.sub(r"\D", "", token)
+        if compact:
+            compact_formats: tuple[str, ...] = ()
+            if len(compact) == 8:
+                compact_formats = ("%Y%m%d", "%d%m%Y", "%m%d%Y")
+            elif len(compact) == 6:
+                compact_formats = ("%d%m%y", "%y%m%d", "%m%d%y")
+            for fmt in compact_formats:
+                try:
+                    parsed = datetime.strptime(compact, fmt)
+                    if 1990 <= parsed.year <= 2100:
+                        return parsed.strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+
         for fmt in (
             "%d.%m.%Y",
             "%d.%m.%y",
