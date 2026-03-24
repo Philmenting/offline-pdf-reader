@@ -1628,17 +1628,21 @@ class MainWindow(QMainWindow):
                 return self._ensure_pdf_suffix(candidate)
         return self._suggest_name_from_first_page()
 
+    def _compose_window_title(self) -> str:
+        mode = self.ocr_correction_mode if self.ocr_correction_mode in {"konservativ", "aggressiv"} else "konservativ"
+        base = f"{APP_TITLE} (OCR: {self._ocr_lang()} | Modus: {mode})"
+        if self.pdf_path:
+            base += f" | {self.pdf_path.name}"
+        if self.is_dirty:
+            base += " *"
+        return base
+
     def _set_dirty(self, dirty: bool) -> None:
         if dirty:
             self.doc_revision += 1
             self._clear_ocr_cache()
         self.is_dirty = dirty
-        title = "Offline PDF Reader — MVP"
-        if self.pdf_path:
-            title += f" | {self.pdf_path.name}"
-        if self.is_dirty:
-            title += " *"
-        self.setWindowTitle(title)
+        self.setWindowTitle(self._compose_window_title())
 
     def _snapshot_state(self) -> tuple[bytes, dict[int, int], int] | None:
         if not self.doc:
@@ -3340,7 +3344,7 @@ class MainWindow(QMainWindow):
         label_text = f"OCR: {self._ocr_lang()} | Modus: {mode}"
         self.ocr_mode_label.setText(label_text)
         self.ocr_mode_label.setToolTip(label_text)
-        self.setWindowTitle(f"{APP_TITLE} ({label_text})")
+        self.setWindowTitle(self._compose_window_title())
 
     def choose_ocr_correction_mode(self) -> None:
         options = ["konservativ", "aggressiv"]
