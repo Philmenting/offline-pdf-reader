@@ -38,6 +38,17 @@ jobs:
           python validate_helpers.py
           python validate_parser_regression.py
 
+      - name: Validation summary
+        shell: powershell
+        run: |
+          if ($env:GITHUB_STEP_SUMMARY) {
+            @"
+## Validation checks
+- ✅ validate_helpers.py
+- ✅ validate_parser_regression.py
+"@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+
       - name: Install Tesseract (bundle for portable OCR)
         shell: powershell
         run: |
@@ -74,6 +85,17 @@ jobs:
           name: offline-pdf-reader-windows-portable
           path: offline-pdf-reader-windows-portable.zip
           if-no-files-found: error
+
+      - name: Artifact summary
+        shell: powershell
+        run: |
+          if ($env:GITHUB_STEP_SUMMARY) {
+            @"
+## Artifact
+- 📦 Name: `offline-pdf-reader-windows-portable`
+- 📁 File: `offline-pdf-reader-windows-portable.zip`
+"@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
 
       - name: Publish/overwrite nightly release asset
         uses: softprops/action-gh-release@v2
