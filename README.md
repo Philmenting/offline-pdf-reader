@@ -82,6 +82,8 @@ python3 validate_helpers.py
 python3 validate_parser_regression.py
 ```
 
+Hinweis: Falls lokale Runtime-Abhängigkeiten fehlen (z. B. `fitz`/PyMuPDF), meldet der Parser-Regressionstest `SKIPPED` statt hart zu fehlschlagen.
+
 ## Manuelle Test-Notizen
 - Suche: Begriff eingeben, Trefferliste prüfen, mit Treffer ◀/▶ navigieren, Sprung und Hervorhebung prüfen.
 - OCR-Lauf: OCR alle starten, Abbrechen klicken, danach erneut starten (Retry-Pfad).
