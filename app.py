@@ -96,6 +96,24 @@ class BatchRenameProposal:
     confidence: str
 
 
+class SortableTableWidgetItem(QTableWidgetItem):
+    def __init__(self, text: str, sort_key=None):
+        super().__init__(text)
+        if sort_key is not None:
+            self.setData(Qt.ItemDataRole.UserRole, sort_key)
+
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            left = self.data(Qt.ItemDataRole.UserRole)
+            right = other.data(Qt.ItemDataRole.UserRole)
+            if left is not None and right is not None:
+                try:
+                    return left < right
+                except Exception:
+                    pass
+        return super().__lt__(other)
+
+
 def _normalize_filename_part(value: str, max_len: int = 48) -> str:
     token = (value or "").strip()
     if not token:
@@ -3809,6 +3827,8 @@ class MainWindow(QMainWindow):
             "niedrig": QColor(255, 235, 238),
         }
 
+        confidence_sort_order = {"hoch": 0, "mittel": 1, "niedrig": 2}
+
         for row, proposal in enumerate(proposals):
             unchanged_row = proposal.src == proposal.dst
             status_text = "Unverändert" if unchanged_row else "Umbenennen"
@@ -3822,7 +3842,12 @@ class MainWindow(QMainWindow):
             ]
             row_color = QColor(238, 238, 238) if unchanged_row else confidence_row_colors.get(proposal.confidence.lower())
             for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                sort_key = None
+                if col == 0:
+                    sort_key = 1 if unchanged_row else 0
+                elif col == 3:
+                    sort_key = confidence_sort_order.get(proposal.confidence.lower(), 99)
+                item = SortableTableWidgetItem(value, sort_key=sort_key)
                 if row_color is not None:
                     item.setBackground(row_color)
                 table.setItem(row, col, item)
