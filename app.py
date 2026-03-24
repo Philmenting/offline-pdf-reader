@@ -537,8 +537,36 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
     def _normalize_doc_number(raw: str) -> str:
         cleaned = (raw or "").strip().strip(".,;:)")
         cleaned = re.sub(r"^[#:\-\s]+", "", cleaned)
+
+        # Remove common OCR label leftovers when capture groups are noisy.
+        cleaned = re.sub(
+            r"(?i)^(?:nr|nummer|no|number|invoice|rechnung|beleg|doc|id)\s*[:#\-/]*\s*",
+            "",
+            cleaned,
+        )
+
+        # Normalize OCR-confused separators and collapse whitespace around separators.
+        cleaned = cleaned.replace("\\", "/")
+        cleaned = re.sub(r"\s*([/_-])\s*", r"\1", cleaned)
         cleaned = re.sub(r"\s{2,}", " ", cleaned)
-        return cleaned
+
+        # Document numbers are usually compact tokens; remove remaining spaces.
+        cleaned = cleaned.replace(" ", "")
+
+        # Trim trailing punctuation while preserving identifier separators.
+        cleaned = re.sub(r"[.,;:]+$", "", cleaned)
+
+        # OCR confusion fixes for typical document IDs.
+        # Keep conservative: only in numeric context or adjacent to separators.
+        cleaned = re.sub(r"(?<=\d)[Oo](?=\d)", "0", cleaned)
+        cleaned = re.sub(r"(?<=\d)[Il](?=\d)", "1", cleaned)
+        cleaned = re.sub(r"(?<=\d)S(?=\d)", "5", cleaned)
+        cleaned = re.sub(r"(?<=\d)B(?=\d)", "8", cleaned)
+
+        # Remove accidental duplicate separators from OCR.
+        cleaned = re.sub(r"([/_-]){2,}", r"\1", cleaned)
+
+        return cleaned.strip()
 
     number = ""
     value_re = re.compile(r"^[A-Z0-9][A-Z0-9/_-]{2,}$", re.IGNORECASE)
