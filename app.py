@@ -3033,6 +3033,7 @@ class MainWindow(QMainWindow):
 
         remaining_failed: list[int] = []
         retry_page_errors: dict[int, str] = {}
+        processed_retry_pages = 0
         canceled = False
 
         self._set_ocr_running(True)
@@ -3049,6 +3050,7 @@ class MainWindow(QMainWindow):
                 idx = page_no - 1
                 rotation = self.page_rotations.get(idx, 0)
                 text, err, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=2)
+                processed_retry_pages += 1
                 if err or not text.strip():
                     remaining_failed.append(page_no)
                     retry_page_errors[page_no] = err or "Kein Text erkannt"
@@ -3075,7 +3077,7 @@ class MainWindow(QMainWindow):
             ok=retried_ok,
             failed=len(remaining_failed),
             canceled=canceled,
-            processed=retried_total if not canceled else max(0, retried_total - len(remaining_failed)),
+            processed=processed_retry_pages if canceled else retried_total,
         )
         followup_hint = self._build_ocr_followup_hint(len(remaining_failed), canceled)
         self.statusBar().showMessage(retry_summary)
