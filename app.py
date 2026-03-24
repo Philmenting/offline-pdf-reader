@@ -3777,8 +3777,19 @@ class MainWindow(QMainWindow):
         dlg.resize(1080, 620)
 
         layout = QVBoxLayout(dlg)
+        confidence_counts = {"hoch": 0, "mittel": 0, "niedrig": 0}
+        unchanged = 0
+        for p in proposals:
+            key = p.confidence.lower()
+            if key in confidence_counts:
+                confidence_counts[key] += 1
+            if p.src == p.dst:
+                unchanged += 1
+        actionable = len(proposals) - unchanged
+
         summary = QLabel(
-            f"Modus: {selected_mode} | Einträge: {len(proposals)}\n"
+            f"Modus: {selected_mode} | Einträge: {len(proposals)} | Umbenennbar: {actionable} | Unverändert: {unchanged}\n"
+            f"Confidence: hoch={confidence_counts['hoch']}, mittel={confidence_counts['mittel']}, niedrig={confidence_counts['niedrig']}\n"
             "Prüfe Altname → Neuer Name. Erst mit 'Umbenennen' wird geschrieben."
         )
         layout.addWidget(summary)
