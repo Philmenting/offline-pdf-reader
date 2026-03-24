@@ -32,6 +32,12 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Run parser/helper validations
+        shell: bash
+        run: |
+          python validate_helpers.py
+          python validate_parser_regression.py
+
       - name: Install Tesseract (bundle for portable OCR)
         shell: powershell
         run: |

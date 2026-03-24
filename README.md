@@ -60,7 +60,7 @@ python app.py
 ## Windows-Test (portable, OCR ohne Extra-Installation)
 1. Öffne: `Actions` Tab im Repo
 2. Wähle Workflow **Build Windows EXE**
-3. Klicke **Run workflow**
+3. Klicke **Run workflow** (führt vor dem Build auch `validate_helpers.py` + `validate_parser_regression.py` aus)
 4. Nach Abschluss unter **Artifacts** `offline-pdf-reader-windows-portable` laden
 5. ZIP entpacken und `offline-pdf-reader.exe` im Ordner `offline-pdf-reader/` starten
 
