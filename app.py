@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -33,6 +34,8 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QScrollArea,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -82,6 +85,15 @@ class OCRPassResult:
     mean_confidence: float
     low_conf_tokens: list[str]
     low_conf_lines: list[str]
+
+
+@dataclass
+class BatchRenameProposal:
+    src: Path
+    dst: Path
+    reason: str
+    source: str
+    confidence: str
 
 
 def _normalize_filename_part(value: str, max_len: int = 48) -> str:
@@ -3701,6 +3713,91 @@ class MainWindow(QMainWindow):
             writer.writeheader()
             writer.writerows(rows)
 
+    @staticmethod
+    def _filename_confidence_label(info: ParsedDocInfo, is_fallback: bool) -> str:
+        score = 0
+        if info.date:
+            score += 1
+        if info.doc_type and info.doc_type != "Dokument":
+            score += 1
+        if info.vendor:
+            score += 1
+        if info.number:
+            score += 1
+        if is_fallback:
+            score = min(score, 1)
+
+        if score >= 4:
+            return "hoch"
+        if score >= 2:
+            return "mittel"
+        return "niedrig"
+
+    @staticmethod
+    def _build_filename_source(info: ParsedDocInfo) -> str:
+        parts: list[str] = []
+        if info.date:
+            parts.append("Datum")
+        if info.doc_type and info.doc_type != "Dokument":
+            parts.append("Typ")
+        if info.vendor:
+            parts.append("Absender")
+        if info.number:
+            parts.append("Nummer")
+        return "+".join(parts) if parts else "Fallback"
+
+    def _show_batch_rename_preview(self, proposals: list[BatchRenameProposal], selected_mode: str) -> bool:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Batch-Rename Vorschau (Dry-Run)")
+        dlg.resize(1080, 620)
+
+        layout = QVBoxLayout(dlg)
+        summary = QLabel(
+            f"Modus: {selected_mode} | Einträge: {len(proposals)}\n"
+            "Prüfe Altname → Neuer Name. Erst mit 'Umbenennen' wird geschrieben."
+        )
+        layout.addWidget(summary)
+
+        table = QTableWidget(len(proposals), 5, dlg)
+        table.setHorizontalHeaderLabels(["Altname", "Neuer Name", "Confidence", "Quelle", "Grund"])
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+
+        for row, proposal in enumerate(proposals):
+            values = [
+                proposal.src.name,
+                proposal.dst.name,
+                proposal.confidence,
+                proposal.source,
+                proposal.reason,
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                table.setItem(row, col, item)
+
+        hdr = table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dlg)
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button:
+            ok_button.setText("Umbenennen")
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_button:
+            cancel_button.setText("Abbrechen")
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        return dlg.exec() == QDialog.DialogCode.Accepted
+
     def batch_rename_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Ordner für Batch-Rename auswählen")
         if not folder:
@@ -3727,7 +3824,34 @@ class MainWindow(QMainWindow):
         if not ok_mode:
             return
 
-        proposals: list[tuple[Path, Path, str]] = []
+        rename_policy_labels = [
+            "Konflikte mit (1), (2), … auflösen",
+            "Konflikte überspringen",
+        ]
+        selected_policy, ok_policy = QInputDialog.getItem(
+            self,
+            "Konflikt-Regel",
+            "Wie sollen Namenskonflikte behandelt werden?",
+            rename_policy_labels,
+            0,
+            False,
+        )
+        if not ok_policy:
+            return
+
+        safe_only_answer, ok_safe = QInputDialog.getItem(
+            self,
+            "Sicherheitsfilter",
+            "Sollen nur sichere Vorschläge (Confidence hoch) automatisch umbenannt werden?",
+            ["Nein, alle aus Modus", "Ja, nur Confidence hoch"],
+            0,
+            False,
+        )
+        if not ok_safe:
+            return
+        safe_only = safe_only_answer.startswith("Ja")
+
+        proposals: list[BatchRenameProposal] = []
         used_targets: set[str] = set()
         analysis_errors: list[str] = []
 
@@ -3763,13 +3887,18 @@ class MainWindow(QMainWindow):
             stem = Path(base_name).stem
             candidate = f"{stem}.pdf"
             n = 1
-            while candidate.lower() in used_targets or (folder_path / candidate).exists() and (folder_path / candidate) != src:
+            conflict = candidate.lower() in used_targets or ((folder_path / candidate).exists() and (folder_path / candidate) != src)
+            if conflict and selected_policy == "Konflikte überspringen":
+                analysis_errors.append(f"{src.name}: Namenskonflikt für '{candidate}' (übersprungen)")
+                continue
+            while candidate.lower() in used_targets or ((folder_path / candidate).exists() and (folder_path / candidate) != src):
                 candidate = f"{stem}({n}).pdf"
                 n += 1
             used_targets.add(candidate.lower())
 
             is_fallback = Path(base_name).name.lower() == "dokument.pdf"
             is_uncertain = is_fallback or not info.date or not info.number
+            confidence = self._filename_confidence_label(info, is_fallback)
 
             include = (
                 selected_mode == "Alle Dateien"
@@ -3779,6 +3908,9 @@ class MainWindow(QMainWindow):
             if not include:
                 continue
 
+            if safe_only and confidence != "hoch":
+                continue
+
             reason_parts: list[str] = []
             if is_fallback:
                 reason_parts.append("Fallback")
@@ -3786,8 +3918,19 @@ class MainWindow(QMainWindow):
                 reason_parts.append("kein Datum")
             if not info.number:
                 reason_parts.append("keine Nummer")
+            if not info.vendor:
+                reason_parts.append("kein Absender")
             reason = ", ".join(reason_parts) if reason_parts else "ok"
-            proposals.append((src, folder_path / candidate, reason))
+            source = self._build_filename_source(info)
+            proposals.append(
+                BatchRenameProposal(
+                    src=src,
+                    dst=folder_path / candidate,
+                    reason=reason,
+                    source=source,
+                    confidence=confidence,
+                )
+            )
 
         progress.setValue(len(files))
 
@@ -3795,31 +3938,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Für den gewählten Modus gibt es keine umbenennbaren Dateien.")
             return
 
-        unchanged_count = sum(1 for src, dst, _ in proposals if src == dst)
-        actionable_count = len(proposals) - unchanged_count
-
-        preview = "\n".join([f"{src.name} -> {dst.name} [{reason}]" for src, dst, reason in proposals[:30]])
-        if len(proposals) > 30:
-            preview += "\n…"
-
-        confirm = QMessageBox.question(
-            self,
-            "Stapel-Umbenennen Vorschau (Testlauf)",
-            "Vorschau (es wurde noch nichts umbenannt):\n\n"
-            f"{preview}\n\n"
-            f"Ausgewählter Modus: {selected_mode}\n"
-            f"Gefundene Dateien: {len(proposals)} | Umbenennbar: {actionable_count} | Unverändert: {unchanged_count}\n"
-            "Jetzt wirklich umbenennen?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if not self._show_batch_rename_preview(proposals, selected_mode):
             return
 
         renamed = 0
         rename_errors: list[str] = []
         renamed_pairs: list[tuple[str, str, str]] = []
-        for src, dst, reason in proposals:
+        for proposal in proposals:
+            src, dst, reason = proposal.src, proposal.dst, proposal.reason
             if src == dst:
                 continue
             try:
@@ -3884,6 +4010,8 @@ class MainWindow(QMainWindow):
                                 out = out.with_suffix(".txt")
                             lines_out: list[str] = []
                             lines_out.append(f"Modus: {selected_mode}")
+                            lines_out.append(f"Konfliktregel: {selected_policy}")
+                            lines_out.append(f"Nur sichere Vorschläge: {'Ja' if safe_only else 'Nein'}")
                             lines_out.append(f"Umbenannt: {renamed}")
                             lines_out.append("")
                             if renamed_pairs:

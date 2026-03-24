@@ -53,7 +53,7 @@ python app.py
 - Save-as with suggested name
 - PDF merge, page extraction, page reordering
 - Seiten im Thumbnail-Bereich per Delete-Taste oder Kontextmenü löschen (inkl. Mehrfach-Confirm)
-- Batch-Rename für Ordner mit Dry-Run-Vorschau und Konfliktauflösung via `(1)`, `(2)`
+- Batch-Rename für Ordner mit Dry-Run-Tabellenvorschau (Altname/Neuer Name/Confidence/Quelle/Grund), Konflikt-Policy (`(1)`, `(2)` oder überspringen) und optional „nur sichere Vorschläge“
 - Export (TXT/JSON/CSV) pro Datei und als Ordner-Aggregat auf gemeinsamem Datenmodell
 - Remove empty/blank pages into a new PDF
 
@@ -66,9 +66,17 @@ python app.py
 
 Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine separate Installation nötig.
 
+### 5-Punkte Smoke-Testprotokoll (Windows)
+1. **Start**: App startet ohne Fehlermeldung; ein PDF lässt sich öffnen.
+2. **Viewer**: Seitenwechsel + Zoom + Suche funktionieren (mind. 1 Treffer anspringen).
+3. **OCR**: "OCR alle" für ein Mehrseiten-PDF ausführen; Fortschritt + Abschlussmeldung prüfen.
+4. **Rename**: Batch-Rename-Vorschau zeigt Tabelle mit Confidence/Quelle/Grund; Dry-Run abbrechen und einmal bestätigen.
+5. **Export**: TXT/JSON/CSV jeweils einmal erzeugen (Einzeldatei oder Ordner-Aggregat).
+
 ## Lightweight validation
 ```bash
 python3 validate_helpers.py
+python3 validate_parser_regression.py
 ```
 
 ## Manuelle Test-Notizen

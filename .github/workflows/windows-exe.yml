@@ -58,6 +58,26 @@ jobs:
           if (Test-Path $zipName) { Remove-Item $zipName -Force }
           Compress-Archive -Path "dist/offline-pdf-reader/*" -DestinationPath $zipName -Force
 
+      - name: Smoke checks (portable layout + bundled OCR)
+        shell: powershell
+        run: |
+          if (!(Test-Path "dist/offline-pdf-reader/offline-pdf-reader.exe")) {
+            throw "offline-pdf-reader.exe missing"
+          }
+          if (!(Test-Path "dist/offline-pdf-reader/tesseract/tesseract.exe")) {
+            throw "bundled tesseract.exe missing"
+          }
+          if (!(Test-Path "offline-pdf-reader-windows-portable.zip")) {
+            throw "portable zip missing"
+          }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-pdf-reader-windows-portable
+          path: offline-pdf-reader-windows-portable.zip
+          if-no-files-found: error
+
       - name: Publish/overwrite nightly release asset
         uses: softprops/action-gh-release@v2
         with:
