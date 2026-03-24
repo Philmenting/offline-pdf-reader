@@ -3794,8 +3794,8 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(summary)
 
-        table = QTableWidget(len(proposals), 5, dlg)
-        table.setHorizontalHeaderLabels(["Altname", "Neuer Name", "Confidence", "Quelle", "Grund"])
+        table = QTableWidget(len(proposals), 6, dlg)
+        table.setHorizontalHeaderLabels(["Status", "Altname", "Neuer Name", "Confidence", "Quelle", "Grund"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
@@ -3808,14 +3808,17 @@ class MainWindow(QMainWindow):
         }
 
         for row, proposal in enumerate(proposals):
+            unchanged_row = proposal.src == proposal.dst
+            status_text = "Unverändert" if unchanged_row else "Umbenennen"
             values = [
+                status_text,
                 proposal.src.name,
                 proposal.dst.name,
                 proposal.confidence,
                 proposal.source,
                 proposal.reason,
             ]
-            row_color = confidence_row_colors.get(proposal.confidence.lower())
+            row_color = QColor(238, 238, 238) if unchanged_row else confidence_row_colors.get(proposal.confidence.lower())
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if row_color is not None:
@@ -3823,11 +3826,12 @@ class MainWindow(QMainWindow):
                 table.setItem(row, col, item)
 
         hdr = table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dlg)
