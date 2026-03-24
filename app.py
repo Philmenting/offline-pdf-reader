@@ -996,7 +996,7 @@ class MainWindow(QMainWindow):
         btn_rotate_reset = QPushButton("⟲")
         self.btn_undo = QPushButton("↶")
         self.btn_redo = QPushButton("↷")
-        btn_extract = QPushButton("Text Seite")
+        btn_extract = QPushButton("Text aktuelle Seite")
         btn_extract_all = QPushButton("Text alle Seiten")
         btn_auto_ocr_name = QPushButton("OCR + Benennen")
         btn_saveas = QPushButton("Speichern")
@@ -1172,7 +1172,7 @@ class MainWindow(QMainWindow):
         menu_file.addAction(act_redo)
 
         menu_ocr = self.menuBar().addMenu("OCR und Text")
-        act_extract_current = QAction("Text der aktuellen Seite erkennen", self)
+        act_extract_current = QAction("Text auf aktueller Seite erkennen", self)
         act_extract_current.setShortcut("Ctrl+E")
         act_extract_current.triggered.connect(self.extract_text_and_suggest)
         menu_ocr.addAction(act_extract_current)
