@@ -1296,6 +1296,41 @@ class MainWindow(QMainWindow):
         act_batch_rename.triggered.connect(self.batch_rename_folder)
         menu_export.addAction(act_batch_rename)
 
+        # Improve menu accessibility/discoverability (screen readers + status hints).
+        all_actions = [
+            act_open,
+            act_close_pdf,
+            act_save_as,
+            act_undo,
+            act_redo,
+            act_extract_current,
+            act_extract,
+            act_retry_failed_ocr,
+            act_ocr_and_name,
+            act_ocr_lang,
+            act_ocr_correction_mode,
+            act_ocr_reset,
+            act_show_text,
+            act_search,
+            act_search_next,
+            act_search_prev,
+            act_searchable_pdf,
+            act_split,
+            act_reorder,
+            act_merge,
+            act_split_chunks,
+            act_remove_empty,
+            act_delete_pages,
+            act_export_current,
+            act_export_folder,
+            act_batch_rename,
+        ]
+        for action in all_actions:
+            text = action.text().replace("&", "")
+            action.setStatusTip(text)
+            action.setToolTip(text)
+            action.setWhatsThis(text)
+
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._update_undo_redo_buttons()
         self._update_ocr_mode_label()
