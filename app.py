@@ -637,13 +637,37 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         if idx + 1 < len(lines):
             _add_number_candidate(lines[idx + 1], base_score - 1)
 
-    # Prefer candidates that look like typical invoice IDs (contain digit + separator/letters)
+    # Prefer candidates that look like realistic document IDs for current doc type.
     for cand in list(number_candidates.keys()):
         bonus = 0
+        low = cand.lower()
+
+        # Generic quality hints.
         if re.search(r"\d", cand) and re.search(r"[A-Z]", cand, re.IGNORECASE):
             bonus += 2
         if any(sep in cand for sep in ["/", "-", "_"]):
             bonus += 1
+        if len(cand) < 4:
+            bonus -= 3
+        elif len(cand) < 6:
+            bonus -= 1
+
+        # Prefix/type hints.
+        if re.match(r"(?i)^(re|rg|inv)", cand):
+            bonus += 3 if invoice_like else 1
+        if re.match(r"(?i)^(po|best|ord)", cand):
+            bonus += 3 if order_like else 0
+        if re.match(r"(?i)^(dn|ls|lief)", cand):
+            bonus += 3 if delivery_like else 0
+
+        # Penalize obviously generic tokens that often appear in headers.
+        if low in {"invoice", "rechnung", "number", "nummer", "order", "po", "doc", "id", "total", "summe"}:
+            bonus -= 6
+
+        # Single-block pure digits are less reliable than mixed IDs.
+        if re.fullmatch(r"\d{4,}", cand):
+            bonus -= 2
+
         number_candidates[cand] += bonus
 
     if number_candidates:
