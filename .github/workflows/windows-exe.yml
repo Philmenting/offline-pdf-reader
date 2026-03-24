@@ -66,16 +66,7 @@ jobs:
 
       - name: Smoke checks (portable layout + bundled OCR)
         shell: powershell
-        run: |
-          if (!(Test-Path "dist/offline-pdf-reader/offline-pdf-reader.exe")) {
-            throw "offline-pdf-reader.exe missing"
-          }
-          if (!(Test-Path "dist/offline-pdf-reader/tesseract/tesseract.exe")) {
-            throw "bundled tesseract.exe missing"
-          }
-          if (!(Test-Path "offline-pdf-reader-windows-portable.zip")) {
-            throw "portable zip missing"
-          }
+        run: .github/scripts/windows-smoke-check.ps1
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

@@ -61,8 +61,9 @@ python app.py
 1. Öffne: `Actions` Tab im Repo
 2. Wähle Workflow **Build Windows EXE**
 3. Klicke **Run workflow** (führt vor dem Build auch `validate_helpers.py` + `validate_parser_regression.py` aus)
-4. Nach Abschluss unter **Artifacts** `offline-pdf-reader-windows-portable` laden
-5. ZIP entpacken und `offline-pdf-reader.exe` im Ordner `offline-pdf-reader/` starten
+4. Prüfe im Workflow-Run die **Windows smoke checks** (EXE + bundled Tesseract + ZIP)
+5. Nach Abschluss unter **Artifacts** `offline-pdf-reader-windows-portable` laden
+6. ZIP entpacken und `offline-pdf-reader.exe` im Ordner `offline-pdf-reader/` starten
 
 Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine separate Installation nötig.
 
