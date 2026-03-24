@@ -3819,7 +3819,8 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
-        table.setSortingEnabled(True)
+        # Keep sorting disabled while populating rows to avoid reordering artifacts.
+        table.setSortingEnabled(False)
 
         confidence_row_colors = {
             "hoch": QColor(232, 245, 233),
@@ -3859,6 +3860,7 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        table.setSortingEnabled(True)
         table.sortItems(3, Qt.SortOrder.AscendingOrder)
         layout.addWidget(table)
 
