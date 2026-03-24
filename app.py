@@ -966,10 +966,14 @@ class MainWindow(QMainWindow):
 
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
+        self.search_query.setAccessibleName("Suchfeld")
+        self.search_query.setAccessibleDescription("Suchbegriff eingeben, um alle Seiten einschließlich OCR-Texte zu durchsuchen")
         self.search_query.setClearButtonEnabled(True)
         self.search_results_list = QListWidget()
         self.search_results_list.setMinimumHeight(140)
         self.search_results_list.setVisible(False)
+        self.search_results_list.setAccessibleName("Suchtrefferliste")
+        self.search_results_list.setAccessibleDescription("Liste aller Suchtreffer über alle Seiten mit Seiten- und Zeilenangabe")
         self.search_results_list.itemClicked.connect(self._on_search_result_clicked)
         self.search_hits: list[dict] = []
         self.current_search_hit = -1
@@ -993,8 +997,11 @@ class MainWindow(QMainWindow):
 
         self.ocr_feedback = QLabel("OCR-Hinweise: -")
         self.ocr_feedback.setWordWrap(True)
+        self.ocr_feedback.setAccessibleName("OCR-Hinweise")
+        self.ocr_feedback.setAccessibleDescription("Zeigt OCR-Qualitätshinweise und Auffälligkeiten")
         self.ocr_mode_label = QLabel()
         self.ocr_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.ocr_mode_label.setAccessibleName("OCR-Status")
 
         btn_open = QPushButton("Öffnen")
         btn_first = QPushButton("⏮")
@@ -1023,6 +1030,7 @@ class MainWindow(QMainWindow):
         btn_hit_prev = QPushButton("Treffer ◀")
         btn_hit_next = QPushButton("Treffer ▶")
         self.search_counter = QLabel("Treffer: 0/0")
+        self.search_counter.setAccessibleName("Suchtreffer-Zähler")
         self.btn_cancel_ocr = QPushButton("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
         self.btn_retry_failed_ocr = QPushButton("OCR-Fehler erneut")
