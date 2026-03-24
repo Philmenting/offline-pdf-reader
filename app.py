@@ -2823,6 +2823,48 @@ class MainWindow(QMainWindow):
     def ocr_and_suggest_filename(self) -> None:
         self.recognize_text_all_pages_and_suggest()
 
+    @staticmethod
+    def _format_page_list_preview(page_numbers: list[int], limit: int = 10) -> str:
+        if not page_numbers:
+            return "-"
+        preview = ", ".join(str(p) for p in page_numbers[:limit])
+        if len(page_numbers) > limit:
+            preview += ", …"
+        return preview
+
+    @staticmethod
+    def _normalize_ocr_error_signature(err: str) -> str:
+        normalized = (err or "").strip()
+        if not normalized:
+            return "Unbekannter OCR-Fehler"
+        lowered = normalized.casefold()
+        if "tesseract wurde nicht gefunden" in lowered or "not found" in lowered:
+            return "Tesseract nicht gefunden"
+        if "failed loading language" in lowered or "error opening data file" in lowered:
+            return "Sprachdaten fehlen"
+        if "image" in lowered and "empty" in lowered:
+            return "Leere/Beschädigte Bilddaten"
+        return normalized.splitlines()[0][:120]
+
+    def _summarize_ocr_errors(self, page_errors: dict[int, str], top: int = 3) -> str:
+        if not page_errors:
+            return ""
+
+        grouped: dict[str, list[int]] = {}
+        for page_no, err in sorted(page_errors.items()):
+            key = self._normalize_ocr_error_signature(err)
+            grouped.setdefault(key, []).append(page_no)
+
+        lines = [f"Fehlerseiten gesamt: {len(page_errors)}"]
+        ranked = sorted(grouped.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for label, pages in ranked[:top]:
+            lines.append(
+                f"- {label}: {len(pages)} Seite(n) (z. B. {self._format_page_list_preview(pages, limit=6)})"
+            )
+        if len(ranked) > top:
+            lines.append(f"- Weitere Fehlerarten: {len(ranked) - top}")
+        return "\n".join(lines)
+
     def recognize_text_all_pages_and_suggest(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
@@ -2842,7 +2884,7 @@ class MainWindow(QMainWindow):
         all_low_conf_tokens: list[str] = []
         all_low_conf_lines: list[str] = []
         ocr_failed_pages: list[int] = []
-        ocr_error_preview: str = ""
+        page_ocr_errors: dict[int, str] = {}
         page_texts: dict[int, str] = {}
 
         processed_pages = 0
@@ -2868,9 +2910,9 @@ class MainWindow(QMainWindow):
                 all_low_conf_tokens.extend(low_conf_tokens)
                 all_low_conf_lines.extend(low_conf_lines)
                 if ocr_error:
-                    ocr_failed_pages.append(idx + 1)
-                    if not ocr_error_preview:
-                        ocr_error_preview = ocr_error
+                    page_no = idx + 1
+                    ocr_failed_pages.append(page_no)
+                    page_ocr_errors[page_no] = ocr_error
                     continue
 
                 text = text.strip()
@@ -2911,16 +2953,15 @@ class MainWindow(QMainWindow):
             )
 
         if ocr_failed_pages:
-            pages = ", ".join(str(p) for p in ocr_failed_pages[:10])
-            if len(ocr_failed_pages) > 10:
-                pages += ", …"
+            pages = self._format_page_list_preview(ocr_failed_pages)
+            summary = self._summarize_ocr_errors(page_ocr_errors)
             QMessageBox.warning(
                 self,
                 "OCR teilweise fehlgeschlagen",
                 "Texterkennung wurde fortgesetzt, aber auf einigen Seiten ist ein Fehler aufgetreten."
                 f"\n\nSeiten: {pages}"
                 f"\nFehleranzahl: {len(ocr_failed_pages)}"
-                f"\n\nErster Fehler:\n{ocr_error_preview}",
+                f"\n\nZusammenfassung:\n{summary}",
             )
 
     def retry_failed_ocr_pages(self) -> None:
@@ -2945,7 +2986,7 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
 
         remaining_failed: list[int] = []
-        first_error = ""
+        retry_page_errors: dict[int, str] = {}
         canceled = False
 
         self._set_ocr_running(True)
@@ -2964,8 +3005,7 @@ class MainWindow(QMainWindow):
                 text, err, _, _ = self._ocr_page_with_retry_cached(idx, rotation, retries=2)
                 if err or not text.strip():
                     remaining_failed.append(page_no)
-                    if err and not first_error:
-                        first_error = err
+                    retry_page_errors[page_no] = err or "Kein Text erkannt"
                     continue
                 self.last_recognized_page_texts[idx] = text.strip()
         finally:
@@ -2983,27 +3023,24 @@ class MainWindow(QMainWindow):
             self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
 
         if canceled:
-            preview = ", ".join(str(p) for p in remaining_failed[:10])
-            if len(remaining_failed) > 10:
-                preview += ", …"
+            preview = self._format_page_list_preview(remaining_failed)
             QMessageBox.information(
                 self,
                 "OCR erneut abgebrochen",
                 "Erneuter OCR-Versuch wurde abgebrochen. Nicht verarbeitete Seiten bleiben als fehlgeschlagen markiert."
-                f"\n\nOffene Seiten: {preview or '-'}"
+                f"\n\nOffene Seiten: {preview}"
                 f"\nAnzahl: {len(remaining_failed)}",
             )
         elif remaining_failed:
-            preview = ", ".join(str(p) for p in remaining_failed[:10])
-            if len(remaining_failed) > 10:
-                preview += ", …"
+            preview = self._format_page_list_preview(remaining_failed)
+            summary = self._summarize_ocr_errors(retry_page_errors)
             QMessageBox.warning(
                 self,
                 "OCR erneut teilweise fehlgeschlagen",
                 "Einige Seiten konnten weiterhin nicht erkannt werden."
                 f"\n\nSeiten: {preview}"
                 f"\nAnzahl: {len(remaining_failed)}"
-                f"\n\nErster Fehler:\n{first_error or '-'}",
+                f"\n\nZusammenfassung:\n{summary}",
             )
         else:
             QMessageBox.information(self, "Fertig", "Erneuter OCR-Versuch abgeschlossen. Alle vorher fehlgeschlagenen Seiten wurden erkannt.")
