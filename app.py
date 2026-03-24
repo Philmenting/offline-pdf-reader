@@ -3937,6 +3937,11 @@ class MainWindow(QMainWindow):
         proposals: list[BatchRenameProposal] = []
         used_targets: set[str] = set()
         analysis_errors: list[str] = []
+        skipped_stats = {
+            "mode_filter": 0,
+            "safe_filter": 0,
+            "conflict_skip": 0,
+        }
 
         progress = QProgressDialog("Analysiere PDFs für Stapel-Umbenennen …", "Abbrechen", 0, len(files), self)
         progress.setWindowTitle("Bitte warten")
@@ -3973,6 +3978,7 @@ class MainWindow(QMainWindow):
             conflict = candidate.lower() in used_targets or ((folder_path / candidate).exists() and (folder_path / candidate) != src)
             if conflict and selected_policy == "Konflikte überspringen":
                 analysis_errors.append(f"{src.name}: Namenskonflikt für '{candidate}' (übersprungen)")
+                skipped_stats["conflict_skip"] += 1
                 continue
             while candidate.lower() in used_targets or ((folder_path / candidate).exists() and (folder_path / candidate) != src):
                 candidate = f"{stem}({n}).pdf"
@@ -3989,9 +3995,11 @@ class MainWindow(QMainWindow):
                 or (selected_mode == "Nur Fallback-Namen (Dokument.pdf)" and is_fallback)
             )
             if not include:
+                skipped_stats["mode_filter"] += 1
                 continue
 
             if safe_only and confidence != "hoch":
+                skipped_stats["safe_filter"] += 1
                 continue
 
             reason_parts: list[str] = []
@@ -4039,6 +4047,14 @@ class MainWindow(QMainWindow):
                 rename_errors.append(f"{src.name} -> {dst.name}: {e}")
 
         summary = f"Stapel-Umbenennen abgeschlossen: {renamed} Datei(en) umbenannt."
+        skipped_total = sum(skipped_stats.values())
+        if skipped_total:
+            summary += (
+                f"\nÜbersprungen gesamt: {skipped_total}"
+                f" (Modus-Filter: {skipped_stats['mode_filter']},"
+                f" Safe-Filter: {skipped_stats['safe_filter']},"
+                f" Konflikt-Überspringen: {skipped_stats['conflict_skip']})"
+            )
         if analysis_errors:
             summary += f"\nAnalysefehler: {len(analysis_errors)}"
         if rename_errors:
@@ -4097,6 +4113,19 @@ class MainWindow(QMainWindow):
                                 rows.append({"status": "analysis_error", "old": "", "new": "", "reason": "", "confidence": "", "source": "", "detail": err})
                             for err in rename_errors:
                                 rows.append({"status": "rename_error", "old": "", "new": "", "reason": "", "confidence": "", "source": "", "detail": err})
+                            rows.append({
+                                "status": "summary",
+                                "old": "",
+                                "new": "",
+                                "reason": "skipped_counts",
+                                "confidence": "",
+                                "source": "",
+                                "detail": (
+                                    f"mode_filter={skipped_stats['mode_filter']};"
+                                    f"safe_filter={skipped_stats['safe_filter']};"
+                                    f"conflict_skip={skipped_stats['conflict_skip']}"
+                                ),
+                            })
                             if out.suffix.lower() != ".csv":
                                 out = out.with_suffix(".csv")
                             with out.open("w", encoding="utf-8", newline="") as f:
@@ -4114,6 +4143,12 @@ class MainWindow(QMainWindow):
                             lines_out.append(f"Konfliktregel: {selected_policy}")
                             lines_out.append(f"Nur sichere Vorschläge: {'Ja' if safe_only else 'Nein'}")
                             lines_out.append(f"Umbenannt: {renamed}")
+                            lines_out.append(
+                                "Übersprungen: "
+                                f"Modus-Filter={skipped_stats['mode_filter']}, "
+                                f"Safe-Filter={skipped_stats['safe_filter']}, "
+                                f"Konflikt-Überspringen={skipped_stats['conflict_skip']}"
+                            )
                             lines_out.append("")
                             if renamed_pairs:
                                 lines_out.append("=== Renamed ===")
