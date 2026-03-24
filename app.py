@@ -50,6 +50,9 @@ except Exception:
     np = None
 
 
+APP_TITLE = "Offline PDF Leser — MVP"
+
+
 @dataclass
 class ParsedDocInfo:
     date: str = ""
@@ -891,7 +894,7 @@ class ThumbnailListWidget(QListWidget):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Offline PDF Reader — MVP")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1220, 860)
         self.setAcceptDrops(True)
 
@@ -3089,7 +3092,7 @@ class MainWindow(QMainWindow):
         label_text = f"OCR: {self._ocr_lang()} | Modus: {mode}"
         self.ocr_mode_label.setText(label_text)
         self.ocr_mode_label.setToolTip(label_text)
-        self.setWindowTitle(f"Offline PDF Reader — MVP ({label_text})")
+        self.setWindowTitle(f"{APP_TITLE} ({label_text})")
 
     def choose_ocr_correction_mode(self) -> None:
         options = ["konservativ", "aggressiv"]
