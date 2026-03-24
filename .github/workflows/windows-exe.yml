@@ -84,6 +84,7 @@ jobs:
         run: .github/scripts/windows-smoke-check.ps1
 
       - name: Upload workflow artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: offline-pdf-reader-windows-portable
@@ -95,6 +96,7 @@ jobs:
         run: .github/scripts/generate-smoketest-report.ps1
 
       - name: Upload smoke-test report artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: offline-pdf-reader-windows-smoketest-report
