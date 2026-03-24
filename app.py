@@ -3481,11 +3481,24 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_ocr_language_code(code)
         if not normalized:
             return []
-        installed = self._get_installed_ocr_languages()
-        if not installed:
-            return []
+
         requested = [part for part in normalized.split("+") if part]
-        return [part for part in requested if part not in installed]
+
+        def compute_missing(installed_langs: set[str] | None) -> list[str]:
+            if not installed_langs:
+                return []
+            return [part for part in requested if part not in installed_langs]
+
+        installed = self._get_installed_ocr_languages()
+        missing = compute_missing(installed)
+
+        # Refresh once when languages appear missing. This helps when language
+        # packs were installed while the app is already running.
+        if missing and self._installed_ocr_langs_cache is not None:
+            self._installed_ocr_langs_cache = None
+            missing = compute_missing(self._get_installed_ocr_languages())
+
+        return missing
 
     def _ocr_lang(self) -> str:
         normalized = self._normalize_ocr_language_code(self.ocr_lang)
