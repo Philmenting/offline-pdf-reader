@@ -2517,33 +2517,66 @@ class MainWindow(QMainWindow):
             hit = self.search_hits[self.current_search_hit]
             if hit.get("page") == self.current_page:
                 try:
-                    draw_rects: list[fitz.Rect] = []
+                    page_width = float(page.rect.width)
+                    page_height = float(page.rect.height)
+                    query = self.search_query.text().strip()
+
+                    # Draw all native matches on the current page as lightweight context,
+                    # then emphasize the currently selected hit.
+                    context_rects: list[fitz.Rect] = []
+                    if query:
+                        context_rects = page.search_for(query)[:200]
+
+                    selected_rects: list[fitz.Rect] = []
                     if hit.get("rect"):
                         x0, y0, x1, y1 = hit["rect"]
-                        draw_rects = [fitz.Rect(x0, y0, x1, y1)]
-                    else:
-                        draw_rects = page.search_for(self.search_query.text().strip())[:1]
+                        selected_rects = [fitz.Rect(x0, y0, x1, y1)]
+                    elif context_rects:
+                        selected_rects = [context_rects[0]]
 
-                    if draw_rects:
+                    if context_rects or selected_rects:
                         painter = QPainter(qpix)
                         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                        pen = QPen(QColor(255, 196, 0))
-                        pen.setWidth(3)
-                        painter.setPen(pen)
-                        for r in draw_rects:
-                            box = self._map_search_rect_to_view(
-                                rect=r,
-                                page_width=float(page.rect.width),
-                                page_height=float(page.rect.height),
-                                rotation=rotation,
-                                scale=self.zoom_factor,
-                                view_width=qpix.width(),
-                                view_height=qpix.height(),
-                            )
-                            if box is None:
-                                continue
-                            x, y, w, h = box
-                            painter.drawRect(x, y, w, h)
+
+                        if context_rects:
+                            ctx_pen = QPen(QColor(255, 224, 130, 220))
+                            ctx_pen.setWidth(1)
+                            painter.setPen(ctx_pen)
+                            painter.setBrush(QColor(255, 236, 179, 80))
+                            for r in context_rects:
+                                box = self._map_search_rect_to_view(
+                                    rect=r,
+                                    page_width=page_width,
+                                    page_height=page_height,
+                                    rotation=rotation,
+                                    scale=self.zoom_factor,
+                                    view_width=qpix.width(),
+                                    view_height=qpix.height(),
+                                )
+                                if box is None:
+                                    continue
+                                x, y, w, h = box
+                                painter.drawRect(x, y, w, h)
+
+                        if selected_rects:
+                            sel_pen = QPen(QColor(255, 170, 0))
+                            sel_pen.setWidth(3)
+                            painter.setPen(sel_pen)
+                            painter.setBrush(QColor(255, 196, 0, 60))
+                            for r in selected_rects:
+                                box = self._map_search_rect_to_view(
+                                    rect=r,
+                                    page_width=page_width,
+                                    page_height=page_height,
+                                    rotation=rotation,
+                                    scale=self.zoom_factor,
+                                    view_width=qpix.width(),
+                                    view_height=qpix.height(),
+                                )
+                                if box is None:
+                                    continue
+                                x, y, w, h = box
+                                painter.drawRect(x, y, w, h)
                         painter.end()
                 except Exception:
                     pass
