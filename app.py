@@ -653,37 +653,62 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
         cleaned = re.sub(r"(?i)^\s*(firma|company|vendor|lieferant|sender|absender)\s*[:\-]\s*", "", raw).strip()
         return cleaned
 
-    candidates: list[str] = []
-    for ln in lines[:30]:
+    sender_label_re = re.compile(
+        r"(?i)^\s*(?:absender|sender|von|from|firma|company|vendor|lieferant)\s*[:\-]\s*(.+)$"
+    )
+    recipient_label_re = re.compile(
+        r"(?i)^\s*(?:rechnung\s+an|invoice\s+to|kunde|empf[aä]nger|recipient|bill\s+to|ship\s+to)\s*[:\-]?.*$"
+    )
+
+    candidates: list[tuple[str, int]] = []
+
+    # Strong signal: explicit sender/vendor labels.
+    for ln in lines[:40]:
+        m_sender = sender_label_re.match(ln)
+        if not m_sender:
+            continue
+        labeled = _clean_vendor_prefix(m_sender.group(1))
+        if labeled and not is_address_like(labeled):
+            candidates.append((labeled, 14))
+
+    # General fallback: title-like lines near the top.
+    for ln in lines[:35]:
         ll = ln.lower()
         if len(ln) < 3:
             continue
         if is_address_like(ln):
             continue
+        if recipient_label_re.match(ln):
+            continue
         if any(k in ll for k in ["rechnung", "invoice", "seite", "page", "betreff", "subject", "datum", "date"]):
             continue
         if re.fullmatch(r"[\d\W_]+", ln):
             continue
-        candidates.append(_clean_vendor_prefix(ln))
+        cleaned = _clean_vendor_prefix(ln)
+        if cleaned:
+            candidates.append((cleaned, 0))
 
     vendor = ""
     if candidates:
         scored: list[tuple[int, str]] = []
-        for idx, ln in enumerate(candidates):
+        for idx, (ln, base_score) in enumerate(candidates):
             ll = ln.lower()
-            score = 0
+            score = base_score
             if any(tok in ll for tok in company_tokens):
                 score += 8
             if any(tok in ll for tok in recipient_tokens):
                 score -= 6
-            if re.search(r"\b(gbr|kg|gmbh|ag|inc|llc|ltd|corp)\b", ll):
+            if re.search(r"\b(gbr|kg|gmbh|ag|inc|llc|ltd|corp|s\.?a\.?r\.?l\.?|s\.?a\.?)\b", ll):
                 score += 3
-            if idx < 8:
+            if idx < 10:
                 score += 1
-            score += min(3, len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", ln)))
+            word_count = len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", ln))
+            score += min(4, word_count)
+            if len(ln) > 64:
+                score -= 2
             scored.append((score, ln))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
         vendor = scored[0][1]
 
     return ParsedDocInfo(date=date, vendor=vendor, doc_type=doc_type, number=number, subject=subject)
