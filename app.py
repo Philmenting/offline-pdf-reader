@@ -1019,6 +1019,7 @@ class MainWindow(QMainWindow):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
 
         btn_open.setToolTip("PDF öffnen")
+        btn_open.setAccessibleName("PDF öffnen")
         btn_first.setToolTip("Erste Seite")
         btn_first.setAccessibleName("Erste Seite")
         btn_prev.setToolTip("Vorherige Seite")
@@ -1076,6 +1077,14 @@ class MainWindow(QMainWindow):
         btn_rotate_reset.clicked.connect(self.reset_rotation)
         self.btn_undo.clicked.connect(self.undo_last_change)
         self.btn_redo.clicked.connect(self.redo_last_change)
+        btn_extract.setAccessibleName("Text auf aktueller Seite erkennen")
+        btn_extract_all.setAccessibleName("Text auf allen Seiten erkennen")
+        btn_saveas.setAccessibleName("PDF speichern")
+        btn_merge.setAccessibleName("PDFs zusammenführen")
+        btn_split.setAccessibleName("Seiten extrahieren")
+        btn_reorder.setAccessibleName("Seiten sortieren")
+        btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
+
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.recognize_text_all_pages_and_suggest)
         btn_auto_ocr_name.clicked.connect(self.ocr_and_suggest_filename)
