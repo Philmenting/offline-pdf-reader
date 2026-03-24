@@ -3802,7 +3802,12 @@ class MainWindow(QMainWindow):
             parts.append("Nummer")
         return "+".join(parts) if parts else "Fallback"
 
-    def _show_batch_rename_preview(self, proposals: list[BatchRenameProposal], selected_mode: str) -> bool:
+    def _show_batch_rename_preview(
+        self,
+        proposals: list[BatchRenameProposal],
+        selected_mode: str,
+        skipped_stats: dict[str, int] | None = None,
+    ) -> bool:
         dlg = QDialog(self)
         dlg.setWindowTitle("Batch-Rename Vorschau (Dry-Run)")
         dlg.resize(1080, 620)
@@ -3818,9 +3823,21 @@ class MainWindow(QMainWindow):
                 unchanged += 1
         actionable = len(proposals) - unchanged
 
+        skipped_line = ""
+        if skipped_stats:
+            skipped_total = sum(skipped_stats.values())
+            if skipped_total:
+                skipped_line = (
+                    f"Übersprungen vor Vorschau: {skipped_total} "
+                    f"(Modus={skipped_stats.get('mode_filter', 0)}, "
+                    f"Safe={skipped_stats.get('safe_filter', 0)}, "
+                    f"Konflikt={skipped_stats.get('conflict_skip', 0)})\n"
+                )
+
         summary = QLabel(
             f"Modus: {selected_mode} | Einträge: {len(proposals)} | Umbenennbar: {actionable} | Unverändert: {unchanged}\n"
             f"Confidence: hoch={confidence_counts['hoch']}, mittel={confidence_counts['mittel']}, niedrig={confidence_counts['niedrig']}\n"
+            f"{skipped_line}"
             "Legende: grün=hoch, gelb=mittel, rot=niedrig. Klick auf Spaltenkopf zum Sortieren.\n"
             "Prüfe Altname → Neuer Name. Erst mit 'Umbenennen' wird geschrieben."
         )
@@ -4056,7 +4073,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._show_batch_rename_preview(proposals, selected_mode):
+        if not self._show_batch_rename_preview(proposals, selected_mode, skipped_stats=skipped_stats):
             return
 
         renamed = 0

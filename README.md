@@ -53,7 +53,7 @@ python app.py
 - Save-as with suggested name
 - PDF merge, page extraction, page reordering
 - Seiten im Thumbnail-Bereich per Delete-Taste oder Kontextmenü löschen (inkl. Mehrfach-Confirm)
-- Batch-Rename für Ordner mit Dry-Run-Tabellenvorschau (Status/Altname/Neuer Name/Confidence/Quelle/Grund), farblicher Confidence-Markierung, standardmäßiger Confidence-Sortierung, sortierbaren Spalten, Konflikt-Policy (`(1)`, `(2)` oder überspringen), optional „nur sichere Vorschläge“ und Skip-Statistik im Ergebnis/Log
+- Batch-Rename für Ordner mit Dry-Run-Tabellenvorschau (Status/Altname/Neuer Name/Confidence/Quelle/Grund), farblicher Confidence-Markierung, standardmäßiger Confidence-Sortierung, sortierbaren Spalten, Konflikt-Policy (`(1)`, `(2)` oder überspringen), optional „nur sichere Vorschläge“ und Skip-Statistik (bereits in Vorschau + Ergebnis/Log)
 - Export (TXT/JSON/CSV) pro Datei und als Ordner-Aggregat auf gemeinsamem Datenmodell
 - Remove empty/blank pages into a new PDF
 
