@@ -97,6 +97,17 @@ jobs:
 "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
 
+      - name: Generate smoke-test report template for this run
+        shell: powershell
+        run: .github/scripts/generate-smoketest-report.ps1
+
+      - name: Upload smoke-test report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-pdf-reader-windows-smoketest-report
+          path: WINDOWS_SMOKETEST_RUN.md
+          if-no-files-found: error
+
       - name: Publish/overwrite nightly release asset
         uses: softprops/action-gh-release@v2
         with:
