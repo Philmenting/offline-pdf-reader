@@ -1428,6 +1428,16 @@ class MainWindow(QMainWindow):
         act_remove_empty.triggered.connect(self.remove_empty_pages_to_new_pdf)
         menu_tools.addAction(act_remove_empty)
 
+        act_rotate_left = QAction("Seite links drehen", self)
+        act_rotate_left.setShortcut("Ctrl+Alt+Left")
+        act_rotate_left.triggered.connect(self.rotate_left)
+        menu_tools.addAction(act_rotate_left)
+
+        act_rotate_right = QAction("Seite rechts drehen", self)
+        act_rotate_right.setShortcut("Ctrl+Alt+Right")
+        act_rotate_right.triggered.connect(self.rotate_right)
+        menu_tools.addAction(act_rotate_right)
+
         act_delete_pages = QAction("Ausgewählte Seiten löschen", self)
         act_delete_pages.setShortcut("Delete")
         act_delete_pages.triggered.connect(self.delete_selected_pages)
@@ -1470,6 +1480,8 @@ class MainWindow(QMainWindow):
             act_merge,
             act_split_chunks,
             act_remove_empty,
+            act_rotate_left,
+            act_rotate_right,
             act_delete_pages,
             act_export_current,
             act_export_folder,
