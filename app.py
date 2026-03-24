@@ -194,6 +194,8 @@ def sanitize_filename(name: str) -> str:
         return "Dokument"
 
     # Avoid Windows reserved device names (CON, PRN, AUX, NUL, COM1..9, LPT1..9).
+    # Windows also rejects these names when used as the *stem* before an extension
+    # (e.g. "CON.pdf", "LPT1.txt").
     reserved = {
         "CON",
         "PRN",
@@ -218,7 +220,8 @@ def sanitize_filename(name: str) -> str:
         "LPT8",
         "LPT9",
     }
-    if name.upper() in reserved:
+    stem = name.split(".", 1)[0].upper()
+    if stem in reserved:
         return f"{name}_"
     return name
 
