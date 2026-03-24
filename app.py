@@ -4079,6 +4079,7 @@ class MainWindow(QMainWindow):
         if not self._show_batch_rename_preview(proposals, selected_mode, skipped_stats=skipped_stats):
             return
 
+        unchanged_count = sum(1 for p in proposals if p.src == p.dst)
         renamed = 0
         rename_errors: list[str] = []
         renamed_pairs: list[tuple[str, str, str]] = []
@@ -4093,7 +4094,11 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 rename_errors.append(f"{src.name} -> {dst.name}: {e}")
 
-        summary = f"Stapel-Umbenennen abgeschlossen: {renamed} Datei(en) umbenannt."
+        summary = (
+            f"Stapel-Umbenennen abgeschlossen: {renamed} Datei(en) umbenannt."
+            f"\nUnverändert belassen: {unchanged_count}"
+            f"\nIn Vorschau berücksichtigt: {len(proposals)}"
+        )
         skipped_total = sum(skipped_stats.values())
         if skipped_total:
             summary += (
@@ -4164,10 +4169,13 @@ class MainWindow(QMainWindow):
                                 "status": "summary",
                                 "old": "",
                                 "new": "",
-                                "reason": "skipped_counts",
+                                "reason": "run_counts",
                                 "confidence": "",
                                 "source": "",
                                 "detail": (
+                                    f"preview={len(proposals)};"
+                                    f"renamed={renamed};"
+                                    f"unchanged={unchanged_count};"
                                     f"mode_filter={skipped_stats['mode_filter']};"
                                     f"safe_filter={skipped_stats['safe_filter']};"
                                     f"conflict_skip={skipped_stats['conflict_skip']}"
@@ -4190,6 +4198,8 @@ class MainWindow(QMainWindow):
                             lines_out.append(f"Konfliktregel: {selected_policy}")
                             lines_out.append(f"Nur sichere Vorschläge: {'Ja' if safe_only else 'Nein'}")
                             lines_out.append(f"Umbenannt: {renamed}")
+                            lines_out.append(f"Unverändert: {unchanged_count}")
+                            lines_out.append(f"In Vorschau: {len(proposals)}")
                             lines_out.append(
                                 "Übersprungen: "
                                 f"Modus-Filter={skipped_stats['mode_filter']}, "
