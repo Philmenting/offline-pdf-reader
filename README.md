@@ -84,7 +84,7 @@ python3 validate_helpers.py
 python3 validate_parser_regression.py
 ```
 
-Hinweis: Falls lokale Runtime-Abhängigkeiten fehlen (z. B. `fitz`/PyMuPDF), melden `validate_helpers.py` und `validate_parser_regression.py` jeweils `SKIPPED` statt hart zu fehlschlagen.
+Hinweis: Falls lokale Runtime-Abhängigkeiten fehlen (z. B. `fitz`/PyMuPDF), melden `validate_helpers.py` und `validate_parser_regression.py` lokal jeweils `SKIPPED` statt hart zu fehlschlagen. In CI laufen die Checks im Strict-Mode (`VALIDATION_STRICT=1`) und schlagen bei fehlenden Abhängigkeiten fehl.
 
 ## Manuelle Test-Notizen
 - Suche: Begriff eingeben, Trefferliste prüfen, mit Treffer ◀/▶ navigieren, Sprung und Hervorhebung prüfen.

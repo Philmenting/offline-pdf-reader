@@ -1,7 +1,14 @@
+import os
+
+STRICT = os.environ.get("VALIDATION_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     from app import build_export_record, suggest_filename_from_text
 except (ModuleNotFoundError, ImportError) as exc:
     missing = getattr(exc, "name", "") or str(exc)
+    if STRICT:
+        print(f"validate_helpers: FAILED (missing dependency in strict mode: {missing})")
+        raise SystemExit(1)
     print(f"validate_helpers: SKIPPED (missing dependency: {missing})")
     raise SystemExit(0)
 
