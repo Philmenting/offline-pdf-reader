@@ -3765,6 +3765,12 @@ class MainWindow(QMainWindow):
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
 
+        confidence_row_colors = {
+            "hoch": QColor(232, 245, 233),
+            "mittel": QColor(255, 248, 225),
+            "niedrig": QColor(255, 235, 238),
+        }
+
         for row, proposal in enumerate(proposals):
             values = [
                 proposal.src.name,
@@ -3773,8 +3779,11 @@ class MainWindow(QMainWindow):
                 proposal.source,
                 proposal.reason,
             ]
+            row_color = confidence_row_colors.get(proposal.confidence.lower())
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
+                if row_color is not None:
+                    item.setBackground(row_color)
                 table.setItem(row, col, item)
 
         hdr = table.horizontalHeader()
@@ -3993,16 +4002,34 @@ class MainWindow(QMainWindow):
                         out = Path(log_path)
                         if log_fmt == "CSV":
                             rows: list[dict[str, str]] = []
+                            proposal_meta = {
+                                p.src.name: {"confidence": p.confidence, "source": p.source, "reason": p.reason}
+                                for p in proposals
+                            }
                             for old, new, reason in renamed_pairs:
-                                rows.append({"status": "renamed", "old": old, "new": new, "reason": reason, "detail": ""})
+                                meta = proposal_meta.get(old, {})
+                                rows.append(
+                                    {
+                                        "status": "renamed",
+                                        "old": old,
+                                        "new": new,
+                                        "reason": reason,
+                                        "confidence": str(meta.get("confidence", "")),
+                                        "source": str(meta.get("source", "")),
+                                        "detail": "",
+                                    }
+                                )
                             for err in analysis_errors:
-                                rows.append({"status": "analysis_error", "old": "", "new": "", "reason": "", "detail": err})
+                                rows.append({"status": "analysis_error", "old": "", "new": "", "reason": "", "confidence": "", "source": "", "detail": err})
                             for err in rename_errors:
-                                rows.append({"status": "rename_error", "old": "", "new": "", "reason": "", "detail": err})
+                                rows.append({"status": "rename_error", "old": "", "new": "", "reason": "", "confidence": "", "source": "", "detail": err})
                             if out.suffix.lower() != ".csv":
                                 out = out.with_suffix(".csv")
                             with out.open("w", encoding="utf-8", newline="") as f:
-                                writer = csv.DictWriter(f, fieldnames=["status", "old", "new", "reason", "detail"])
+                                writer = csv.DictWriter(
+                                    f,
+                                    fieldnames=["status", "old", "new", "reason", "confidence", "source", "detail"],
+                                )
                                 writer.writeheader()
                                 writer.writerows(rows)
                         else:
