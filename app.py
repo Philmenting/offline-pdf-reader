@@ -4196,8 +4196,13 @@ class MainWindow(QMainWindow):
 
     def merge_pdfs(self) -> None:
         file_names, _ = QFileDialog.getOpenFileNames(self, "PDFs zum Mergen auswählen", "", "PDF-Dateien (*.pdf)")
-        if not file_names or len(file_names) < 2:
-            QMessageBox.information(self, "Hinweis", "Bitte mindestens zwei PDFs auswählen.")
+        if not file_names:
+            return
+
+        unique_file_names = list(dict.fromkeys(file_names))
+        skipped_duplicates = len(file_names) - len(unique_file_names)
+        if len(unique_file_names) < 2:
+            QMessageBox.information(self, "Hinweis", "Bitte mindestens zwei unterschiedliche PDFs auswählen.")
             return
 
         out_path, _ = QFileDialog.getSaveFileName(self, "Zusammengeführte PDF speichern", "zusammengefuehrt.pdf", "PDF-Dateien (*.pdf)")
@@ -4207,7 +4212,7 @@ class MainWindow(QMainWindow):
 
         merged = fitz.open()
         try:
-            for path in file_names:
+            for path in unique_file_names:
                 src = None
                 try:
                     src = fitz.open(path)
@@ -4216,7 +4221,10 @@ class MainWindow(QMainWindow):
                     if src is not None:
                         src.close()
             merged.save(out_path)
-            QMessageBox.information(self, "Erfolg", f"Zusammengeführte PDF gespeichert:\n{out_path}")
+            duplicate_note = ""
+            if skipped_duplicates > 0:
+                duplicate_note = f"\n\nHinweis: {skipped_duplicates} doppelte Auswahl(en) wurden ignoriert."
+            QMessageBox.information(self, "Erfolg", f"Zusammengeführte PDF gespeichert:\n{out_path}{duplicate_note}")
             self.statusBar().showMessage(f"Zusammenführung erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Zusammenführung fehlgeschlagen:\n{e}")
