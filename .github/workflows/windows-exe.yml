@@ -44,11 +44,9 @@ jobs:
         shell: powershell
         run: |
           if ($env:GITHUB_STEP_SUMMARY) {
-            @"
-## Validation checks
-- ✅ validate_helpers.py
-- ✅ validate_parser_regression.py
-"@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Validation checks"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- ✅ validate_helpers.py"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- ✅ validate_parser_regression.py"
           }
 
       - name: Install Tesseract (bundle for portable OCR)
@@ -92,11 +90,9 @@ jobs:
         shell: powershell
         run: |
           if ($env:GITHUB_STEP_SUMMARY) {
-            @"
-## Artifact
-- 📦 Name: `offline-pdf-reader-windows-portable`
-- 📁 File: `offline-pdf-reader-windows-portable.zip`
-"@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Artifact"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- 📦 Name: offline-pdf-reader-windows-portable"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- 📁 File: offline-pdf-reader-windows-portable.zip"
           }
 
       - name: Generate smoke-test report template for this run
