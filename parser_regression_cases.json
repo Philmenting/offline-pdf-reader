@@ -44,5 +44,15 @@
       "vendor_contains": "Pixel",
       "number_contains": "RE2026"
     }
+  },
+  {
+    "name": "date_label_ocr_daturn",
+    "text": "Rechnung\nDaturn: 24.03.2026\nAbsender: Nordlicht GmbH\nRechnungsnummer: RG-2026-99",
+    "expect": {
+      "doc_type": "Rechnung",
+      "date": "2026-03-24",
+      "vendor_contains": "Nordlicht",
+      "number_contains": "RG-2026-99"
+    }
   }
 ]

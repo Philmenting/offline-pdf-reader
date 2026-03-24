@@ -361,8 +361,9 @@ def parse_doc_info(text: str) -> ParsedDocInfo:
 
     # Prefer explicit date labels (often more accurate than first free date in OCR text).
     date_label_pattern = (
-        r"(?:datum|date|rechnungs\s*[-_]?\s*datum|beleg\s*[-_]?\s*datum|"
-        r"ausstellungs\s*[-_]?\s*datum|leistungs\s*[-_]?\s*datum|"
+        r"(?:dat(?:um|urn)|date|"
+        r"rechnungs\s*[-_]?\s*dat(?:um|urn)|beleg\s*[-_]?\s*dat(?:um|urn)|"
+        r"ausstellungs\s*[-_]?\s*dat(?:um|urn)|leistungs\s*[-_]?\s*dat(?:um|urn)|"
         r"invoice\s+date|document\s+date|issue\s+date)"
     )
     date_label_re = re.compile(rf"(?i)^{date_label_pattern}\s*[:#-]?\s*(.*)$")
