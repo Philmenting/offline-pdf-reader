@@ -2865,6 +2865,23 @@ class MainWindow(QMainWindow):
             lines.append(f"- Weitere Fehlerarten: {len(ranked) - top}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_ocr_run_summary(total: int, ok: int, failed: int, canceled: bool, processed: int) -> str:
+        state = "abgebrochen" if canceled else "abgeschlossen"
+        success_rate = (ok / processed * 100.0) if processed > 0 else 0.0
+        return (
+            f"OCR {state}: {ok}/{processed} Seiten erkannt"
+            f" ({success_rate:.1f}%), Fehler: {failed}, Gesamtseiten: {total}."
+        )
+
+    @staticmethod
+    def _build_ocr_followup_hint(failed: int, canceled: bool) -> str:
+        if canceled:
+            return "Hinweis: Du kannst den Lauf erneut starten oder nur fehlgeschlagene Seiten erneut versuchen."
+        if failed > 0:
+            return "Nächster Schritt: 'OCR-Fehler erneut' ausführen, um nur problematische Seiten zu wiederholen."
+        return "Nächster Schritt: Dateinamen-Vorschlag prüfen und ggf. direkt speichern/exportieren."
+
     def recognize_text_all_pages_and_suggest(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
@@ -2938,18 +2955,23 @@ class MainWindow(QMainWindow):
         self.show_extracted_text_window()
         self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
         self.ocr_feedback.setText(self._build_ocr_feedback(combined_text, all_low_conf_tokens, all_low_conf_lines))
+        run_summary = self._build_ocr_run_summary(
+            total=total,
+            ok=len(all_text_parts),
+            failed=len(ocr_failed_pages),
+            canceled=canceled,
+            processed=processed_pages if canceled else total,
+        )
+        followup_hint = self._build_ocr_followup_hint(len(ocr_failed_pages), canceled)
+        self.statusBar().showMessage(run_summary)
+
         if canceled:
-            self.statusBar().showMessage(
-                f"OCR abgebrochen nach {processed_pages}/{total} Seiten (OK: {len(all_text_parts)} | Fehler: {len(ocr_failed_pages)})."
-            )
             QMessageBox.information(
                 self,
                 "Abgebrochen (Teilergebnis)",
-                "Texterkennung wurde abgebrochen. Das bisherige Teilergebnis wurde übernommen.",
-            )
-        else:
-            self.statusBar().showMessage(
-                f"Text auf {total} Seiten erkannt (OK: {len(all_text_parts)} | Fehler: {len(ocr_failed_pages)})."
+                "Texterkennung wurde abgebrochen. Das bisherige Teilergebnis wurde übernommen."
+                f"\n\n{run_summary}"
+                f"\n{followup_hint}",
             )
 
         if ocr_failed_pages:
@@ -2961,7 +2983,14 @@ class MainWindow(QMainWindow):
                 "Texterkennung wurde fortgesetzt, aber auf einigen Seiten ist ein Fehler aufgetreten."
                 f"\n\nSeiten: {pages}"
                 f"\nFehleranzahl: {len(ocr_failed_pages)}"
-                f"\n\nZusammenfassung:\n{summary}",
+                f"\n\nZusammenfassung:\n{summary}"
+                f"\n\n{followup_hint}",
+            )
+        elif not canceled:
+            QMessageBox.information(
+                self,
+                "OCR abgeschlossen",
+                f"{run_summary}\n{followup_hint}",
             )
 
     def retry_failed_ocr_pages(self) -> None:
@@ -3022,6 +3051,18 @@ class MainWindow(QMainWindow):
             self.show_extracted_text_window()
             self.suggested_name.setText(self._suggest_name_from_extracted_text_or_first_page(combined_text))
 
+        retried_total = len(pages_to_retry)
+        retried_ok = retried_total - len(remaining_failed)
+        retry_summary = self._build_ocr_run_summary(
+            total=retried_total,
+            ok=retried_ok,
+            failed=len(remaining_failed),
+            canceled=canceled,
+            processed=retried_total if not canceled else max(0, retried_total - len(remaining_failed)),
+        )
+        followup_hint = self._build_ocr_followup_hint(len(remaining_failed), canceled)
+        self.statusBar().showMessage(retry_summary)
+
         if canceled:
             preview = self._format_page_list_preview(remaining_failed)
             QMessageBox.information(
@@ -3029,7 +3070,9 @@ class MainWindow(QMainWindow):
                 "OCR erneut abgebrochen",
                 "Erneuter OCR-Versuch wurde abgebrochen. Nicht verarbeitete Seiten bleiben als fehlgeschlagen markiert."
                 f"\n\nOffene Seiten: {preview}"
-                f"\nAnzahl: {len(remaining_failed)}",
+                f"\nAnzahl: {len(remaining_failed)}"
+                f"\n\n{retry_summary}"
+                f"\n{followup_hint}",
             )
         elif remaining_failed:
             preview = self._format_page_list_preview(remaining_failed)
@@ -3040,10 +3083,11 @@ class MainWindow(QMainWindow):
                 "Einige Seiten konnten weiterhin nicht erkannt werden."
                 f"\n\nSeiten: {preview}"
                 f"\nAnzahl: {len(remaining_failed)}"
-                f"\n\nZusammenfassung:\n{summary}",
+                f"\n\nZusammenfassung:\n{summary}"
+                f"\n\n{followup_hint}",
             )
         else:
-            QMessageBox.information(self, "Fertig", "Erneuter OCR-Versuch abgeschlossen. Alle vorher fehlgeschlagenen Seiten wurden erkannt.")
+            QMessageBox.information(self, "Fertig", f"{retry_summary}\n{followup_hint}")
 
     def _is_page_likely_empty(self, page: fitz.Page) -> bool:
         text = page.get_text("text")
