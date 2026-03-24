@@ -67,7 +67,7 @@ python app.py
    - `offline-pdf-reader-windows-smoketest-report` (vorausgefüllter Testreport)
 6. ZIP entpacken und `offline-pdf-reader.exe` im Ordner `offline-pdf-reader/` starten
 
-Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine separate Installation nötig.
+Hinweis: Tesseract wird im Windows-Build mitgebündelt. Fehlende Sprachdaten (`deu`/`eng`) werden im CI-Build automatisch ergänzt. Für OCR ist daher keine separate Installation nötig.
 
 ### 5-Punkte Smoke-Testprotokoll (Windows)
 1. **Start**: App startet ohne Fehlermeldung; ein PDF lässt sich öffnen.
