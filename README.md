@@ -61,7 +61,7 @@ python app.py
 1. Öffne: `Actions` Tab im Repo
 2. Wähle Workflow **Build Windows EXE**
 3. Klicke **Run workflow** (führt vor dem Build auch `validate_helpers.py` + `validate_parser_regression.py` aus)
-4. Prüfe im Workflow-Run die **Validation checks** + **Windows smoke checks** im *Step Summary*
+4. Prüfe im Workflow-Run die **Validation checks** + **Windows smoke checks** im *Step Summary* (inkl. `tessdata` mit `deu`/`eng`)
 5. Lade unter **Artifacts**:
    - `offline-pdf-reader-windows-portable` (ZIP)
    - `offline-pdf-reader-windows-smoketest-report` (vorausgefüllter Testreport)
