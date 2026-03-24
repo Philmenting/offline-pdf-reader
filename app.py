@@ -4039,7 +4039,21 @@ class MainWindow(QMainWindow):
         progress.setValue(len(files))
 
         if not proposals:
-            QMessageBox.information(self, "Hinweis", "Für den gewählten Modus gibt es keine umbenennbaren Dateien.")
+            skipped_total = sum(skipped_stats.values())
+            details = (
+                f"\nÜbersprungen gesamt: {skipped_total}"
+                f" (Modus-Filter: {skipped_stats['mode_filter']},"
+                f" Safe-Filter: {skipped_stats['safe_filter']},"
+                f" Konflikt-Überspringen: {skipped_stats['conflict_skip']})"
+            ) if skipped_total else ""
+            analysis_hint = f"\nAnalysefehler: {len(analysis_errors)}" if analysis_errors else ""
+            QMessageBox.information(
+                self,
+                "Hinweis",
+                "Für den gewählten Modus gibt es keine umbenennbaren Dateien."
+                f"{details}"
+                f"{analysis_hint}",
+            )
             return
 
         if not self._show_batch_rename_preview(proposals, selected_mode):
