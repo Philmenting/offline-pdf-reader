@@ -74,6 +74,8 @@ Hinweis: Tesseract wird im Windows-Build mitgebündelt. Für OCR ist daher keine
 4. **Rename**: Batch-Rename-Vorschau zeigt Tabelle mit Confidence/Quelle/Grund; Dry-Run abbrechen und einmal bestätigen.
 5. **Export**: TXT/JSON/CSV jeweils einmal erzeugen (Einzeldatei oder Ordner-Aggregat).
 
+Für echte Run-Dokumentation: siehe `WINDOWS_SMOKETEST.md` (ausfüllbares Report-Template).
+
 ## Lightweight validation
 ```bash
 python3 validate_helpers.py
