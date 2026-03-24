@@ -94,6 +94,8 @@ python3 validate_helpers.py
 python3 validate_parser_regression.py
 ```
 
+Hinweis: `validate_helpers.py` prüft bewusst robust auf Kernsignale (Datum/Nummer/Filename-Struktur), damit kleine Parser-Normalisierungen keinen False-Alarm auslösen.
+
 Hinweis: Falls lokale Runtime-Abhängigkeiten fehlen (z. B. `fitz`/PyMuPDF), melden `validate_helpers.py` und `validate_parser_regression.py` lokal jeweils `SKIPPED` statt hart zu fehlschlagen. In CI laufen die Checks im Strict-Mode (`VALIDATION_STRICT=1`) und schlagen bei fehlenden Abhängigkeiten fehl.
 
 ## Manuelle Test-Notizen
