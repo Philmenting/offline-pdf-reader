@@ -1233,7 +1233,7 @@ class MainWindow(QMainWindow):
         act_reorder.triggered.connect(self.reorder_pages_to_new_pdf)
         menu_tools.addAction(act_reorder)
 
-        act_merge = QAction("PDFs mergen", self)
+        act_merge = QAction("PDFs zusammenführen", self)
         act_merge.triggered.connect(self.merge_pdfs)
         menu_tools.addAction(act_merge)
 
@@ -3642,7 +3642,7 @@ class MainWindow(QMainWindow):
                     if src is not None:
                         src.close()
             merged.save(out_path)
-            QMessageBox.information(self, "Erfolg", f"Gemergte PDF gespeichert:\n{out_path}")
+            QMessageBox.information(self, "Erfolg", f"Zusammengeführte PDF gespeichert:\n{out_path}")
             self.statusBar().showMessage(f"Zusammenführung erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Zusammenführung fehlgeschlagen:\n{e}")
