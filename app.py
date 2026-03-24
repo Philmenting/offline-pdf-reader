@@ -3837,7 +3837,11 @@ class MainWindow(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dlg)
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok_button:
-            ok_button.setText("Umbenennen")
+            if actionable > 0:
+                ok_button.setText("Umbenennen")
+            else:
+                ok_button.setText("Nichts umzubenennen")
+                ok_button.setEnabled(False)
         cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         if cancel_button:
             cancel_button.setText("Abbrechen")
