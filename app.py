@@ -3790,6 +3790,7 @@ class MainWindow(QMainWindow):
         summary = QLabel(
             f"Modus: {selected_mode} | Einträge: {len(proposals)} | Umbenennbar: {actionable} | Unverändert: {unchanged}\n"
             f"Confidence: hoch={confidence_counts['hoch']}, mittel={confidence_counts['mittel']}, niedrig={confidence_counts['niedrig']}\n"
+            "Legende: grün=hoch, gelb=mittel, rot=niedrig. Klick auf Spaltenkopf zum Sortieren.\n"
             "Prüfe Altname → Neuer Name. Erst mit 'Umbenennen' wird geschrieben."
         )
         layout.addWidget(summary)
@@ -3800,6 +3801,7 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
+        table.setSortingEnabled(True)
 
         confidence_row_colors = {
             "hoch": QColor(232, 245, 233),
@@ -3832,6 +3834,7 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        table.sortItems(3, Qt.SortOrder.AscendingOrder)
         layout.addWidget(table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dlg)
