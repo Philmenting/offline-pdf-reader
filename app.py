@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
+    QFormLayout,
     QWidget,
     QHBoxLayout,
 )
@@ -1545,6 +1546,24 @@ class MainWindow(QMainWindow):
         act_images_to_pdf.triggered.connect(self.convert_images_to_pdf)
         menu_tools.addAction(act_images_to_pdf)
 
+        act_export_images = QAction("PDF-Seiten als Bilder exportieren …", self)
+        act_export_images.triggered.connect(self.export_pages_as_images)
+        menu_tools.addAction(act_export_images)
+
+        menu_tools.addSeparator()
+        act_metadata = QAction("PDF-Metadaten bearbeiten …", self)
+        act_metadata.triggered.connect(self.edit_pdf_metadata)
+        menu_tools.addAction(act_metadata)
+
+        menu_tools.addSeparator()
+        act_encrypt = QAction("PDF verschlüsseln …", self)
+        act_encrypt.triggered.connect(self.encrypt_pdf)
+        menu_tools.addAction(act_encrypt)
+
+        act_decrypt = QAction("Verschlüsselung entfernen …", self)
+        act_decrypt.triggered.connect(self.remove_pdf_encryption)
+        menu_tools.addAction(act_decrypt)
+
         menu_export = self.menuBar().addMenu("Exportieren")
         act_export_current = QAction("Aktuelle Datei exportieren …", self)
         act_export_current.triggered.connect(self.export_current_file)
@@ -2964,6 +2983,17 @@ class MainWindow(QMainWindow):
             self.doc = None
             return
 
+        if self.doc.needs_pass:
+            pw, ok = QInputDialog.getText(
+                self, "Passwort erforderlich", "Dieses PDF ist passwortgeschützt:", QLineEdit.EchoMode.Password
+            )
+            if not ok or not self.doc.authenticate(pw):
+                QMessageBox.critical(self, "Fehler", "Falsches Passwort oder Abgebrochen. PDF wird nicht geöffnet.")
+                self.doc.close()
+                self.doc = None
+                self.pdf_path = None
+                return
+
         self.current_page = 0
         self.zoom_factor = 1.35
         self.page_rotations.clear()
@@ -3833,6 +3863,184 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._open_pdf_path(out_path)
+
+    def export_pages_as_images(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Seiten exportieren")
+        msg.setText("Welche Seiten sollen als Bilder exportiert werden?")
+        btn_current = msg.addButton("Aktuelle Seite", QMessageBox.ButtonRole.YesRole)
+        btn_all = msg.addButton("Alle Seiten", QMessageBox.ButtonRole.NoRole)
+        msg.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked is None or (clicked is not btn_current and clicked is not btn_all):
+            return
+        export_all = clicked is btn_all
+
+        fmt, ok = QInputDialog.getItem(
+            self, "Format wählen", "Bildformat:", ["PNG", "JPEG"], 0, False
+        )
+        if not ok:
+            return
+        ext = fmt.lower()
+        filter_str = f"{'PNG' if fmt == 'PNG' else 'JPEG'}-Dateien (*.{ext})"
+
+        if export_all:
+            out_dir = QFileDialog.getExistingDirectory(self, "Ausgabeordner wählen")
+            if not out_dir:
+                return
+            out_dir = Path(out_dir)
+            total = len(self.doc)
+            progress = QProgressDialog("Exportiere Seiten …", "Abbrechen", 0, total, self)
+            progress.setWindowTitle("Bitte warten")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            errors: list[str] = []
+            stem = self.pdf_path.stem
+            for idx in range(total):
+                progress.setValue(idx)
+                progress.setLabelText(f"Seite {idx + 1}/{total} …")
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    return
+                try:
+                    rotation = self.page_rotations.get(idx, 0)
+                    matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+                    pix = self.doc[idx].get_pixmap(matrix=matrix, alpha=False)
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    out_file = out_dir / f"{stem}_Seite{idx + 1:04d}.{ext}"
+                    img.save(str(out_file), fmt)
+                except Exception as e:
+                    errors.append(f"Seite {idx + 1}: {e}")
+            progress.setValue(total)
+            summary = f"{total - len(errors)} von {total} Seiten exportiert nach:\n{out_dir}"
+            if errors:
+                summary += f"\n\nFehler bei {len(errors)} Seite(n):\n" + "\n".join(errors)
+            QMessageBox.information(self, "Fertig", summary)
+        else:
+            idx = self.current_page
+            stem = self.pdf_path.stem
+            default_name = str(self.pdf_path.parent / f"{stem}_Seite{idx + 1:04d}.{ext}")
+            out_path, _ = QFileDialog.getSaveFileName(self, "Bild speichern unter", default_name, filter_str)
+            if not out_path:
+                return
+            try:
+                rotation = self.page_rotations.get(idx, 0)
+                matrix = fitz.Matrix(2.0, 2.0).prerotate(rotation)
+                pix = self.doc[idx].get_pixmap(matrix=matrix, alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                img.save(out_path, fmt)
+                QMessageBox.information(self, "Fertig", f"Bild gespeichert:\n{out_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"Export fehlgeschlagen:\n{e}")
+
+    def edit_pdf_metadata(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        meta = dict(self.doc.metadata or {})
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("PDF-Metadaten bearbeiten")
+        dlg.setMinimumWidth(480)
+        layout = QVBoxLayout(dlg)
+
+        form = QFormLayout()
+        fields: dict[str, QLineEdit] = {}
+        for key, label in [
+            ("title", "Titel"),
+            ("author", "Autor"),
+            ("subject", "Betreff"),
+            ("keywords", "Stichwörter"),
+            ("creator", "Ersteller"),
+        ]:
+            edit = QLineEdit(meta.get(key, ""))
+            form.addRow(label + ":", edit)
+            fields[key] = edit
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        for key, edit in fields.items():
+            meta[key] = edit.text().strip()
+
+        try:
+            self.doc.set_metadata(meta)
+            self._set_dirty(True)
+            self.statusBar().showMessage("Metadaten aktualisiert (nicht gespeichert)")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht gesetzt werden:\n{e}")
+
+    def encrypt_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        pw, ok = QInputDialog.getText(
+            self, "PDF verschlüsseln", "Passwort eingeben:", QLineEdit.EchoMode.Password
+        )
+        if not ok or not pw:
+            return
+
+        pw2, ok2 = QInputDialog.getText(
+            self, "PDF verschlüsseln", "Passwort bestätigen:", QLineEdit.EchoMode.Password
+        )
+        if not ok2 or pw != pw2:
+            QMessageBox.warning(self, "Fehler", "Passwörter stimmen nicht überein.")
+            return
+
+        default_name = str(self.pdf_path.with_stem(self.pdf_path.stem + "_geschützt"))
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Verschlüsselte PDF speichern unter", default_name, "PDF-Dateien (*.pdf)"
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".pdf"):
+            out_path += ".pdf"
+
+        try:
+            self.doc.save(
+                out_path,
+                encryption=fitz.PDF_ENCRYPT_AES_256,
+                user_pw=pw,
+                owner_pw=pw,
+                garbage=4,
+                deflate=True,
+            )
+            QMessageBox.information(self, "Fertig", f"Verschlüsselte PDF gespeichert:\n{out_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Verschlüsselung fehlgeschlagen:\n{e}")
+
+    def remove_pdf_encryption(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        default_name = str(self.pdf_path.with_stem(self.pdf_path.stem + "_entschlüsselt"))
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Entschlüsselte PDF speichern unter", default_name, "PDF-Dateien (*.pdf)"
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".pdf"):
+            out_path += ".pdf"
+
+        try:
+            self.doc.save(out_path, encryption=fitz.PDF_ENCRYPT_NONE, garbage=4, deflate=True)
+            QMessageBox.information(self, "Fertig", f"Entschlüsselte PDF gespeichert:\n{out_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Entschlüsselung fehlgeschlagen:\n{e}")
 
     def _suggest_name_from_first_page(self) -> str:
         if not self.doc or len(self.doc) == 0:
