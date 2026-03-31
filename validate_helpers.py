@@ -3,7 +3,7 @@ import os
 STRICT = os.environ.get("VALIDATION_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 try:
-    from app import build_export_record, suggest_filename_from_text
+    from parsing import build_export_record, suggest_filename_from_text
 except (ModuleNotFoundError, ImportError) as exc:
     missing = getattr(exc, "name", "") or str(exc)
     if STRICT:

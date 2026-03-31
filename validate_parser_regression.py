@@ -6,7 +6,7 @@ from pathlib import Path
 STRICT = os.environ.get("VALIDATION_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 try:
-    from app import parse_doc_info, suggest_filename_from_text
+    from parsing import parse_doc_info, suggest_filename_from_text
 except (ModuleNotFoundError, ImportError) as exc:
     missing = getattr(exc, "name", "") or str(exc)
     if STRICT:
