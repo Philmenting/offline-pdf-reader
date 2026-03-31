@@ -1540,6 +1540,11 @@ class MainWindow(QMainWindow):
         act_delete_pages.triggered.connect(self.delete_selected_pages)
         menu_tools.addAction(act_delete_pages)
 
+        menu_tools.addSeparator()
+        act_images_to_pdf = QAction("Bilder zu PDF konvertieren …", self)
+        act_images_to_pdf.triggered.connect(self.convert_images_to_pdf)
+        menu_tools.addAction(act_images_to_pdf)
+
         menu_export = self.menuBar().addMenu("Exportieren")
         act_export_current = QAction("Aktuelle Datei exportieren …", self)
         act_export_current.triggered.connect(self.export_current_file)
@@ -3752,6 +3757,82 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Leere Seiten entfernt: {len(removed_pages)} (nicht gespeichert)")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Leere Seiten konnten nicht entfernt werden:\n{e}")
+
+    def convert_images_to_pdf(self) -> None:
+        image_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Bilder auswählen",
+            "",
+            "Bilddateien (*.jpg *.jpeg *.png *.tiff *.tif *.bmp *.webp)",
+        )
+        if not image_paths:
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "PDF speichern unter",
+            "",
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".pdf"):
+            out_path += ".pdf"
+
+        total = len(image_paths)
+        progress = QProgressDialog("Konvertiere Bilder …", "Abbrechen", 0, total, self)
+        progress.setWindowTitle("Bitte warten")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        out_doc = fitz.open()
+        errors: list[str] = []
+
+        for i, img_path in enumerate(image_paths):
+            progress.setValue(i)
+            progress.setLabelText(f"Bild {i + 1}/{total}: {Path(img_path).name}")
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                out_doc.close()
+                return
+            try:
+                img_doc = fitz.open(img_path)
+                pdf_bytes = img_doc.convert_to_pdf()
+                img_doc.close()
+                pdf_doc = fitz.open("pdf", pdf_bytes)
+                out_doc.insert_pdf(pdf_doc)
+                pdf_doc.close()
+            except Exception as e:
+                errors.append(f"{Path(img_path).name}: {e}")
+
+        progress.setValue(total)
+
+        if out_doc.page_count == 0:
+            out_doc.close()
+            QMessageBox.critical(self, "Fehler", "Keine Seiten erzeugt. Bitte überprüfe die ausgewählten Dateien.")
+            return
+
+        page_count = out_doc.page_count
+        try:
+            out_doc.save(out_path, garbage=4, deflate=True)
+        except Exception as e:
+            out_doc.close()
+            QMessageBox.critical(self, "Fehler", f"PDF konnte nicht gespeichert werden:\n{e}")
+            return
+        out_doc.close()
+
+        msg = f"PDF mit {page_count} Seite(n) gespeichert:\n{out_path}"
+        if errors:
+            msg += f"\n\nFehler bei {len(errors)} Bild(ern):\n" + "\n".join(errors)
+
+        reply = QMessageBox.question(
+            self,
+            "Fertig",
+            msg + "\n\nPDF jetzt öffnen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._open_pdf_path(out_path)
 
     def _suggest_name_from_first_page(self) -> str:
         if not self.doc or len(self.doc) == 0:
