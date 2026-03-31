@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QHeaderView,
     QInputDialog,
     QLabel,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QProgressDialog,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -1055,10 +1057,11 @@ class MainWindow(QMainWindow):
         self.thumb_list.setFlow(QListWidget.Flow.TopToBottom)
         self.thumb_list.setMovement(QListWidget.Movement.Snap)
         self.thumb_list.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.thumb_list.setIconSize(QSize(90, 130))
-        self.thumb_list.setSpacing(6)
-        self.thumb_list.setMinimumWidth(120)
+        self.thumb_list.setIconSize(QSize(100, 140))
+        self.thumb_list.setSpacing(8)
+        self.thumb_list.setMinimumWidth(130)
         self.thumb_list.setMaximumWidth(520)
+        self.thumb_list.setUniformItemSizes(True)
         self.thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.thumb_list.setDragEnabled(True)
         self.thumb_list.setAcceptDrops(True)
@@ -1075,7 +1078,8 @@ class MainWindow(QMainWindow):
         self.text_output_view: QTextEdit | None = None
 
         self.suggested_name = QLineEdit()
-        self.suggested_name.setPlaceholderText("Vorgeschlagener Dateiname")
+        self.suggested_name.setPlaceholderText("Dateiname wird nach OCR vorgeschlagen …")
+        self.suggested_name.setClearButtonEnabled(True)
 
         self.ocr_lang = str(self.app_settings.get("ocrLang", "deu+eng"))
         if not self._normalize_ocr_language_code(self.ocr_lang):
@@ -1107,7 +1111,6 @@ class MainWindow(QMainWindow):
         self.current_search_hit = -1
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
-        self.page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.preview.setAccessibleName("PDF-Seitenvorschau")
         self.preview.setAccessibleDescription("Zeigt die aktuell ausgewählte Seite als große Vorschau")
@@ -1123,7 +1126,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.setAccessibleDescription("Trefferliste mit Seitenbezug")
         self.page_info.setAccessibleName("Seiten- und Zoomstatus")
 
-        self.ocr_feedback = QLabel("OCR-Hinweise: -")
+        self.ocr_feedback = QLabel("OCR bereit")
         self.ocr_feedback.setWordWrap(True)
         self.ocr_feedback.setAccessibleName("OCR-Hinweise")
         self.ocr_feedback.setAccessibleDescription("Zeigt OCR-Qualitätshinweise und Auffälligkeiten")
@@ -1131,42 +1134,74 @@ class MainWindow(QMainWindow):
         self.ocr_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.ocr_mode_label.setAccessibleName("OCR-Status")
 
-        btn_open = QPushButton("Öffnen")
-        btn_first = QPushButton("⏮")
-        btn_prev = QPushButton("◀")
-        btn_next = QPushButton("▶")
-        btn_last = QPushButton("⏭")
-        btn_zoom_out = QPushButton("−")
-        btn_zoom_in = QPushButton("+")
-        btn_zoom_reset = QPushButton("100%")
-        btn_goto = QPushButton("#")
-        btn_rotate_left = QPushButton("↺")
-        btn_rotate_right = QPushButton("↻")
-        btn_rotate_reset = QPushButton("⟲")
-        self.btn_undo = QPushButton("↶")
-        self.btn_redo = QPushButton("↷")
-        btn_extract = QPushButton("Text aktuelle Seite")
-        btn_extract_all = QPushButton("Text alle Seiten")
-        btn_auto_ocr_name = QPushButton("OCR + Benennen")
-        btn_saveas = QPushButton("Speichern")
-        btn_merge = QPushButton("Zusammenführen")
-        btn_split = QPushButton("Extrahieren")
-        btn_reorder = QPushButton("Sortieren")
-        btn_remove_empty = QPushButton("Leer entfernen")
-        btn_search = QPushButton("Suchen")
-        btn_search_close = QPushButton("✕")
-        btn_hit_prev = QPushButton("Treffer ◀")
-        btn_hit_next = QPushButton("Treffer ▶")
-        self.search_counter = QLabel("Treffer: 0/0")
-        self.search_counter.setAccessibleName("Suchtreffer-Zähler")
-        self.btn_cancel_ocr = QPushButton("OCR stoppen")
-        self.btn_cancel_ocr.setEnabled(False)
-        self.btn_retry_failed_ocr = QPushButton("OCR-Fehler erneut")
-        self.btn_retry_failed_ocr.setEnabled(False)
-        self.btn_reset_ocr_prefs = QPushButton("OCR zurücksetzen")
-
-        for b in [btn_open, btn_first, btn_prev, btn_next, btn_last, btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_goto, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_extract, btn_extract_all, btn_auto_ocr_name, btn_saveas, btn_merge, btn_split, btn_reorder, btn_remove_empty, btn_search, btn_search_close, btn_hit_prev, btn_hit_next]:
+        # ── Hilfsfunktionen für Buttons ─────────────────────────────────────
+        def _icon_btn(label: str, tooltip: str = "") -> QPushButton:
+            b = QPushButton(label)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tooltip:
+                b.setToolTip(tooltip)
+            b.setProperty("btnRole", "icon")
+            return b
+
+        def _primary_btn(label: str, tooltip: str = "") -> QPushButton:
+            b = QPushButton(label)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tooltip:
+                b.setToolTip(tooltip)
+            b.setProperty("btnRole", "primary")
+            return b
+
+        def _action_btn(label: str, tooltip: str = "") -> QPushButton:
+            b = QPushButton(label)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tooltip:
+                b.setToolTip(tooltip)
+            b.setProperty("btnRole", "action")
+            return b
+
+        def _separator() -> QFrame:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.VLine)
+            sep.setProperty("role", "toolsep")
+            return sep
+
+        btn_open         = _primary_btn("PDF öffnen",     "PDF-Datei öffnen (Ctrl+O)")
+        btn_first        = _icon_btn("⏮",                 "Erste Seite")
+        btn_prev         = _icon_btn("◀",                 "Vorherige Seite")
+        btn_next         = _icon_btn("▶",                 "Nächste Seite")
+        btn_last         = _icon_btn("⏭",                 "Letzte Seite")
+        btn_goto         = _icon_btn("#",                 "Zu Seite springen")
+        btn_zoom_out     = _icon_btn("−",                 "Verkleinern")
+        btn_zoom_in      = _icon_btn("+",                 "Vergrößern")
+        btn_zoom_reset   = _icon_btn("⊡",                 "Zoom zurücksetzen")
+        btn_rotate_left  = _icon_btn("↺",                 "Seite links drehen")
+        btn_rotate_right = _icon_btn("↻",                 "Seite rechts drehen")
+        btn_rotate_reset = _icon_btn("⟲",                 "Drehung zurücksetzen")
+        self.btn_undo    = _icon_btn("↶",                 "Rückgängig (Ctrl+Z)")
+        self.btn_redo    = _icon_btn("↷",                 "Wiederholen (Ctrl+Y)")
+        btn_extract      = _action_btn("Seite erkennen",  "Text der aktuellen Seite extrahieren")
+        btn_extract_all  = _action_btn("Alle erkennen",   "Text aller Seiten extrahieren")
+        btn_auto_ocr_name = _primary_btn("OCR + Benennen", "OCR ausführen und Dateinamen vorschlagen")
+        btn_save         = _primary_btn("Speichern",      "Direkt speichern (Ctrl+S)")
+        btn_saveas       = _action_btn("Speichern als …", "Speichern unter (Ctrl+Shift+S)")
+        btn_merge        = _action_btn("Zusammenführen",  "PDFs zusammenführen")
+        btn_split        = _action_btn("Extrahieren",     "Seiten extrahieren")
+        btn_reorder      = _action_btn("Sortieren",       "Seiten neu anordnen")
+        btn_remove_empty = _action_btn("Leer entfernen",  "Leere Seiten entfernen")
+        btn_search       = _icon_btn("🔍",                 "Suche starten (Ctrl+F)")
+        btn_search_close = _icon_btn("✕",                 "Suche schließen")
+        btn_hit_prev     = _icon_btn("◀",                 "Vorheriger Treffer")
+        btn_hit_next     = _icon_btn("▶",                 "Nächster Treffer")
+
+        self.search_counter = QLabel("0 / 0")
+        self.search_counter.setAccessibleName("Suchtreffer-Zähler")
+        self.search_counter.setProperty("role", "counter")
+
+        self.btn_cancel_ocr = _action_btn("OCR stoppen")
+        self.btn_cancel_ocr.setEnabled(False)
+        self.btn_retry_failed_ocr = _action_btn("Fehler wiederholen")
+        self.btn_retry_failed_ocr.setEnabled(False)
+        self.btn_reset_ocr_prefs = _action_btn("OCR zurücksetzen")
 
         btn_open.setToolTip("PDF öffnen")
         btn_open.setAccessibleName("PDF öffnen")
@@ -1229,7 +1264,10 @@ class MainWindow(QMainWindow):
         self.btn_redo.clicked.connect(self.redo_last_change)
         btn_extract.setAccessibleName("Text auf aktueller Seite erkennen")
         btn_extract_all.setAccessibleName("Text auf allen Seiten erkennen")
-        btn_saveas.setAccessibleName("PDF speichern")
+        btn_save.setToolTip("PDF direkt speichern (Ctrl+S)")
+        btn_save.setAccessibleName("PDF direkt speichern")
+        btn_saveas.setAccessibleName("PDF speichern unter")
+        btn_saveas.setToolTip("PDF speichern als … (Ctrl+Shift+S)")
         btn_merge.setAccessibleName("PDFs zusammenführen")
         btn_split.setAccessibleName("Seiten extrahieren")
         btn_reorder.setAccessibleName("Seiten sortieren")
@@ -1238,6 +1276,7 @@ class MainWindow(QMainWindow):
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.recognize_text_all_pages_and_suggest)
         btn_auto_ocr_name.clicked.connect(self.ocr_and_suggest_filename)
+        btn_save.clicked.connect(self.save_in_place)
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
@@ -1252,70 +1291,123 @@ class MainWindow(QMainWindow):
         self.btn_retry_failed_ocr.clicked.connect(self.retry_failed_ocr_pages)
         self.btn_reset_ocr_prefs.clicked.connect(self.reset_ocr_preferences)
 
-        toolbar_top = QHBoxLayout()
+        # ── Toolbar ──────────────────────────────────────────────────────────
+        toolbar_widget = QWidget()
+        toolbar_widget.setProperty("role", "toolbar")
+        toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        def _vsep() -> QFrame:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.VLine)
+            sep.setFixedWidth(1)
+            sep.setProperty("role", "toolsep")
+            return sep
+
+        toolbar_top = QHBoxLayout(toolbar_widget)
+        toolbar_top.setContentsMargins(12, 8, 12, 8)
+        toolbar_top.setSpacing(4)
+
+        # Öffnen
         toolbar_top.addWidget(btn_open)
-        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(_vsep())
+
+        # Navigation
         toolbar_top.addWidget(btn_first)
         toolbar_top.addWidget(btn_prev)
         toolbar_top.addWidget(btn_next)
         toolbar_top.addWidget(btn_last)
-        toolbar_top.addSpacing(8)
         toolbar_top.addWidget(btn_goto)
-        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(_vsep())
+
+        # Zoom
         toolbar_top.addWidget(btn_zoom_out)
         toolbar_top.addWidget(btn_zoom_in)
         toolbar_top.addWidget(btn_zoom_reset)
-        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(_vsep())
+
+        # Rotation
         toolbar_top.addWidget(btn_rotate_left)
         toolbar_top.addWidget(btn_rotate_right)
         toolbar_top.addWidget(btn_rotate_reset)
-        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(_vsep())
+
+        # Undo/Redo
         toolbar_top.addWidget(self.btn_undo)
         toolbar_top.addWidget(self.btn_redo)
-        toolbar_top.addSpacing(8)
+        toolbar_top.addWidget(_vsep())
+
+        # OCR + Aktionen
+        toolbar_top.addWidget(btn_extract)
+        toolbar_top.addWidget(btn_extract_all)
         toolbar_top.addWidget(btn_auto_ocr_name)
+        toolbar_top.addWidget(_vsep())
+
+        # Speichern
+        toolbar_top.addWidget(btn_save)
         toolbar_top.addStretch(1)
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Dateiname:"))
-        name_row.addWidget(self.suggested_name)
-        name_row.addStretch(1)
+        # ── Dateiname-Zeile ──────────────────────────────────────────────────
+        name_widget = QWidget()
+        name_widget.setProperty("role", "namebar")
+        name_layout = QHBoxLayout(name_widget)
+        name_layout.setContentsMargins(12, 6, 12, 6)
+        name_layout.setSpacing(8)
+        lbl_name = QLabel("Dateiname")
+        lbl_name.setProperty("role", "fieldlabel")
+        name_layout.addWidget(lbl_name)
+        name_layout.addWidget(self.suggested_name, 1)
+        self.page_info.setProperty("role", "pageinfo")
+        name_layout.addWidget(self.page_info)
 
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Suche:"))
-        search_row.addWidget(self.search_query, 1)
-        search_row.addWidget(btn_search)
-        search_row.addWidget(btn_search_close)
-        search_row.addWidget(btn_hit_prev)
-        search_row.addWidget(btn_hit_next)
-        search_row.addWidget(self.search_counter)
+        # ── Suchleiste ───────────────────────────────────────────────────────
+        self.search_bar_widget = QWidget()
+        self.search_bar_widget.setProperty("role", "searchbar")
+        self.search_bar_widget.setVisible(False)
+        search_layout = QHBoxLayout(self.search_bar_widget)
+        search_layout.setContentsMargins(12, 6, 12, 6)
+        search_layout.setSpacing(6)
+        lbl_search = QLabel("Suche")
+        lbl_search.setProperty("role", "fieldlabel")
+        search_layout.addWidget(lbl_search)
+        search_layout.addWidget(self.search_query, 1)
+        search_layout.addWidget(btn_search)
+        search_layout.addWidget(btn_hit_prev)
+        search_layout.addWidget(btn_hit_next)
+        search_layout.addWidget(self.search_counter)
+        search_layout.addWidget(btn_search_close)
 
-        ocr_row = QHBoxLayout()
-        ocr_row.addWidget(self.ocr_feedback, 1)
-        ocr_row.addWidget(self.ocr_mode_label)
-        ocr_row.addWidget(self.btn_retry_failed_ocr)
-        ocr_row.addWidget(self.btn_reset_ocr_prefs)
+        # ── OCR-Statusleiste ─────────────────────────────────────────────────
+        ocr_bar = QWidget()
+        ocr_bar.setProperty("role", "ocrbar")
+        ocr_layout = QHBoxLayout(ocr_bar)
+        ocr_layout.setContentsMargins(12, 5, 12, 5)
+        ocr_layout.setSpacing(8)
+        ocr_layout.addWidget(self.ocr_feedback, 1)
+        ocr_layout.addWidget(self.ocr_mode_label)
+        ocr_layout.addWidget(self.btn_cancel_ocr)
+        ocr_layout.addWidget(self.btn_retry_failed_ocr)
+        ocr_layout.addWidget(self.btn_reset_ocr_prefs)
 
+        # ── Splitter (Thumbnails + Vorschau) ─────────────────────────────────
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
-        self.content_splitter.setHandleWidth(8)
+        self.content_splitter.setHandleWidth(6)
         self.content_splitter.addWidget(self.thumb_list)
         self.content_splitter.addWidget(self.preview_scroll)
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
-        self.content_splitter.setSizes([220, 940])
+        self.content_splitter.setSizes([200, 980])
 
-        content_row = QHBoxLayout()
-        content_row.addWidget(self.content_splitter, 1)
-
+        # ── Haupt-Layout ─────────────────────────────────────────────────────
         layout = QVBoxLayout()
-        layout.addLayout(name_row)
-        layout.addLayout(toolbar_top)
-        layout.addLayout(search_row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(toolbar_widget)
+        layout.addWidget(name_widget)
+        layout.addWidget(self.search_bar_widget)
         layout.addWidget(self.search_results_list)
-        layout.addWidget(self.page_info)
-        layout.addLayout(content_row, 1)
-        layout.addLayout(ocr_row)
+        layout.addWidget(self.content_splitter, 1)
+        layout.addWidget(ocr_bar)
 
         container = QWidget()
         container.setLayout(layout)
@@ -1334,8 +1426,13 @@ class MainWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        act_save = QAction("Speichern", self)
+        act_save.setShortcut("Ctrl+S")
+        act_save.triggered.connect(self.save_in_place)
+        menu_file.addAction(act_save)
+
         act_save_as = QAction("Speichern als …", self)
-        act_save_as.setShortcut("Ctrl+S")
+        act_save_as.setShortcut("Ctrl+Shift+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
 
@@ -1460,6 +1557,7 @@ class MainWindow(QMainWindow):
         all_actions = [
             act_open,
             act_close_pdf,
+            act_save,
             act_save_as,
             act_undo,
             act_redo,
@@ -1947,11 +2045,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{len(selected)} Seite(n) gelöscht (noch nicht gespeichert)")
 
     def open_search(self) -> None:
+        self.search_bar_widget.setVisible(True)
         self.search_results_list.setVisible(True)
         self.search_query.setFocus()
         self.search_query.selectAll()
 
     def open_search_and_run(self) -> None:
+        self.search_bar_widget.setVisible(True)
         self.search_results_list.setVisible(True)
         self.search_all_pages()
 
@@ -1961,6 +2061,7 @@ class MainWindow(QMainWindow):
         self.current_search_hit = -1
         self.search_results_list.clear()
         self.search_results_list.setVisible(False)
+        self.search_bar_widget.setVisible(False)
         self._update_search_counter()
 
     @staticmethod
@@ -1995,6 +2096,7 @@ class MainWindow(QMainWindow):
     def search_all_pages(self) -> None:
         if not self.doc:
             return
+        self.search_bar_widget.setVisible(True)
         self.search_results_list.setVisible(True)
         query = self.search_query.text().strip()
         if len(query) < 2:
@@ -2071,7 +2173,7 @@ class MainWindow(QMainWindow):
     def _update_search_counter(self) -> None:
         total = len(self.search_hits)
         current = self.current_search_hit + 1 if 0 <= self.current_search_hit < total else 0
-        self.search_counter.setText(f"Treffer: {current}/{total}")
+        self.search_counter.setText(f"{current} / {total}")
 
     def _on_search_result_clicked(self, item: QListWidgetItem) -> None:
         hit_idx = int(item.data(Qt.ItemDataRole.UserRole))
@@ -2447,29 +2549,346 @@ class MainWindow(QMainWindow):
         if amount:
             lines.append(f"Erkannter Gesamtbetrag: {amount} {currency or 'EUR'}")
 
-        return "OCR-Hinweise: " + (" | ".join(lines) if lines else "keine Auffälligkeiten")
+        return "OCR: " + (" · ".join(lines) if lines else "keine Auffälligkeiten")
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            QMainWindow { background: #f4f6fb; }
+        # ── Design-Tokens ────────────────────────────────────────────────────
+        # Primärfarbe: tiefes Indigo
+        # Akzent: warmes Blau
+        # Hintergrund: sehr helles Grau mit minimalem Blaustich
+        # Text: Dunkelgrau (kein hartes Schwarz)
+        self.setStyleSheet("""
+            /* ── Fenster & Container ──────────────────────────────────── */
+            QMainWindow, QWidget {
+                background: #f7f8fa;
+                color: #1e2432;
+                font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+                font-size: 13px;
+            }
+
+            /* ── Toolbar-Hintergrund ───────────────────────────────────── */
+            QWidget[role="toolbar"] {
+                background: #ffffff;
+                border-bottom: 1px solid #e4e7ef;
+            }
+
+            /* ── Namens-Zeile ─────────────────────────────────────────── */
+            QWidget[role="namebar"] {
+                background: #f0f2f7;
+                border-bottom: 1px solid #e4e7ef;
+            }
+
+            /* ── Suchleiste ───────────────────────────────────────────── */
+            QWidget[role="searchbar"] {
+                background: #fff8e7;
+                border-bottom: 1px solid #f0d580;
+            }
+
+            /* ── OCR-Statusleiste ─────────────────────────────────────── */
+            QWidget[role="ocrbar"] {
+                background: #f0f2f7;
+                border-top: 1px solid #e4e7ef;
+            }
+
+            /* ── Trennlinie in der Toolbar ────────────────────────────── */
+            QFrame[role="toolsep"] {
+                color: #dde0ea;
+                max-height: 22px;
+                margin: 6px 2px;
+            }
+
+            /* ── Standard-Button ──────────────────────────────────────── */
             QPushButton {
-                background: #ffffff;
-                border: 1px solid #d8deea;
-                border-radius: 8px;
-                padding: 6px 10px;
+                background: #f0f2f7;
+                color: #1e2432;
+                border: 1px solid #dde0ea;
+                border-radius: 7px;
+                padding: 5px 11px;
+                font-size: 13px;
             }
-            QPushButton:hover { background: #eef3ff; }
-            QPushButton:pressed { background: #e2ebff; }
-            QTextEdit, QLineEdit {
+            QPushButton:hover {
+                background: #e6e9f4;
+                border-color: #b8bfd4;
+            }
+            QPushButton:pressed {
+                background: #d8dcee;
+                border-color: #9ba5c4;
+            }
+            QPushButton:disabled {
+                background: #f5f6f9;
+                color: #aab0c4;
+                border-color: #e8eaf0;
+            }
+
+            /* ── Icon-Button (kompakt, quadratisch) ───────────────────── */
+            QPushButton[btnRole="icon"] {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 7px;
+                padding: 5px 8px;
+                font-size: 14px;
+                min-width: 28px;
+                max-width: 36px;
+            }
+            QPushButton[btnRole="icon"]:hover {
+                background: #e8ebf5;
+                border-color: #cdd2e8;
+            }
+            QPushButton[btnRole="icon"]:pressed {
+                background: #d4d9ee;
+                border-color: #9ba5c4;
+            }
+            QPushButton[btnRole="icon"]:disabled {
+                color: #b8bfd4;
+            }
+
+            /* ── Primär-Button (Akzent) ───────────────────────────────── */
+            QPushButton[btnRole="primary"] {
+                background: #3d5afe;
+                color: #ffffff;
+                border: 1px solid #2a45e8;
+                border-radius: 7px;
+                padding: 5px 14px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton[btnRole="primary"]:hover {
+                background: #5472ff;
+                border-color: #3d5afe;
+            }
+            QPushButton[btnRole="primary"]:pressed {
+                background: #2a45e8;
+                border-color: #1a35d8;
+            }
+            QPushButton[btnRole="primary"]:disabled {
+                background: #9daaf5;
+                border-color: #8899e8;
+                color: #dce2ff;
+            }
+
+            /* ── Aktions-Button (subtil, aber klarer als Standard) ────── */
+            QPushButton[btnRole="action"] {
                 background: #ffffff;
-                border: 1px solid #d8deea;
-                border-radius: 8px;
+                color: #2d3a5e;
+                border: 1px solid #cdd2e8;
+                border-radius: 7px;
+                padding: 5px 11px;
+                font-size: 13px;
+            }
+            QPushButton[btnRole="action"]:hover {
+                background: #eef0fb;
+                border-color: #9ba5c4;
+            }
+            QPushButton[btnRole="action"]:pressed {
+                background: #dce0f5;
+            }
+            QPushButton[btnRole="action"]:disabled {
+                color: #aab0c4;
+                border-color: #e4e7ef;
+            }
+
+            /* ── Eingabefelder ────────────────────────────────────────── */
+            QLineEdit {
+                background: #ffffff;
+                color: #1e2432;
+                border: 1px solid #cdd2e8;
+                border-radius: 7px;
+                padding: 5px 10px;
+                font-size: 13px;
+                selection-background-color: #c2ccff;
+            }
+            QLineEdit:focus {
+                border-color: #3d5afe;
+                background: #ffffff;
+            }
+            QLineEdit:hover {
+                border-color: #9ba5c4;
+            }
+
+            QTextEdit {
+                background: #ffffff;
+                color: #1e2432;
+                border: 1px solid #cdd2e8;
+                border-radius: 7px;
                 padding: 6px;
+                font-size: 13px;
+                selection-background-color: #c2ccff;
             }
-            QLabel { color: #1f2a44; }
-            """
-        )
+            QTextEdit:focus {
+                border-color: #3d5afe;
+            }
+
+            /* ── Labels ───────────────────────────────────────────────── */
+            QLabel {
+                color: #1e2432;
+                background: transparent;
+            }
+            QLabel[role="fieldlabel"] {
+                color: #6b748a;
+                font-size: 11px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+            }
+            QLabel[role="pageinfo"] {
+                color: #6b748a;
+                font-size: 12px;
+                padding: 0 8px;
+            }
+            QLabel[role="counter"] {
+                color: #6b748a;
+                font-size: 12px;
+                min-width: 48px;
+                text-align: center;
+            }
+
+            /* ── Listen (Suchtreffer, Thumbnails) ─────────────────────── */
+            QListWidget {
+                background: #ffffff;
+                border: none;
+                border-right: 1px solid #e4e7ef;
+                outline: none;
+            }
+            QListWidget::item {
+                padding: 5px 10px;
+                border-bottom: 1px solid #f0f2f7;
+                color: #1e2432;
+            }
+            QListWidget::item:selected {
+                background: #e8ecff;
+                color: #1e2432;
+            }
+            QListWidget::item:hover {
+                background: #f0f2fb;
+            }
+
+            /* ── Vorschau-Scroll ───────────────────────────────────────── */
+            QScrollArea {
+                background: #ebedf5;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: #f0f2f7;
+                width: 8px;
+                border-radius: 4px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #c0c6db;
+                border-radius: 4px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover { background: #9ba5c4; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar:horizontal {
+                background: #f0f2f7;
+                height: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #c0c6db;
+                border-radius: 4px;
+                min-width: 30px;
+            }
+            QScrollBar::handle:horizontal:hover { background: #9ba5c4; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+
+            /* ── Splitter ─────────────────────────────────────────────── */
+            QSplitter::handle {
+                background: #e4e7ef;
+                width: 1px;
+            }
+            QSplitter::handle:hover {
+                background: #9ba5c4;
+            }
+
+            /* ── Menüleiste ───────────────────────────────────────────── */
+            QMenuBar {
+                background: #ffffff;
+                color: #1e2432;
+                border-bottom: 1px solid #e4e7ef;
+                padding: 2px 4px;
+            }
+            QMenuBar::item {
+                padding: 4px 10px;
+                border-radius: 5px;
+            }
+            QMenuBar::item:selected {
+                background: #eef0fb;
+            }
+            QMenu {
+                background: #ffffff;
+                border: 1px solid #dde0ea;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 5px;
+                color: #1e2432;
+            }
+            QMenu::item:selected {
+                background: #eef0fb;
+                color: #3d5afe;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #e4e7ef;
+                margin: 4px 8px;
+            }
+
+            /* ── Statusleiste ─────────────────────────────────────────── */
+            QStatusBar {
+                background: #f0f2f7;
+                color: #6b748a;
+                border-top: 1px solid #e4e7ef;
+                font-size: 12px;
+                padding: 2px 8px;
+            }
+
+            /* ── Fortschrittsbalken ───────────────────────────────────── */
+            QProgressDialog {
+                background: #ffffff;
+                border: 1px solid #dde0ea;
+                border-radius: 10px;
+            }
+            QProgressBar {
+                background: #e8eaf0;
+                border: none;
+                border-radius: 4px;
+                height: 6px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background: #3d5afe;
+                border-radius: 4px;
+            }
+
+            /* ── Tabellen ─────────────────────────────────────────────── */
+            QTableWidget {
+                background: #ffffff;
+                alternate-background-color: #f7f8fa;
+                border: 1px solid #dde0ea;
+                border-radius: 8px;
+                gridline-color: #ebedf5;
+                selection-background-color: #e8ecff;
+                selection-color: #1e2432;
+            }
+            QHeaderView::section {
+                background: #f0f2f7;
+                color: #4a5272;
+                border: none;
+                border-bottom: 1px solid #dde0ea;
+                border-right: 1px solid #ebedf5;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 500;
+            }
+
+            /* ── Dialog-Buttons ───────────────────────────────────────── */
+            QDialogButtonBox QPushButton {
+                min-width: 80px;
+            }
+        """)
 
     @staticmethod
     def _ensure_pdf_suffix(path: str) -> str:
@@ -2500,7 +2919,7 @@ class MainWindow(QMainWindow):
         self.page_info.setText("Seite: -/- | Zoom: 100%")
         self._set_extracted_text("")
         self.suggested_name.clear()
-        self.ocr_feedback.setText("OCR-Hinweise: -")
+        self.ocr_feedback.setText("OCR bereit")
         self.search_hits = []
         self.current_search_hit = -1
         self.search_results_list.clear()
@@ -2512,16 +2931,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.doc and self.is_dirty:
-            choice = QMessageBox.question(
-                self,
-                "Ungespeicherte Änderungen",
-                "Es gibt ungespeicherte Änderungen. Wirklich beenden?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if choice != QMessageBox.StandardButton.Yes:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Ungespeicherte Änderungen")
+            msg.setText("Es gibt ungespeicherte Änderungen.")
+            msg.setInformativeText("Möchtest du die Änderungen vor dem Beenden speichern?")
+            btn_save = msg.addButton("Speichern", QMessageBox.ButtonRole.AcceptRole)
+            btn_discard = msg.addButton("Verwerfen", QMessageBox.ButtonRole.DestructiveRole)
+            btn_cancel = msg.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+            msg.setDefaultButton(btn_save)
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked == btn_cancel:
                 event.ignore()
                 return
+            if clicked == btn_save:
+                self.save_in_place()
         self._close_open_document()
         super().closeEvent(event)
 
@@ -2549,7 +2973,7 @@ class MainWindow(QMainWindow):
         self.render_current_page()
         self._set_extracted_text("")
         self.suggested_name.clear()
-        self.ocr_feedback.setText("OCR-Hinweise: -")
+        self.ocr_feedback.setText("OCR bereit")
         self.search_hits = []
         self.current_search_hit = -1
         self.search_results_list.clear()
@@ -3654,6 +4078,48 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
+
+    def save_in_place(self) -> None:
+        """Speichert das aktuelle PDF direkt an seinem Speicherort.
+
+        Rotationen und alle anderen Änderungen (Seitenlöschungen, Neuanordnung)
+        werden dauerhaft in die Originaldatei geschrieben.
+        """
+        if not self.pdf_path or not self.doc:
+            QMessageBox.information(self, "Hinweis", "Kein PDF geladen.")
+            return
+
+        if not self.is_dirty:
+            self.statusBar().showMessage("Keine ungespeicherten Änderungen.")
+            return
+
+        try:
+            source_path = self.pdf_path.resolve()
+            tmp_out = source_path.with_name(f"{source_path.stem}.tmp{source_path.suffix}")
+
+            out_doc = fitz.open()
+            try:
+                out_doc.insert_pdf(self.doc)
+                for idx, rot in self.page_rotations.items():
+                    if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                        out_doc[idx].set_rotation(rot % 360)
+                out_doc.save(str(tmp_out))
+            finally:
+                out_doc.close()
+
+            # Original ersetzen (atomar: erst tmp schreiben, dann ersetzen)
+            self._close_open_document()
+            tmp_out.replace(source_path)
+            self.doc = fitz.open(str(source_path))
+            # Rotationen sind jetzt im PDF eingebrannt – In-Memory-Overrides leeren
+            self.page_rotations.clear()
+
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self._set_dirty(False)
+            self.statusBar().showMessage(f"Gespeichert: {source_path.name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
 
     def save_as_suggested(self) -> None:
         if not self.pdf_path or not self.doc:
