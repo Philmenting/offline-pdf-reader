@@ -80,13 +80,61 @@ except Exception:
 
 APP_TITLE = "Offline PDF Leser — MVP"
 
+
+def _make_icon_btn(label: str, tooltip: str = "") -> QPushButton:
+    b = QPushButton(label)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if tooltip:
+        b.setToolTip(tooltip)
+    b.setProperty("btnRole", "icon")
+    return b
+
+
+def _make_primary_btn(label: str, tooltip: str = "") -> QPushButton:
+    b = QPushButton(label)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if tooltip:
+        b.setToolTip(tooltip)
+    b.setProperty("btnRole", "primary")
+    return b
+
+
+def _make_action_btn(label: str, tooltip: str = "") -> QPushButton:
+    b = QPushButton(label)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if tooltip:
+        b.setToolTip(tooltip)
+    b.setProperty("btnRole", "action")
+    return b
+
+
+def _make_vsep() -> QFrame:
+    sep = QFrame()
+    sep.setFrameShape(QFrame.Shape.VLine)
+    sep.setFixedWidth(1)
+    sep.setProperty("role", "toolsep")
+    return sep
+
+
 class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
         self.resize(1220, 860)
         self.setAcceptDrops(True)
+        self._init_state()
+        self._create_widgets()
+        toolbar = self._build_toolbar()
+        annot_bar = self._build_annotation_bar()
+        name_bar, search_bar, ocr_bar = self._build_secondary_bars()
+        self._assemble_layout(toolbar, annot_bar, name_bar, search_bar, ocr_bar)
+        self._build_menu()
+        self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
 
+    # ── Phase-3 Setup-Methoden ────────────────────────────────────────────────
+
+    def _init_state(self) -> None:
+        """Initialisiert alle Zustandsvariablen – keine Widgets."""
         self.pdf_path: Path | None = None
         self.doc: fitz.Document | None = None
         self.current_page = 0
@@ -106,6 +154,30 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         self._annot_drag_start: tuple[int, int] | None = None
         self._annot_rubber_band: QRubberBand | None = None
 
+        self.extracted_text = ""
+        self.text_dialog: QDialog | None = None
+        self.text_output_view: QTextEdit | None = None
+
+        self.ocr_lang = str(self.app_settings.get("ocrLang", "deu+eng"))
+        if not self._normalize_ocr_language_code(self.ocr_lang):
+            self.ocr_lang = "deu+eng"
+        self.ocr_correction_mode = str(self.app_settings.get("ocrCorrectionMode", "konservativ"))
+        if self.ocr_correction_mode not in {"konservativ", "aggressiv"}:
+            self.ocr_correction_mode = "konservativ"
+        self.ocr_cancel_requested = False
+        self.ocr_cache: dict[str, tuple[str, str | None, list[str], list[str]]] = {}
+        self.ocr_cache_order: list[str] = []
+        self.ocr_cache_max_entries = 80
+        self.doc_revision = 0
+        self.last_ocr_failed_pages: list[int] = []
+        self.last_recognized_page_texts: dict[int, str] = {}
+        self._installed_ocr_langs_cache: set[str] | None = None
+
+        self.search_hits: list[dict] = []
+        self.current_search_hit = -1
+
+    def _create_widgets(self) -> None:
+        """Erstellt und konfiguriert alle gemeinsam genutzten Widgets (self.xxx)."""
         self.preview = QLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(460)
@@ -138,45 +210,39 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
         self.thumb_list.pagesReordered.connect(self._reorder_pages_by_thumbnail_order)
 
-        self.extracted_text = ""
-        self.text_dialog: QDialog | None = None
-        self.text_output_view: QTextEdit | None = None
-
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Dateiname wird nach OCR vorgeschlagen …")
         self.suggested_name.setClearButtonEnabled(True)
 
-        self.ocr_lang = str(self.app_settings.get("ocrLang", "deu+eng"))
-        if not self._normalize_ocr_language_code(self.ocr_lang):
-            self.ocr_lang = "deu+eng"
-        self.ocr_correction_mode = str(self.app_settings.get("ocrCorrectionMode", "konservativ"))
-        if self.ocr_correction_mode not in {"konservativ", "aggressiv"}:
-            self.ocr_correction_mode = "konservativ"
-        self.ocr_cancel_requested = False
-        self.ocr_cache: dict[str, tuple[str, str | None, list[str], list[str]]] = {}
-        self.ocr_cache_order: list[str] = []
-        self.ocr_cache_max_entries = 80
-        self.doc_revision = 0
-        self.last_ocr_failed_pages: list[int] = []
-        self.last_recognized_page_texts: dict[int, str] = {}
-        self._installed_ocr_langs_cache: set[str] | None = None
-
         self.search_query = QLineEdit()
         self.search_query.setPlaceholderText("Suche in allen Seiten …")
-        self.search_query.setAccessibleName("Suchfeld")
-        self.search_query.setAccessibleDescription("Suchbegriff eingeben, um alle Seiten einschließlich OCR-Texte zu durchsuchen")
         self.search_query.setClearButtonEnabled(True)
+        self.search_query.returnPressed.connect(self.search_all_pages)
+
         self.search_results_list = QListWidget()
         self.search_results_list.setMinimumHeight(140)
         self.search_results_list.setVisible(False)
-        self.search_results_list.setAccessibleName("Suchtrefferliste")
-        self.search_results_list.setAccessibleDescription("Liste aller Suchtreffer über alle Seiten mit Seiten- und Zeilenangabe")
         self.search_results_list.itemClicked.connect(self._on_search_result_clicked)
-        self.search_hits: list[dict] = []
-        self.current_search_hit = -1
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
 
+        self.ocr_feedback = QLabel("OCR bereit")
+        self.ocr_feedback.setWordWrap(True)
+        self.ocr_mode_label = QLabel()
+        self.ocr_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.search_counter = QLabel("0 / 0")
+        self.search_counter.setProperty("role", "counter")
+
+        self.btn_undo = _make_icon_btn("↶", "Rückgängig (Ctrl+Z)")
+        self.btn_redo = _make_icon_btn("↷", "Wiederholen (Ctrl+Y)")
+        self.btn_cancel_ocr = _make_action_btn("OCR stoppen")
+        self.btn_cancel_ocr.setEnabled(False)
+        self.btn_retry_failed_ocr = _make_action_btn("Fehler wiederholen")
+        self.btn_retry_failed_ocr.setEnabled(False)
+        self.btn_reset_ocr_prefs = _make_action_btn("OCR zurücksetzen")
+
+        # Accessibility
         self.preview.setAccessibleName("PDF-Seitenvorschau")
         self.preview.setAccessibleDescription("Zeigt die aktuell ausgewählte Seite als große Vorschau")
         self.preview_scroll.setAccessibleName("Vorschau-Scrollbereich")
@@ -190,93 +256,55 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         self.search_results_list.setAccessibleName("Suchergebnisse")
         self.search_results_list.setAccessibleDescription("Trefferliste mit Seitenbezug")
         self.page_info.setAccessibleName("Seiten- und Zoomstatus")
-
-        self.ocr_feedback = QLabel("OCR bereit")
-        self.ocr_feedback.setWordWrap(True)
         self.ocr_feedback.setAccessibleName("OCR-Hinweise")
         self.ocr_feedback.setAccessibleDescription("Zeigt OCR-Qualitätshinweise und Auffälligkeiten")
-        self.ocr_mode_label = QLabel()
-        self.ocr_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.ocr_mode_label.setAccessibleName("OCR-Status")
-
-        # ── Hilfsfunktionen für Buttons ─────────────────────────────────────
-        def _icon_btn(label: str, tooltip: str = "") -> QPushButton:
-            b = QPushButton(label)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if tooltip:
-                b.setToolTip(tooltip)
-            b.setProperty("btnRole", "icon")
-            return b
-
-        def _primary_btn(label: str, tooltip: str = "") -> QPushButton:
-            b = QPushButton(label)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if tooltip:
-                b.setToolTip(tooltip)
-            b.setProperty("btnRole", "primary")
-            return b
-
-        def _action_btn(label: str, tooltip: str = "") -> QPushButton:
-            b = QPushButton(label)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if tooltip:
-                b.setToolTip(tooltip)
-            b.setProperty("btnRole", "action")
-            return b
-
-        def _separator() -> QFrame:
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setProperty("role", "toolsep")
-            return sep
-
-        btn_open         = _primary_btn("PDF öffnen",     "PDF-Datei öffnen (Ctrl+O)")
-        btn_first        = _icon_btn("⏮",                 "Erste Seite")
-        btn_prev         = _icon_btn("◀",                 "Vorherige Seite")
-        btn_next         = _icon_btn("▶",                 "Nächste Seite")
-        btn_last         = _icon_btn("⏭",                 "Letzte Seite")
-        btn_goto         = _icon_btn("#",                 "Zu Seite springen")
-        btn_zoom_out     = _icon_btn("−",                 "Verkleinern")
-        btn_zoom_in      = _icon_btn("+",                 "Vergrößern")
-        btn_zoom_reset   = _icon_btn("⊡",                 "Zoom zurücksetzen")
-        btn_rotate_left  = _icon_btn("↺",                 "Seite links drehen")
-        btn_rotate_right = _icon_btn("↻",                 "Seite rechts drehen")
-        btn_rotate_reset = _icon_btn("⟲",                 "Drehung zurücksetzen")
-        self.btn_undo    = _icon_btn("↶",                 "Rückgängig (Ctrl+Z)")
-        self.btn_redo    = _icon_btn("↷",                 "Wiederholen (Ctrl+Y)")
-        btn_extract      = _action_btn("Seite erkennen",  "Text der aktuellen Seite extrahieren")
-        btn_extract_all  = _action_btn("Alle erkennen",   "Text aller Seiten extrahieren")
-        btn_auto_ocr_name = _primary_btn("OCR + Benennen", "OCR ausführen und Dateinamen vorschlagen")
-        btn_save         = _primary_btn("Speichern",      "Direkt speichern (Ctrl+S)")
-        btn_saveas       = _action_btn("Speichern als …", "Speichern unter (Ctrl+Shift+S)")
-        btn_merge        = _action_btn("Zusammenführen",  "PDFs zusammenführen")
-        btn_split        = _action_btn("Extrahieren",     "Seiten extrahieren")
-        btn_reorder      = _action_btn("Sortieren",       "Seiten neu anordnen")
-        btn_remove_empty = _action_btn("Leer entfernen",  "Leere Seiten entfernen")
-        btn_search       = _icon_btn("🔍",                 "Suche starten (Ctrl+F)")
-        btn_search_close = _icon_btn("✕",                 "Suche schließen")
-        btn_hit_prev     = _icon_btn("◀",                 "Vorheriger Treffer")
-        btn_hit_next     = _icon_btn("▶",                 "Nächster Treffer")
-
-        self.search_counter = QLabel("0 / 0")
         self.search_counter.setAccessibleName("Suchtreffer-Zähler")
-        self.search_counter.setProperty("role", "counter")
+        self.btn_undo.setAccessibleName("Rückgängig")
+        self.btn_redo.setAccessibleName("Wiederholen")
+        self.btn_cancel_ocr.setToolTip("Laufenden OCR-Vorgang abbrechen")
+        self.btn_cancel_ocr.setAccessibleName("OCR-Vorgang abbrechen")
+        self.btn_retry_failed_ocr.setToolTip("Nur fehlgeschlagene OCR-Seiten erneut versuchen")
+        self.btn_retry_failed_ocr.setAccessibleName("Fehlgeschlagene OCR erneut versuchen")
+        self.btn_reset_ocr_prefs.setToolTip("OCR-Sprache und Korrekturmodus zurücksetzen")
+        self.btn_reset_ocr_prefs.setAccessibleName("OCR-Einstellungen zurücksetzen")
 
-        self.btn_cancel_ocr = _action_btn("OCR stoppen")
-        self.btn_cancel_ocr.setEnabled(False)
-        self.btn_retry_failed_ocr = _action_btn("Fehler wiederholen")
-        self.btn_retry_failed_ocr.setEnabled(False)
-        self.btn_reset_ocr_prefs = _action_btn("OCR zurücksetzen")
+        # Signal-Verbindungen für Instanz-Buttons
+        self.btn_undo.clicked.connect(self.undo_last_change)
+        self.btn_redo.clicked.connect(self.redo_last_change)
+        self.btn_cancel_ocr.clicked.connect(self.cancel_ocr)
+        self.btn_retry_failed_ocr.clicked.connect(self.retry_failed_ocr_pages)
+        self.btn_reset_ocr_prefs.clicked.connect(self.reset_ocr_preferences)
 
-        btn_open.setToolTip("PDF öffnen")
+    def _build_toolbar(self) -> QWidget:
+        """Erstellt die Haupt-Toolbar mit Buttons, Accessibility und Signalen."""
+        btn_open         = _make_primary_btn("PDF öffnen",     "PDF-Datei öffnen (Ctrl+O)")
+        btn_first        = _make_icon_btn("⏮",                 "Erste Seite")
+        btn_prev         = _make_icon_btn("◀",                 "Vorherige Seite")
+        btn_next         = _make_icon_btn("▶",                 "Nächste Seite")
+        btn_last         = _make_icon_btn("⏭",                 "Letzte Seite")
+        btn_goto         = _make_icon_btn("#",                 "Zu Seite springen")
+        btn_zoom_out     = _make_icon_btn("−",                 "Verkleinern")
+        btn_zoom_in      = _make_icon_btn("+",                 "Vergrößern")
+        btn_zoom_reset   = _make_icon_btn("⊡",                 "Zoom zurücksetzen")
+        btn_rotate_left  = _make_icon_btn("↺",                 "Seite links drehen")
+        btn_rotate_right = _make_icon_btn("↻",                 "Seite rechts drehen")
+        btn_rotate_reset = _make_icon_btn("⟲",                 "Drehung zurücksetzen")
+        btn_extract      = _make_action_btn("Seite erkennen",  "Text der aktuellen Seite extrahieren")
+        btn_extract_all  = _make_action_btn("Alle erkennen",   "Text aller Seiten extrahieren")
+        btn_auto_ocr_name = _make_primary_btn("OCR + Benennen", "OCR ausführen und Dateinamen vorschlagen")
+        btn_save         = _make_primary_btn("Speichern",      "Direkt speichern (Ctrl+S)")
+        btn_saveas       = _make_action_btn("Speichern als …", "Speichern unter (Ctrl+Shift+S)")
+        btn_merge        = _make_action_btn("Zusammenführen",  "PDFs zusammenführen")
+        btn_split        = _make_action_btn("Extrahieren",     "Seiten extrahieren")
+        btn_reorder      = _make_action_btn("Sortieren",       "Seiten neu anordnen")
+        btn_remove_empty = _make_action_btn("Leer entfernen",  "Leere Seiten entfernen")
+
+        # Accessibility
         btn_open.setAccessibleName("PDF öffnen")
-        btn_first.setToolTip("Erste Seite")
         btn_first.setAccessibleName("Erste Seite")
-        btn_prev.setToolTip("Vorherige Seite")
         btn_prev.setAccessibleName("Vorherige Seite")
-        btn_next.setToolTip("Nächste Seite")
         btn_next.setAccessibleName("Nächste Seite")
-        btn_last.setToolTip("Letzte Seite")
         btn_last.setAccessibleName("Letzte Seite")
         btn_zoom_out.setToolTip("Zoom verkleinern")
         btn_zoom_out.setAccessibleName("Zoom verkleinern")
@@ -292,27 +320,20 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         btn_rotate_right.setAccessibleName("Nach rechts drehen")
         btn_rotate_reset.setToolTip("Drehung zurücksetzen")
         btn_rotate_reset.setAccessibleName("Drehung zurücksetzen")
-        self.btn_undo.setToolTip("Rückgängig (Ctrl+Z)")
-        self.btn_undo.setAccessibleName("Rückgängig")
-        self.btn_redo.setToolTip("Wiederholen (Ctrl+Y)")
-        self.btn_redo.setAccessibleName("Wiederholen")
-        btn_search.setToolTip("Text in allen Seiten suchen")
-        btn_search.setAccessibleName("In allen Seiten suchen")
+        btn_extract.setAccessibleName("Text auf aktueller Seite erkennen")
+        btn_extract_all.setAccessibleName("Text auf allen Seiten erkennen")
+        btn_save.setToolTip("PDF direkt speichern (Ctrl+S)")
+        btn_save.setAccessibleName("PDF direkt speichern")
+        btn_saveas.setAccessibleName("PDF speichern unter")
+        btn_saveas.setToolTip("PDF speichern als … (Ctrl+Shift+S)")
+        btn_merge.setAccessibleName("PDFs zusammenführen")
+        btn_split.setAccessibleName("Seiten extrahieren")
+        btn_reorder.setAccessibleName("Seiten sortieren")
+        btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
         btn_auto_ocr_name.setToolTip("OCR für alle Seiten starten und Dateinamen vorschlagen")
         btn_auto_ocr_name.setAccessibleName("OCR und Dateiname vorschlagen")
-        btn_search_close.setToolTip("Suche schließen")
-        btn_search_close.setAccessibleName("Suche schließen")
-        btn_hit_prev.setToolTip("Vorherigen Treffer")
-        btn_hit_prev.setAccessibleName("Vorheriger Suchtreffer")
-        btn_hit_next.setToolTip("Nächsten Treffer")
-        btn_hit_next.setAccessibleName("Nächster Suchtreffer")
-        self.btn_cancel_ocr.setToolTip("Laufenden OCR-Vorgang abbrechen")
-        self.btn_cancel_ocr.setAccessibleName("OCR-Vorgang abbrechen")
-        self.btn_retry_failed_ocr.setToolTip("Nur fehlgeschlagene OCR-Seiten erneut versuchen")
-        self.btn_retry_failed_ocr.setAccessibleName("Fehlgeschlagene OCR erneut versuchen")
-        self.btn_reset_ocr_prefs.setToolTip("OCR-Sprache und Korrekturmodus zurücksetzen")
-        self.btn_reset_ocr_prefs.setAccessibleName("OCR-Einstellungen zurücksetzen")
 
+        # Signal-Verbindungen
         btn_open.clicked.connect(self.open_pdf)
         btn_first.clicked.connect(self.first_page)
         btn_prev.clicked.connect(self.prev_page)
@@ -325,19 +346,6 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         btn_rotate_left.clicked.connect(self.rotate_left)
         btn_rotate_right.clicked.connect(self.rotate_right)
         btn_rotate_reset.clicked.connect(self.reset_rotation)
-        self.btn_undo.clicked.connect(self.undo_last_change)
-        self.btn_redo.clicked.connect(self.redo_last_change)
-        btn_extract.setAccessibleName("Text auf aktueller Seite erkennen")
-        btn_extract_all.setAccessibleName("Text auf allen Seiten erkennen")
-        btn_save.setToolTip("PDF direkt speichern (Ctrl+S)")
-        btn_save.setAccessibleName("PDF direkt speichern")
-        btn_saveas.setAccessibleName("PDF speichern unter")
-        btn_saveas.setToolTip("PDF speichern als … (Ctrl+Shift+S)")
-        btn_merge.setAccessibleName("PDFs zusammenführen")
-        btn_split.setAccessibleName("Seiten extrahieren")
-        btn_reorder.setAccessibleName("Seiten sortieren")
-        btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
-
         btn_extract.clicked.connect(self.extract_text_and_suggest)
         btn_extract_all.clicked.connect(self.recognize_text_all_pages_and_suggest)
         btn_auto_ocr_name.clicked.connect(self.ocr_and_suggest_filename)
@@ -347,71 +355,46 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
-        btn_search.clicked.connect(self.open_search_and_run)
-        btn_search_close.clicked.connect(self.close_search_panel)
-        self.search_query.returnPressed.connect(self.search_all_pages)
-        btn_hit_prev.clicked.connect(self.prev_search_hit)
-        btn_hit_next.clicked.connect(self.next_search_hit)
-        self.btn_cancel_ocr.clicked.connect(self.cancel_ocr)
-        self.btn_retry_failed_ocr.clicked.connect(self.retry_failed_ocr_pages)
-        self.btn_reset_ocr_prefs.clicked.connect(self.reset_ocr_preferences)
 
-        # ── Toolbar ──────────────────────────────────────────────────────────
+        # Layout
         toolbar_widget = QWidget()
         toolbar_widget.setProperty("role", "toolbar")
         toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-        def _vsep() -> QFrame:
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setFixedWidth(1)
-            sep.setProperty("role", "toolsep")
-            return sep
 
         toolbar_top = QHBoxLayout(toolbar_widget)
         toolbar_top.setContentsMargins(12, 8, 12, 8)
         toolbar_top.setSpacing(4)
 
-        # Öffnen
         toolbar_top.addWidget(btn_open)
-        toolbar_top.addWidget(_vsep())
-
-        # Navigation
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(btn_first)
         toolbar_top.addWidget(btn_prev)
         toolbar_top.addWidget(btn_next)
         toolbar_top.addWidget(btn_last)
         toolbar_top.addWidget(btn_goto)
-        toolbar_top.addWidget(_vsep())
-
-        # Zoom
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(btn_zoom_out)
         toolbar_top.addWidget(btn_zoom_in)
         toolbar_top.addWidget(btn_zoom_reset)
-        toolbar_top.addWidget(_vsep())
-
-        # Rotation
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(btn_rotate_left)
         toolbar_top.addWidget(btn_rotate_right)
         toolbar_top.addWidget(btn_rotate_reset)
-        toolbar_top.addWidget(_vsep())
-
-        # Undo/Redo
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(self.btn_undo)
         toolbar_top.addWidget(self.btn_redo)
-        toolbar_top.addWidget(_vsep())
-
-        # OCR + Aktionen
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(btn_extract)
         toolbar_top.addWidget(btn_extract_all)
         toolbar_top.addWidget(btn_auto_ocr_name)
-        toolbar_top.addWidget(_vsep())
-
-        # Speichern
+        toolbar_top.addWidget(_make_vsep())
         toolbar_top.addWidget(btn_save)
         toolbar_top.addStretch(1)
 
-        # ── Annotations-Toolbar ──────────────────────────────────────────────
+        return toolbar_widget
+
+    def _build_annotation_bar(self) -> QWidget:
+        """Erstellt die Annotations-Toolbar."""
         annot_bar = QWidget()
         annot_bar.setProperty("role", "annotbar")
         annot_layout = QHBoxLayout(annot_bar)
@@ -448,7 +431,11 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         self.annot_mode_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         annot_layout.addWidget(self.annot_mode_label)
 
-        # ── Dateiname-Zeile ──────────────────────────────────────────────────
+        return annot_bar
+
+    def _build_secondary_bars(self) -> tuple[QWidget, QWidget, QWidget]:
+        """Erstellt Dateiname-Leiste, Suchleiste und OCR-Statusleiste."""
+        # ── Dateiname-Leiste ─────────────────────────────────────────────────
         name_widget = QWidget()
         name_widget.setProperty("role", "namebar")
         name_layout = QHBoxLayout(name_widget)
@@ -472,6 +459,27 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         lbl_search.setProperty("role", "fieldlabel")
         search_layout.addWidget(lbl_search)
         search_layout.addWidget(self.search_query, 1)
+
+        btn_search = _make_icon_btn("🔍", "Suche starten (Ctrl+F)")
+        btn_search.setToolTip("Text in allen Seiten suchen")
+        btn_search.setAccessibleName("In allen Seiten suchen")
+        btn_search.clicked.connect(self.open_search_and_run)
+
+        btn_hit_prev = _make_icon_btn("◀", "Vorheriger Treffer")
+        btn_hit_prev.setToolTip("Vorherigen Treffer")
+        btn_hit_prev.setAccessibleName("Vorheriger Suchtreffer")
+        btn_hit_prev.clicked.connect(self.prev_search_hit)
+
+        btn_hit_next = _make_icon_btn("▶", "Nächster Treffer")
+        btn_hit_next.setToolTip("Nächsten Treffer")
+        btn_hit_next.setAccessibleName("Nächster Suchtreffer")
+        btn_hit_next.clicked.connect(self.next_search_hit)
+
+        btn_search_close = _make_icon_btn("✕", "Suche schließen")
+        btn_search_close.setToolTip("Suche schließen")
+        btn_search_close.setAccessibleName("Suche schließen")
+        btn_search_close.clicked.connect(self.close_search_panel)
+
         search_layout.addWidget(btn_search)
         search_layout.addWidget(btn_hit_prev)
         search_layout.addWidget(btn_hit_next)
@@ -490,7 +498,17 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         ocr_layout.addWidget(self.btn_retry_failed_ocr)
         ocr_layout.addWidget(self.btn_reset_ocr_prefs)
 
-        # ── Splitter (Thumbnails + Vorschau) ─────────────────────────────────
+        return name_widget, self.search_bar_widget, ocr_bar
+
+    def _assemble_layout(
+        self,
+        toolbar: QWidget,
+        annot_bar: QWidget,
+        name_bar: QWidget,
+        search_bar: QWidget,
+        ocr_bar: QWidget,
+    ) -> None:
+        """Baut den Splitter und das Haupt-Layout und setzt das Central Widget."""
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.setHandleWidth(6)
@@ -500,14 +518,13 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         self.content_splitter.setStretchFactor(1, 1)
         self.content_splitter.setSizes([200, 980])
 
-        # ── Haupt-Layout ─────────────────────────────────────────────────────
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(toolbar_widget)
+        layout.addWidget(toolbar)
         layout.addWidget(annot_bar)
-        layout.addWidget(name_widget)
-        layout.addWidget(self.search_bar_widget)
+        layout.addWidget(name_bar)
+        layout.addWidget(search_bar)
         layout.addWidget(self.search_results_list)
         layout.addWidget(self.content_splitter, 1)
         layout.addWidget(ocr_bar)
@@ -516,6 +533,8 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+    def _build_menu(self) -> None:
+        """Erstellt die komplette Menüleiste mit allen Aktionen."""
         menu_file = self.menuBar().addMenu("Datei")
         act_open = QAction("Öffnen", self)
         act_open.setShortcut("Ctrl+O")
@@ -679,37 +698,15 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
         act_batch_rename.triggered.connect(self.batch_rename_folder)
         menu_export.addAction(act_batch_rename)
 
-        # Improve menu accessibility/discoverability (screen readers + status hints).
+        # Accessibility-Hints für alle Menü-Aktionen
         all_actions = [
-            act_open,
-            act_close_pdf,
-            act_save,
-            act_save_as,
-            act_undo,
-            act_redo,
-            act_extract_current,
-            act_extract,
-            act_retry_failed_ocr,
-            act_ocr_and_name,
-            act_ocr_lang,
-            act_ocr_correction_mode,
-            act_ocr_reset,
-            act_show_text,
-            act_search,
-            act_search_next,
-            act_search_prev,
-            act_searchable_pdf,
-            act_split,
-            act_reorder,
-            act_merge,
-            act_split_chunks,
-            act_remove_empty,
-            act_rotate_left,
-            act_rotate_right,
-            act_delete_pages,
-            act_export_current,
-            act_export_folder,
-            act_batch_rename,
+            act_open, act_close_pdf, act_save, act_save_as, act_undo, act_redo,
+            act_extract_current, act_extract, act_retry_failed_ocr, act_ocr_and_name,
+            act_ocr_lang, act_ocr_correction_mode, act_ocr_reset, act_show_text,
+            act_search, act_search_next, act_search_prev, act_searchable_pdf,
+            act_split, act_reorder, act_merge, act_split_chunks, act_remove_empty,
+            act_rotate_left, act_rotate_right, act_delete_pages,
+            act_export_current, act_export_folder, act_batch_rename,
         ]
         for action in all_actions:
             text = action.text().replace("&", "")
@@ -717,7 +714,6 @@ class MainWindow(OcrMixin, PdfToolsMixin, ExportMixin, AnnotationMixin, QMainWin
             action.setToolTip(text)
             action.setWhatsThis(text)
 
-        self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
 
     def _set_extracted_text(self, text: str) -> None:
         self.extracted_text = text
