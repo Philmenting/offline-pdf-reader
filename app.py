@@ -1,4 +1,5 @@
 import csv
+import io
 import json
 import os
 import re
@@ -14,15 +15,17 @@ import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image, ImageFilter, ImageOps
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
@@ -35,7 +38,9 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -1021,6 +1026,45 @@ class ThumbnailListWidget(QListWidget):
         self.pagesReordered.emit()
 
 
+class PreviewLabel(QLabel):
+    clicked = Signal(float, float)
+    dragStarted = Signal(float, float)
+    dragMoved = Signal(float, float)
+    dragFinished = Signal(float, float)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._drag_origin: QPointF | None = None
+        self._dragging = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            self._drag_origin = pos
+            self._dragging = True
+            self.dragStarted.emit(pos.x(), pos.y())
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            pos = event.position()
+            self.dragMoved.emit(pos.x(), pos.y())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_origin is not None:
+            pos = event.position()
+            dx = pos.x() - self._drag_origin.x()
+            dy = pos.y() - self._drag_origin.y()
+            if abs(dx) < 4 and abs(dy) < 4:
+                self.clicked.emit(pos.x(), pos.y())
+            else:
+                self.dragFinished.emit(pos.x(), pos.y())
+        self._drag_origin = None
+        self._dragging = False
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -1043,16 +1087,20 @@ class MainWindow(QMainWindow):
         self.redo_stack: list[tuple[bytes, dict[int, int], int]] = []
         self.is_dirty = False
 
-        self.preview = QLabel("Kein PDF geladen")
+        self.preview = PreviewLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(460)
+        self.preview.setCursor(Qt.CursorShape.ArrowCursor)
+        self.preview.setProperty("role", "pagepreview")
 
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidget(self.preview)
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_scroll.setProperty("role", "previewarea")
 
         self.thumb_list = ThumbnailListWidget()
+        self.thumb_list.setProperty("role", "thumbrail")
         self.thumb_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.thumb_list.setFlow(QListWidget.Flow.TopToBottom)
         self.thumb_list.setMovement(QListWidget.Movement.Snap)
@@ -1072,10 +1120,21 @@ class MainWindow(QMainWindow):
         self.thumb_list.customContextMenuRequested.connect(self._show_thumbnail_context_menu)
         self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
         self.thumb_list.pagesReordered.connect(self._reorder_pages_by_thumbnail_order)
+        self.preview.clicked.connect(self._handle_preview_click)
+        self.preview.dragStarted.connect(self._handle_preview_drag_start)
+        self.preview.dragMoved.connect(self._handle_preview_drag_move)
+        self.preview.dragFinished.connect(self._handle_preview_drag_finish)
 
         self.extracted_text = ""
         self.text_dialog: QDialog | None = None
         self.text_output_view: QTextEdit | None = None
+        self.pending_annotation: dict | None = None
+        self.preview_drag_start: tuple[float, float] | None = None
+        self.preview_drag_current: tuple[float, float] | None = None
+        self.preview_drag_points: list[tuple[float, float]] = []
+        self.selected_annotation_xref: int | None = None
+        self.annotation_image_path: Path | None = None
+        self.annotation_image_preview: QPixmap | None = None
 
         self.suggested_name = QLineEdit()
         self.suggested_name.setPlaceholderText("Dateiname wird nach OCR vorgeschlagen …")
@@ -1112,6 +1171,25 @@ class MainWindow(QMainWindow):
 
         self.page_info = QLabel("Seite: -/- | Zoom: 100%")
 
+        self.thumb_panel = QWidget()
+        self.thumb_panel.setProperty("role", "thumbpanel")
+        thumb_panel_layout = QVBoxLayout(self.thumb_panel)
+        thumb_panel_layout.setContentsMargins(10, 10, 10, 10)
+        thumb_panel_layout.setSpacing(8)
+        thumb_header = QWidget()
+        thumb_header.setProperty("role", "sectioncard")
+        thumb_header_layout = QVBoxLayout(thumb_header)
+        thumb_header_layout.setContentsMargins(10, 10, 10, 10)
+        thumb_header_layout.setSpacing(2)
+        self.thumb_title_label = QLabel("Seiten")
+        self.thumb_title_label.setProperty("role", "cardtitle")
+        self.thumb_meta_label = QLabel("Noch kein PDF geladen")
+        self.thumb_meta_label.setProperty("role", "panelsubtitle")
+        thumb_header_layout.addWidget(self.thumb_title_label)
+        thumb_header_layout.addWidget(self.thumb_meta_label)
+        thumb_panel_layout.addWidget(thumb_header)
+        thumb_panel_layout.addWidget(self.thumb_list, 1)
+
         self.preview.setAccessibleName("PDF-Seitenvorschau")
         self.preview.setAccessibleDescription("Zeigt die aktuell ausgewählte Seite als große Vorschau")
         self.preview_scroll.setAccessibleName("Vorschau-Scrollbereich")
@@ -1141,6 +1219,7 @@ class MainWindow(QMainWindow):
             if tooltip:
                 b.setToolTip(tooltip)
             b.setProperty("btnRole", "icon")
+            b.setMinimumHeight(32)
             return b
 
         def _primary_btn(label: str, tooltip: str = "") -> QPushButton:
@@ -1149,6 +1228,7 @@ class MainWindow(QMainWindow):
             if tooltip:
                 b.setToolTip(tooltip)
             b.setProperty("btnRole", "primary")
+            b.setMinimumHeight(34)
             return b
 
         def _action_btn(label: str, tooltip: str = "") -> QPushButton:
@@ -1157,6 +1237,143 @@ class MainWindow(QMainWindow):
             if tooltip:
                 b.setToolTip(tooltip)
             b.setProperty("btnRole", "action")
+            b.setMinimumHeight(34)
+            return b
+
+        def _std_icon(button: QPushButton, icon: QStyle.StandardPixmap, text: str = "") -> None:
+            button.setIcon(self.style().standardIcon(icon))
+            if text != button.text():
+                button.setText(text)
+
+        def _make_annotation_icon(kind: str) -> QIcon:
+            pix = QPixmap(20, 20)
+            pix.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pix)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#35507c"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+
+            if kind == "text":
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(11)
+                painter.setFont(font)
+                painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "T")
+            elif kind == "rect":
+                painter.drawRoundedRect(3, 4, 14, 11, 3, 3)
+            elif kind == "highlight":
+                painter.fillRect(3, 10, 14, 5, QColor("#ffeb3b"))
+                painter.drawLine(4, 9, 16, 9)
+            elif kind == "line":
+                painter.drawLine(4, 15, 16, 5)
+            elif kind == "arrow":
+                painter.drawLine(4, 15, 15, 6)
+                painter.drawLine(11, 6, 15, 6)
+                painter.drawLine(15, 6, 15, 10)
+            elif kind == "image":
+                painter.drawRoundedRect(3, 4, 14, 12, 2, 2)
+                painter.drawEllipse(6, 7, 2, 2)
+                painter.drawLine(5, 14, 9, 10)
+                painter.drawLine(9, 10, 12, 13)
+                painter.drawLine(12, 13, 15, 9)
+            elif kind == "redact":
+                painter.fillRect(4, 6, 12, 8, QColor("#111111"))
+                painter.drawLine(4, 15, 16, 15)
+            elif kind == "note":
+                painter.drawRoundedRect(4, 4, 12, 12, 2, 2)
+                painter.drawLine(7, 8, 13, 8)
+                painter.drawLine(7, 11, 12, 11)
+            elif kind == "freehand":
+                painter.drawLine(4, 14, 7, 10)
+                painter.drawLine(7, 10, 11, 13)
+                painter.drawLine(11, 13, 16, 6)
+            elif kind == "text-replace":
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(8)
+                painter.setFont(font)
+                painter.drawRoundedRect(3, 4, 14, 12, 2, 2)
+                painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "Aa")
+
+            painter.end()
+            return QIcon(pix)
+
+        def _make_toolbar_icon(kind: str) -> QIcon:
+            pix = QPixmap(20, 20)
+            pix.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pix)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#35507c"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+
+            if kind == "extract":
+                painter.drawRoundedRect(4, 3, 12, 14, 2, 2)
+                painter.drawLine(7, 8, 13, 8)
+                painter.drawLine(7, 11, 13, 11)
+            elif kind == "extract-all":
+                painter.drawRoundedRect(3, 4, 8, 11, 2, 2)
+                painter.drawRoundedRect(9, 6, 8, 11, 2, 2)
+            elif kind == "ocr-name":
+                painter.drawRoundedRect(3, 3, 10, 14, 2, 2)
+                painter.drawLine(6, 8, 10, 8)
+                painter.drawLine(6, 11, 10, 11)
+                painter.drawLine(13, 14, 17, 10)
+            elif kind == "merge":
+                painter.drawLine(4, 6, 10, 12)
+                painter.drawLine(16, 6, 10, 12)
+                painter.drawLine(10, 12, 10, 17)
+            elif kind == "split":
+                painter.drawLine(10, 4, 10, 10)
+                painter.drawLine(10, 10, 5, 15)
+                painter.drawLine(10, 10, 15, 15)
+            elif kind == "crop":
+                painter.drawLine(6, 4, 6, 14)
+                painter.drawLine(6, 14, 16, 14)
+                painter.drawLine(10, 4, 10, 10)
+                painter.drawLine(10, 10, 16, 10)
+            elif kind == "reorder":
+                painter.drawLine(5, 6, 15, 6)
+                painter.drawLine(5, 10, 13, 10)
+                painter.drawLine(5, 14, 15, 14)
+            elif kind == "remove-empty":
+                painter.drawRoundedRect(5, 4, 10, 12, 2, 2)
+                painter.drawLine(7, 8, 13, 8)
+                painter.drawLine(8, 8, 12, 13)
+            elif kind == "goto":
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(10)
+                painter.setFont(font)
+                painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "#")
+            elif kind == "zoom-reset":
+                painter.drawRoundedRect(4, 4, 12, 12, 3, 3)
+                painter.drawLine(7, 10, 13, 10)
+                painter.drawLine(10, 7, 10, 13)
+            elif kind == "rotate-left":
+                painter.drawArc(4, 4, 12, 12, 40 * 16, 240 * 16)
+                painter.drawLine(4, 8, 4, 4)
+                painter.drawLine(4, 4, 8, 4)
+            elif kind == "rotate-right":
+                painter.drawArc(4, 4, 12, 12, 220 * 16, 240 * 16)
+                painter.drawLine(16, 8, 16, 4)
+                painter.drawLine(12, 4, 16, 4)
+            elif kind == "rotate-reset":
+                painter.drawEllipse(5, 5, 10, 10)
+                painter.drawLine(10, 7, 10, 10)
+                painter.drawLine(10, 10, 13, 12)
+
+            painter.end()
+            return QIcon(pix)
+
+        def _tool_btn(label: str, tooltip: str = "") -> QPushButton:
+            b = QPushButton(label)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tooltip:
+                b.setToolTip(tooltip)
+            b.setProperty("btnRole", "tool")
+            b.setMinimumHeight(34)
             return b
 
         def _separator() -> QFrame:
@@ -1179,23 +1396,75 @@ class MainWindow(QMainWindow):
         btn_rotate_reset = _icon_btn("⟲",                 "Drehung zurücksetzen")
         self.btn_undo    = _icon_btn("↶",                 "Rückgängig (Ctrl+Z)")
         self.btn_redo    = _icon_btn("↷",                 "Wiederholen (Ctrl+Y)")
-        btn_extract      = _action_btn("Seite erkennen",  "Text der aktuellen Seite extrahieren")
-        btn_extract_all  = _action_btn("Alle erkennen",   "Text aller Seiten extrahieren")
+        btn_extract      = _tool_btn("Seite",             "Text der aktuellen Seite extrahieren")
+        btn_extract_all  = _tool_btn("Alle",              "Text aller Seiten extrahieren")
         btn_auto_ocr_name = _primary_btn("OCR + Benennen", "OCR ausführen und Dateinamen vorschlagen")
         btn_save         = _primary_btn("Speichern",      "Direkt speichern (Ctrl+S)")
         btn_saveas       = _action_btn("Speichern als …", "Speichern unter (Ctrl+Shift+S)")
-        btn_merge        = _action_btn("Zusammenführen",  "PDFs zusammenführen")
-        btn_split        = _action_btn("Extrahieren",     "Seiten extrahieren")
-        btn_reorder      = _action_btn("Sortieren",       "Seiten neu anordnen")
-        btn_remove_empty = _action_btn("Leer entfernen",  "Leere Seiten entfernen")
+        btn_merge        = _tool_btn("Merge",             "PDFs zusammenführen")
+        btn_split        = _tool_btn("Split",             "Seiten extrahieren")
+        btn_crop         = _tool_btn("Crop",              "Seiten zuschneiden")
+        btn_duplicate    = _tool_btn("Dupl.",             "Aktuelle oder ausgewählte Seiten duplizieren")
+        btn_blank_page   = _tool_btn("Leer+",             "Leere Seite nach der aktuellen Seite einfügen")
+        btn_form_fields  = _tool_btn("Form",              "Formularfelder auf der aktuellen Seite bearbeiten")
+        btn_add_text     = _action_btn("Text",            "Text auf PDF hinzufügen")
+        btn_add_rect     = _action_btn("Rechteck",        "Rechteck auf PDF hinzufügen")
+        btn_add_highlight = _action_btn("Marker",         "Markierung auf PDF hinzufügen")
+        btn_add_line     = _action_btn("Linie",           "Linie auf PDF hinzufügen")
+        btn_add_arrow    = _action_btn("Pfeil",           "Pfeil auf PDF hinzufügen")
+        btn_add_image    = _action_btn("Bild",            "Bild, Signatur oder Stempel einfügen")
+        btn_add_redact   = _action_btn("Schwärzen",       "Text oder Bereiche irreversibel schwärzen")
+        btn_add_note     = _action_btn("Notiz",           "Haftnotiz / Kommentar einfügen")
+        btn_add_freehand = _action_btn("Freihand",        "Freihand-Markierung zeichnen")
+        btn_replace_text = _action_btn("Text ersetzen",   "Bereich schwärzen und durch neuen Text ersetzen")
+        btn_reorder      = _tool_btn("Sortieren",         "Seiten neu anordnen")
+        btn_remove_empty = _tool_btn("Leer",              "Leere Seiten entfernen")
         btn_search       = _icon_btn("🔍",                 "Suche starten (Ctrl+F)")
         btn_search_close = _icon_btn("✕",                 "Suche schließen")
         btn_hit_prev     = _icon_btn("◀",                 "Vorheriger Treffer")
         btn_hit_next     = _icon_btn("▶",                 "Nächster Treffer")
 
+        _std_icon(btn_open, QStyle.StandardPixmap.SP_DialogOpenButton)
+        _std_icon(btn_save, QStyle.StandardPixmap.SP_DialogSaveButton)
+        _std_icon(btn_saveas, QStyle.StandardPixmap.SP_DialogSaveButton)
+        _std_icon(self.btn_undo, QStyle.StandardPixmap.SP_ArrowBack)
+        _std_icon(self.btn_redo, QStyle.StandardPixmap.SP_ArrowForward)
+        _std_icon(btn_search, QStyle.StandardPixmap.SP_FileDialogContentsView)
+        _std_icon(btn_search_close, QStyle.StandardPixmap.SP_DialogCloseButton)
+        btn_goto.setIcon(_make_toolbar_icon("goto"))
+        btn_zoom_reset.setIcon(_make_toolbar_icon("zoom-reset"))
+        btn_rotate_left.setIcon(_make_toolbar_icon("rotate-left"))
+        btn_rotate_right.setIcon(_make_toolbar_icon("rotate-right"))
+        btn_rotate_reset.setIcon(_make_toolbar_icon("rotate-reset"))
+        btn_extract.setIcon(_make_toolbar_icon("extract"))
+        btn_extract_all.setIcon(_make_toolbar_icon("extract-all"))
+        btn_auto_ocr_name.setIcon(_make_toolbar_icon("ocr-name"))
+        btn_merge.setIcon(_make_toolbar_icon("merge"))
+        btn_split.setIcon(_make_toolbar_icon("split"))
+        btn_crop.setIcon(_make_toolbar_icon("crop"))
+        btn_duplicate.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        btn_blank_page.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
+        btn_form_fields.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        btn_reorder.setIcon(_make_toolbar_icon("reorder"))
+        btn_remove_empty.setIcon(_make_toolbar_icon("remove-empty"))
+        btn_add_text.setIcon(_make_annotation_icon("text"))
+        btn_add_rect.setIcon(_make_annotation_icon("rect"))
+        btn_add_highlight.setIcon(_make_annotation_icon("highlight"))
+        btn_add_line.setIcon(_make_annotation_icon("line"))
+        btn_add_arrow.setIcon(_make_annotation_icon("arrow"))
+        btn_add_image.setIcon(_make_annotation_icon("image"))
+        btn_add_redact.setIcon(_make_annotation_icon("redact"))
+        btn_add_note.setIcon(_make_annotation_icon("note"))
+        btn_add_freehand.setIcon(_make_annotation_icon("freehand"))
+        btn_replace_text.setIcon(_make_annotation_icon("text-replace"))
+
         self.search_counter = QLabel("0 / 0")
         self.search_counter.setAccessibleName("Suchtreffer-Zähler")
         self.search_counter.setProperty("role", "counter")
+
+        self.annotation_hint = QLabel("Bereit")
+        self.annotation_hint.setProperty("role", "hintchip")
+        self.annotation_hint.setAccessibleName("Aktiver Werkzeughinweis")
 
         self.btn_cancel_ocr = _action_btn("OCR stoppen")
         self.btn_cancel_ocr.setEnabled(False)
@@ -1270,6 +1539,21 @@ class MainWindow(QMainWindow):
         btn_saveas.setToolTip("PDF speichern als … (Ctrl+Shift+S)")
         btn_merge.setAccessibleName("PDFs zusammenführen")
         btn_split.setAccessibleName("Seiten extrahieren")
+        btn_crop.setAccessibleName("Seiten zuschneiden")
+        btn_crop.setToolTip("Seiten zuschneiden")
+        btn_duplicate.setAccessibleName("Seiten duplizieren")
+        btn_blank_page.setAccessibleName("Leere Seite einfügen")
+        btn_form_fields.setAccessibleName("Formularfelder bearbeiten")
+        btn_add_text.setAccessibleName("Text auf PDF hinzufügen")
+        btn_add_rect.setAccessibleName("Rechteck auf PDF hinzufügen")
+        btn_add_highlight.setAccessibleName("Markierung auf PDF hinzufügen")
+        btn_add_line.setAccessibleName("Linie auf PDF hinzufügen")
+        btn_add_arrow.setAccessibleName("Pfeil auf PDF hinzufügen")
+        btn_add_image.setAccessibleName("Bild auf PDF hinzufügen")
+        btn_add_redact.setAccessibleName("PDF-Bereich schwärzen")
+        btn_add_note.setAccessibleName("Notiz auf PDF hinzufügen")
+        btn_add_freehand.setAccessibleName("Freihand auf PDF zeichnen")
+        btn_replace_text.setAccessibleName("Text im PDF ersetzen")
         btn_reorder.setAccessibleName("Seiten sortieren")
         btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
 
@@ -1280,6 +1564,20 @@ class MainWindow(QMainWindow):
         btn_saveas.clicked.connect(self.save_as_suggested)
         btn_merge.clicked.connect(self.merge_pdfs)
         btn_split.clicked.connect(self.extract_pages_to_new_pdf)
+        btn_crop.clicked.connect(self.start_visual_crop)
+        btn_duplicate.clicked.connect(self.duplicate_selected_pages)
+        btn_blank_page.clicked.connect(self.insert_blank_page_after_current)
+        btn_form_fields.clicked.connect(self.edit_form_fields_on_current_page)
+        btn_add_text.clicked.connect(self.add_text_annotation)
+        btn_add_rect.clicked.connect(self.add_rectangle_annotation)
+        btn_add_highlight.clicked.connect(self.add_highlight_annotation)
+        btn_add_line.clicked.connect(self.add_line_annotation)
+        btn_add_arrow.clicked.connect(self.add_arrow_annotation)
+        btn_add_image.clicked.connect(self.add_image_annotation)
+        btn_add_redact.clicked.connect(self.add_redaction_annotation)
+        btn_add_note.clicked.connect(self.add_note_annotation)
+        btn_add_freehand.clicked.connect(self.add_freehand_annotation)
+        btn_replace_text.clicked.connect(self.replace_text_annotation)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
         btn_search.clicked.connect(self.open_search_and_run)
@@ -1291,66 +1589,229 @@ class MainWindow(QMainWindow):
         self.btn_retry_failed_ocr.clicked.connect(self.retry_failed_ocr_pages)
         self.btn_reset_ocr_prefs.clicked.connect(self.reset_ocr_preferences)
 
+        self.annotation_tool_kind = "text"
+        self.annotation_tool_buttons: dict[str, QPushButton] = {
+            "text": btn_add_text,
+            "rect": btn_add_rect,
+            "highlight": btn_add_highlight,
+            "line": btn_add_line,
+            "arrow": btn_add_arrow,
+            "image": btn_add_image,
+            "redact": btn_add_redact,
+            "note": btn_add_note,
+            "freehand": btn_add_freehand,
+            "text-replace": btn_replace_text,
+        }
+
+        self.annotation_panel = QWidget()
+        self.annotation_panel.setProperty("role", "sidepanel")
+        self.annotation_panel.setMinimumWidth(260)
+        self.annotation_panel.setMaximumWidth(340)
+        annotation_layout = QVBoxLayout(self.annotation_panel)
+        annotation_layout.setContentsMargins(12, 12, 12, 12)
+        annotation_layout.setSpacing(10)
+        annotation_title = QLabel("Annotieren")
+        annotation_title.setProperty("role", "paneltitle")
+        annotation_layout.addWidget(annotation_title)
+        annotation_subtitle = QLabel("Werkzeuge und Eigenschaften direkt in der Sidebar – ohne Dialog-Stapel.")
+        annotation_subtitle.setWordWrap(True)
+        annotation_subtitle.setProperty("role", "panelsubtitle")
+        annotation_layout.addWidget(annotation_subtitle)
+
+        tool_card = QWidget()
+        tool_card.setProperty("role", "panelcard")
+        tool_card_layout = QVBoxLayout(tool_card)
+        tool_card_layout.setContentsMargins(12, 12, 12, 12)
+        tool_card_layout.setSpacing(10)
+        tool_card_title = QLabel("Werkzeuge")
+        tool_card_title.setProperty("role", "cardtitle")
+        tool_card_layout.addWidget(tool_card_title)
+        tool_grid = QGridLayout()
+        tool_grid.setHorizontalSpacing(8)
+        tool_grid.setVerticalSpacing(8)
+        tool_grid.addWidget(btn_add_text, 0, 0)
+        tool_grid.addWidget(btn_add_rect, 0, 1)
+        tool_grid.addWidget(btn_add_highlight, 1, 0)
+        tool_grid.addWidget(btn_add_line, 1, 1)
+        tool_grid.addWidget(btn_add_arrow, 2, 0)
+        tool_grid.addWidget(btn_add_image, 2, 1)
+        tool_grid.addWidget(btn_add_redact, 3, 0)
+        tool_grid.addWidget(btn_add_note, 3, 1)
+        tool_grid.addWidget(btn_add_freehand, 4, 0)
+        tool_grid.addWidget(btn_replace_text, 4, 1)
+        tool_card_layout.addLayout(tool_grid)
+        annotation_layout.addWidget(tool_card)
+
+        properties_card = QWidget()
+        properties_card.setProperty("role", "panelcard")
+        properties_layout = QVBoxLayout(properties_card)
+        properties_layout.setContentsMargins(12, 12, 12, 12)
+        properties_layout.setSpacing(8)
+        properties_title = QLabel("Eigenschaften")
+        properties_title.setProperty("role", "cardtitle")
+        properties_layout.addWidget(properties_title)
+
+        self.annotation_form_hint = QLabel("Text hinzufügen")
+        self.annotation_form_hint.setProperty("role", "panelinfo")
+        properties_layout.addWidget(self.annotation_form_hint)
+
+        self.annotation_text_label = QLabel("Text")
+        self.annotation_text_label.setProperty("role", "fieldlabel")
+        properties_layout.addWidget(self.annotation_text_label)
+        self.annotation_text_input = QTextEdit()
+        self.annotation_text_input.setPlaceholderText("Text für die Annotation …")
+        self.annotation_text_input.setFixedHeight(84)
+        properties_layout.addWidget(self.annotation_text_input)
+
+        self.annotation_image_label = QLabel("Bild / Signatur")
+        self.annotation_image_label.setProperty("role", "fieldlabel")
+        properties_layout.addWidget(self.annotation_image_label)
+        self.annotation_image_path_label = QLabel("Keine Datei ausgewählt")
+        self.annotation_image_path_label.setProperty("role", "panelinfo")
+        properties_layout.addWidget(self.annotation_image_path_label)
+        self.btn_annotation_pick_image = _action_btn("Datei wählen", "Bilddatei für Signatur, Stempel oder Overlay auswählen")
+        self.btn_annotation_pick_image.clicked.connect(self.pick_annotation_image)
+        properties_layout.addWidget(self.btn_annotation_pick_image)
+
+        size_grid = QGridLayout()
+        size_grid.setHorizontalSpacing(8)
+        size_grid.setVerticalSpacing(8)
+
+        self.annotation_width_label = QLabel("Breite %")
+        self.annotation_width_label.setProperty("role", "fieldlabel")
+        self.annotation_width_spin = QDoubleSpinBox()
+        self.annotation_width_spin.setRange(1.0, 100.0)
+        self.annotation_width_spin.setDecimals(1)
+        self.annotation_width_spin.setSingleStep(1.0)
+        self.annotation_width_spin.setSuffix(" %")
+        self.annotation_width_spin.setValue(35.0)
+        size_grid.addWidget(self.annotation_width_label, 0, 0)
+        size_grid.addWidget(self.annotation_width_spin, 0, 1)
+
+        self.annotation_height_label = QLabel("Höhe %")
+        self.annotation_height_label.setProperty("role", "fieldlabel")
+        self.annotation_height_spin = QDoubleSpinBox()
+        self.annotation_height_spin.setRange(1.0, 100.0)
+        self.annotation_height_spin.setDecimals(1)
+        self.annotation_height_spin.setSingleStep(1.0)
+        self.annotation_height_spin.setSuffix(" %")
+        self.annotation_height_spin.setValue(12.0)
+        size_grid.addWidget(self.annotation_height_label, 1, 0)
+        size_grid.addWidget(self.annotation_height_spin, 1, 1)
+
+        self.annotation_font_label = QLabel("Schriftgröße")
+        self.annotation_font_label.setProperty("role", "fieldlabel")
+        self.annotation_font_size_spin = QSpinBox()
+        self.annotation_font_size_spin.setRange(6, 72)
+        self.annotation_font_size_spin.setSuffix(" pt")
+        self.annotation_font_size_spin.setValue(12)
+        size_grid.addWidget(self.annotation_font_label, 2, 0)
+        size_grid.addWidget(self.annotation_font_size_spin, 2, 1)
+
+        self.annotation_line_width_label = QLabel("Linienstärke")
+        self.annotation_line_width_label.setProperty("role", "fieldlabel")
+        self.annotation_line_width_spin = QDoubleSpinBox()
+        self.annotation_line_width_spin.setRange(0.5, 20.0)
+        self.annotation_line_width_spin.setDecimals(1)
+        self.annotation_line_width_spin.setSingleStep(0.5)
+        self.annotation_line_width_spin.setSuffix(" pt")
+        self.annotation_line_width_spin.setValue(2.0)
+        size_grid.addWidget(self.annotation_line_width_label, 3, 0)
+        size_grid.addWidget(self.annotation_line_width_spin, 3, 1)
+        properties_layout.addLayout(size_grid)
+
+        self.annotation_color_label = QLabel("Farbe")
+        self.annotation_color_label.setProperty("role", "fieldlabel")
+        properties_layout.addWidget(self.annotation_color_label)
+        self.annotation_color_input = QLineEdit()
+        self.annotation_color_input.setPlaceholderText("z.B. 220, 20, 60 oder #dc143c")
+        self.annotation_color_input.textChanged.connect(self._refresh_annotation_color_buttons)
+        properties_layout.addWidget(self.annotation_color_input)
+
+        self.annotation_color_row = QHBoxLayout()
+        self.annotation_color_row.setSpacing(6)
+        self.annotation_color_buttons: list[tuple[QPushButton, str]] = []
+        for color_hex in ("#dc143c", "#0078d7", "#ffeb3b", "#10b981", "#111827", "#ffffff"):
+            chip = QPushButton("")
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setFixedSize(28, 28)
+            chip.setProperty("btnRole", "colorchip")
+            chip.clicked.connect(lambda _checked=False, value=color_hex: self._set_annotation_color(value))
+            self.annotation_color_buttons.append((chip, color_hex))
+            self.annotation_color_row.addWidget(chip)
+        self.annotation_color_row.addStretch(1)
+        properties_layout.addLayout(self.annotation_color_row)
+
+        self.btn_activate_annotation = _primary_btn("Werkzeug aktivieren", "Ausgewähltes Werkzeug mit diesen Eigenschaften starten")
+        self.btn_activate_annotation.clicked.connect(self.activate_selected_annotation_tool)
+        self.btn_cancel_annotation_mode = _action_btn("Modus verlassen", "Aktiven Annotationsmodus beenden")
+        self.btn_cancel_annotation_mode.clicked.connect(self._clear_pending_annotation)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        action_row.addWidget(self.btn_activate_annotation, 1)
+        action_row.addWidget(self.btn_cancel_annotation_mode)
+        properties_layout.addLayout(action_row)
+        annotation_layout.addWidget(properties_card)
+
+        self.annotation_selection_label = QLabel("Keine Annotation ausgewählt")
+        self.annotation_selection_label.setWordWrap(True)
+        self.annotation_selection_label.setProperty("role", "panelinfo")
+        annotation_layout.addWidget(self.annotation_selection_label)
+        self.btn_edit_annotation_style = _action_btn("Stil bearbeiten", "Farbe und Linienstärke der ausgewählten Annotation anpassen")
+        self.btn_edit_annotation_style.clicked.connect(self.edit_selected_annotation_style)
+        self.btn_edit_annotation_style.setEnabled(False)
+        annotation_layout.addWidget(self.btn_edit_annotation_style)
+        self.btn_edit_annotation_comment = _action_btn("Kommentar bearbeiten", "Kommentar/Inhalt der ausgewählten Annotation bearbeiten")
+        self.btn_edit_annotation_comment.clicked.connect(self.edit_selected_annotation_comment)
+        self.btn_edit_annotation_comment.setEnabled(False)
+        annotation_layout.addWidget(self.btn_edit_annotation_comment)
+        self.btn_reply_annotation = _action_btn("Antwort hinzufügen", "Antwort-Notiz zur ausgewählten Annotation hinzufügen")
+        self.btn_reply_annotation.clicked.connect(self.reply_to_selected_annotation)
+        self.btn_reply_annotation.setEnabled(False)
+        annotation_layout.addWidget(self.btn_reply_annotation)
+        self.btn_delete_annotation = _action_btn("Auswahl löschen", "Ausgewählte Annotation entfernen")
+        self.btn_delete_annotation.clicked.connect(self.delete_selected_annotation)
+        self.btn_delete_annotation.setEnabled(False)
+        annotation_layout.addWidget(self.btn_delete_annotation)
+        annotation_layout.addStretch(1)
+
         # ── Toolbar ──────────────────────────────────────────────────────────
         toolbar_widget = QWidget()
         toolbar_widget.setProperty("role", "toolbar")
         toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        def _vsep() -> QFrame:
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setFixedWidth(1)
-            sep.setProperty("role", "toolsep")
-            return sep
+        def _ribbon_group(title: str, widgets: list[QWidget]) -> QWidget:
+            group = QWidget()
+            group.setProperty("role", "ribbongroup")
+            group_layout = QVBoxLayout(group)
+            group_layout.setContentsMargins(9, 7, 9, 7)
+            group_layout.setSpacing(5)
+            label = QLabel(title)
+            label.setProperty("role", "ribbontitle")
+            group_layout.addWidget(label)
+            row = QHBoxLayout()
+            row.setSpacing(5)
+            for widget in widgets:
+                row.addWidget(widget)
+            row.addStretch(1)
+            group_layout.addLayout(row)
+            return group
 
         toolbar_top = QHBoxLayout(toolbar_widget)
-        toolbar_top.setContentsMargins(12, 8, 12, 8)
-        toolbar_top.setSpacing(4)
-
-        # Öffnen
-        toolbar_top.addWidget(btn_open)
-        toolbar_top.addWidget(_vsep())
-
-        # Navigation
-        toolbar_top.addWidget(btn_first)
-        toolbar_top.addWidget(btn_prev)
-        toolbar_top.addWidget(btn_next)
-        toolbar_top.addWidget(btn_last)
-        toolbar_top.addWidget(btn_goto)
-        toolbar_top.addWidget(_vsep())
-
-        # Zoom
-        toolbar_top.addWidget(btn_zoom_out)
-        toolbar_top.addWidget(btn_zoom_in)
-        toolbar_top.addWidget(btn_zoom_reset)
-        toolbar_top.addWidget(_vsep())
-
-        # Rotation
-        toolbar_top.addWidget(btn_rotate_left)
-        toolbar_top.addWidget(btn_rotate_right)
-        toolbar_top.addWidget(btn_rotate_reset)
-        toolbar_top.addWidget(_vsep())
-
-        # Undo/Redo
-        toolbar_top.addWidget(self.btn_undo)
-        toolbar_top.addWidget(self.btn_redo)
-        toolbar_top.addWidget(_vsep())
-
-        # OCR + Aktionen
-        toolbar_top.addWidget(btn_extract)
-        toolbar_top.addWidget(btn_extract_all)
-        toolbar_top.addWidget(btn_auto_ocr_name)
-        toolbar_top.addWidget(_vsep())
-
-        # Speichern
-        toolbar_top.addWidget(btn_save)
+        toolbar_top.setContentsMargins(10, 8, 10, 8)
+        toolbar_top.setSpacing(8)
+        toolbar_top.addWidget(_ribbon_group("Datei", [btn_open, btn_save, btn_saveas]))
+        toolbar_top.addWidget(_ribbon_group("Seiten", [btn_first, btn_prev, btn_next, btn_last, btn_goto, btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]))
+        toolbar_top.addWidget(_ribbon_group("Ansicht", [btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_search]))
+        toolbar_top.addWidget(_ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]))
+        toolbar_top.addWidget(_ribbon_group("PDF", [btn_split, btn_crop, btn_form_fields, btn_merge]))
         toolbar_top.addStretch(1)
 
         # ── Dateiname-Zeile ──────────────────────────────────────────────────
         name_widget = QWidget()
         name_widget.setProperty("role", "namebar")
         name_layout = QHBoxLayout(name_widget)
-        name_layout.setContentsMargins(12, 6, 12, 6)
+        name_layout.setContentsMargins(10, 8, 10, 8)
         name_layout.setSpacing(8)
         lbl_name = QLabel("Dateiname")
         lbl_name.setProperty("role", "fieldlabel")
@@ -1364,7 +1825,7 @@ class MainWindow(QMainWindow):
         self.search_bar_widget.setProperty("role", "searchbar")
         self.search_bar_widget.setVisible(False)
         search_layout = QHBoxLayout(self.search_bar_widget)
-        search_layout.setContentsMargins(12, 6, 12, 6)
+        search_layout.setContentsMargins(10, 8, 10, 8)
         search_layout.setSpacing(6)
         lbl_search = QLabel("Suche")
         lbl_search.setProperty("role", "fieldlabel")
@@ -1380,9 +1841,10 @@ class MainWindow(QMainWindow):
         ocr_bar = QWidget()
         ocr_bar.setProperty("role", "ocrbar")
         ocr_layout = QHBoxLayout(ocr_bar)
-        ocr_layout.setContentsMargins(12, 5, 12, 5)
+        ocr_layout.setContentsMargins(10, 8, 10, 8)
         ocr_layout.setSpacing(8)
         ocr_layout.addWidget(self.ocr_feedback, 1)
+        ocr_layout.addWidget(self.annotation_hint)
         ocr_layout.addWidget(self.ocr_mode_label)
         ocr_layout.addWidget(self.btn_cancel_ocr)
         ocr_layout.addWidget(self.btn_retry_failed_ocr)
@@ -1392,11 +1854,13 @@ class MainWindow(QMainWindow):
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.setHandleWidth(6)
-        self.content_splitter.addWidget(self.thumb_list)
+        self.content_splitter.addWidget(self.thumb_panel)
         self.content_splitter.addWidget(self.preview_scroll)
+        self.content_splitter.addWidget(self.annotation_panel)
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
-        self.content_splitter.setSizes([200, 980])
+        self.content_splitter.setStretchFactor(2, 0)
+        self.content_splitter.setSizes([190, 860, 290])
 
         # ── Haupt-Layout ─────────────────────────────────────────────────────
         layout = QVBoxLayout()
@@ -1406,7 +1870,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(name_widget)
         layout.addWidget(self.search_bar_widget)
         layout.addWidget(self.search_results_list)
-        layout.addWidget(self.content_splitter, 1)
+        preview_shell = QWidget()
+        preview_shell.setProperty("role", "previewcard")
+        preview_shell_layout = QVBoxLayout(preview_shell)
+        preview_shell_layout.setContentsMargins(0, 0, 0, 0)
+        preview_shell_layout.setSpacing(0)
+        preview_shell_layout.addWidget(self.content_splitter, 1)
+        layout.addWidget(preview_shell, 1)
         layout.addWidget(ocr_bar)
 
         container = QWidget()
@@ -1435,6 +1905,30 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut("Ctrl+Shift+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
+
+        act_edit_metadata = QAction("Metadaten bearbeiten …", self)
+        act_edit_metadata.triggered.connect(self.edit_pdf_metadata)
+        menu_file.addAction(act_edit_metadata)
+
+        act_encrypt_pdf = QAction("PDF mit Passwort schützen …", self)
+        act_encrypt_pdf.triggered.connect(self.export_encrypted_pdf_copy)
+        menu_file.addAction(act_encrypt_pdf)
+
+        act_decrypt_pdf = QAction("PDF entschlüsselt speichern …", self)
+        act_decrypt_pdf.triggered.connect(self.export_decrypted_pdf_copy)
+        menu_file.addAction(act_decrypt_pdf)
+
+        act_optimize_pdf = QAction("PDF optimieren / komprimieren …", self)
+        act_optimize_pdf.triggered.connect(self.export_optimized_pdf_copy)
+        menu_file.addAction(act_optimize_pdf)
+
+        act_document_info = QAction("Dokumentinfos anzeigen …", self)
+        act_document_info.triggered.connect(self.show_document_info)
+        menu_file.addAction(act_document_info)
+
+        act_apply_preset = QAction("Preset-Profil anwenden …", self)
+        act_apply_preset.triggered.connect(self.apply_export_preset)
+        menu_file.addAction(act_apply_preset)
 
         menu_file.addSeparator()
 
@@ -1513,9 +2007,40 @@ class MainWindow(QMainWindow):
         act_reorder.triggered.connect(self.reorder_pages_to_new_pdf)
         menu_tools.addAction(act_reorder)
 
+        act_crop = QAction("Seite visuell zuschneiden", self)
+        act_crop.triggered.connect(self.start_visual_crop)
+        menu_tools.addAction(act_crop)
+        act_crop_dialog = QAction("Seiten zuschneiden …", self)
+        act_crop_dialog.triggered.connect(self.crop_pages_to_new_pdf)
+        menu_tools.addAction(act_crop_dialog)
+
+        act_add_text = QAction("Text hinzufügen …", self)
+        act_add_text.triggered.connect(self.add_text_annotation)
+        menu_tools.addAction(act_add_text)
+
+        act_add_rect = QAction("Rechteck hinzufügen …", self)
+        act_add_rect.triggered.connect(self.add_rectangle_annotation)
+        menu_tools.addAction(act_add_rect)
+
+        act_add_highlight = QAction("Markierung hinzufügen …", self)
+        act_add_highlight.triggered.connect(self.add_highlight_annotation)
+        menu_tools.addAction(act_add_highlight)
+
+        act_add_line = QAction("Linie hinzufügen …", self)
+        act_add_line.triggered.connect(self.add_line_annotation)
+        menu_tools.addAction(act_add_line)
+
+        act_add_arrow = QAction("Pfeil hinzufügen …", self)
+        act_add_arrow.triggered.connect(self.add_arrow_annotation)
+        menu_tools.addAction(act_add_arrow)
+
         act_merge = QAction("PDFs zusammenführen", self)
         act_merge.triggered.connect(self.merge_pdfs)
         menu_tools.addAction(act_merge)
+
+        act_images_to_pdf = QAction("Bilder zu PDF umwandeln …", self)
+        act_images_to_pdf.triggered.connect(self.images_to_pdf)
+        menu_tools.addAction(act_images_to_pdf)
 
         act_split_chunks = QAction("PDF in Blöcke teilen …", self)
         act_split_chunks.triggered.connect(self.split_pdf_into_chunks)
@@ -1540,10 +2065,51 @@ class MainWindow(QMainWindow):
         act_delete_pages.triggered.connect(self.delete_selected_pages)
         menu_tools.addAction(act_delete_pages)
 
+        act_duplicate_pages = QAction("Ausgewählte Seiten duplizieren", self)
+        act_duplicate_pages.triggered.connect(self.duplicate_selected_pages)
+        menu_tools.addAction(act_duplicate_pages)
+
+        act_insert_blank_page = QAction("Leere Seite einfügen", self)
+        act_insert_blank_page.triggered.connect(self.insert_blank_page_after_current)
+        menu_tools.addAction(act_insert_blank_page)
+
+        act_edit_form_fields = QAction("Formularfelder bearbeiten …", self)
+        act_edit_form_fields.triggered.connect(self.edit_form_fields_on_current_page)
+        menu_tools.addAction(act_edit_form_fields)
+
+        act_add_page_numbers = QAction("Seitennummern einfügen …", self)
+        act_add_page_numbers.triggered.connect(self.insert_page_numbers)
+        menu_tools.addAction(act_add_page_numbers)
+
+        act_add_watermark = QAction("Wasserzeichen einfügen …", self)
+        act_add_watermark.triggered.connect(self.add_text_watermark)
+        menu_tools.addAction(act_add_watermark)
+
+        act_delete_annotation = QAction("Ausgewählte Annotation löschen", self)
+        act_delete_annotation.setShortcut("Backspace")
+        act_delete_annotation.triggered.connect(self.delete_selected_annotation)
+        menu_tools.addAction(act_delete_annotation)
+
         menu_export = self.menuBar().addMenu("Exportieren")
         act_export_current = QAction("Aktuelle Datei exportieren …", self)
         act_export_current.triggered.connect(self.export_current_file)
         menu_export.addAction(act_export_current)
+
+        act_export_pages_images = QAction("Seiten als Bilder exportieren …", self)
+        act_export_pages_images.triggered.connect(self.export_pages_as_images)
+        menu_export.addAction(act_export_pages_images)
+
+        act_export_grayscale = QAction("PDF als Graustufen-Kopie exportieren …", self)
+        act_export_grayscale.triggered.connect(self.export_grayscale_pdf_copy)
+        menu_export.addAction(act_export_grayscale)
+
+        act_extract_images = QAction("Bilder aus PDF extrahieren …", self)
+        act_extract_images.triggered.connect(self.extract_images_from_pdf)
+        menu_export.addAction(act_extract_images)
+
+        act_page_overview = QAction("Seitenübersicht anzeigen …", self)
+        act_page_overview.triggered.connect(self.show_page_overview)
+        menu_export.addAction(act_page_overview)
 
         act_export_folder = QAction("Ordner aggregiert exportieren …", self)
         act_export_folder.triggered.connect(self.export_folder_aggregate)
@@ -1552,6 +2118,10 @@ class MainWindow(QMainWindow):
         act_batch_rename = QAction("Ordner stapelweise umbenennen …", self)
         act_batch_rename.triggered.connect(self.batch_rename_folder)
         menu_export.addAction(act_batch_rename)
+
+        self._set_annotation_defaults("text")
+        self._sync_annotation_tool_buttons()
+        self._refresh_annotation_color_buttons()
 
         # Improve menu accessibility/discoverability (screen readers + status hints).
         all_actions = [
@@ -1575,12 +2145,19 @@ class MainWindow(QMainWindow):
             act_searchable_pdf,
             act_split,
             act_reorder,
+            act_crop,
+            act_add_text,
+            act_add_rect,
+            act_add_highlight,
+            act_add_line,
+            act_add_arrow,
             act_merge,
             act_split_chunks,
             act_remove_empty,
             act_rotate_left,
             act_rotate_right,
             act_delete_pages,
+            act_delete_annotation,
             act_export_current,
             act_export_folder,
             act_batch_rename,
@@ -1922,6 +2499,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, i)
                 self.thumb_list.addItem(item)
         self.thumb_list.blockSignals(False)
+        self._update_thumbnail_meta()
 
     def _sync_thumbnail_selection(self) -> None:
         if not self.doc:
@@ -1931,6 +2509,7 @@ class MainWindow(QMainWindow):
             self.thumb_list.setCurrentRow(self.current_page)
             self.thumb_list.scrollToItem(self.thumb_list.item(self.current_page))
             self.thumb_list.blockSignals(False)
+        self._update_thumbnail_meta()
 
     def _on_thumbnail_clicked(self, item: QListWidgetItem) -> None:
         idx = int(item.data(Qt.ItemDataRole.UserRole))
@@ -1945,7 +2524,10 @@ class MainWindow(QMainWindow):
         menu = self.thumb_list.createStandardContextMenu()
         delete_action = QAction("Ausgewählte Seite(n) löschen", self)
         delete_action.triggered.connect(self.delete_selected_pages)
+        duplicate_action = QAction("Ausgewählte Seite(n) duplizieren", self)
+        duplicate_action.triggered.connect(self.duplicate_selected_pages)
         menu.addSeparator()
+        menu.addAction(duplicate_action)
         menu.addAction(delete_action)
         menu.exec(self.thumb_list.mapToGlobal(pos))
 
@@ -2039,10 +2621,260 @@ class MainWindow(QMainWindow):
         self.current_search_hit = -1
         self.search_results_list.clear()
         self._update_search_counter()
+        self.selected_annotation_xref = None
+        self._update_selected_annotation_ui()
         self._set_dirty(True)
         self._refresh_thumbnails()
         self.render_current_page()
         self.statusBar().showMessage(f"{len(selected)} Seite(n) gelöscht (noch nicht gespeichert)")
+
+    def duplicate_selected_pages(self) -> None:
+        if not self.doc or len(self.doc) == 0:
+            return
+        selected = sorted({int(it.data(Qt.ItemDataRole.UserRole)) for it in self.thumb_list.selectedItems()})
+        if not selected:
+            selected = [self.current_page]
+
+        self._push_undo_state()
+        old_total = len(self.doc)
+        old_rotations = dict(self.page_rotations)
+        selected_set = set(selected)
+        source_doc = fitz.open(stream=self.doc.tobytes(), filetype="pdf")
+        try:
+            offset = 0
+            for idx in selected:
+                insert_at = idx + 1 + offset
+                self.doc.insert_pdf(source_doc, from_page=idx, to_page=idx, start_at=insert_at)
+                rot = old_rotations.get(idx, 0) % 360
+                if rot:
+                    self.doc[insert_at].set_rotation(rot)
+                offset += 1
+        finally:
+            source_doc.close()
+
+        original_positions: dict[int, int] = {}
+        duplicate_positions: dict[int, int] = {}
+        new_rotations: dict[int, int] = {}
+        new_idx = 0
+        for old_idx in range(old_total):
+            original_positions[old_idx] = new_idx
+            rot = old_rotations.get(old_idx, 0) % 360
+            if rot:
+                new_rotations[new_idx] = rot
+            new_idx += 1
+            if old_idx in selected_set:
+                duplicate_positions[old_idx] = new_idx
+                if rot:
+                    new_rotations[new_idx] = rot
+                new_idx += 1
+        self.page_rotations = new_rotations
+
+        if self.current_page in duplicate_positions:
+            self.current_page = duplicate_positions[self.current_page]
+        else:
+            self.current_page = original_positions.get(self.current_page, self.current_page)
+
+        self.search_hits = []
+        self.current_search_hit = -1
+        self.search_results_list.clear()
+        self._update_search_counter()
+        self.selected_annotation_xref = None
+        self._update_selected_annotation_ui()
+        self._set_dirty(True)
+        self._refresh_thumbnails()
+        self.render_current_page()
+        self.statusBar().showMessage(f"{len(selected)} Seite(n) dupliziert (noch nicht gespeichert)")
+
+    def insert_blank_page_after_current(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        width, ok = QInputDialog.getDouble(self, "Leere Seite einfügen", "Breite in pt:", 595.0, 100.0, 5000.0, 1)
+        if not ok:
+            return
+        height, ok = QInputDialog.getDouble(self, "Leere Seite einfügen", "Höhe in pt:", 842.0, 100.0, 5000.0, 1)
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            insert_at = self.current_page + 1
+            self.doc.new_page(pno=insert_at, width=width, height=height)
+            old_rotations = dict(self.page_rotations)
+            self.page_rotations = {
+                (idx if idx < insert_at else idx + 1): rot
+                for idx, rot in old_rotations.items()
+                if rot % 360 != 0
+            }
+            self.current_page = insert_at
+            self.search_hits = []
+            self.current_search_hit = -1
+            self.search_results_list.clear()
+            self._update_search_counter()
+            self.selected_annotation_xref = None
+            self._update_selected_annotation_ui()
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage("Leere Seite eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Leere Seite konnte nicht eingefügt werden:\n{e}")
+
+    def delete_selected_annotation(self) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Annotation auswählen.")
+            return
+        page = self.doc[self.current_page]
+        try:
+            annot = page.load_annot(self.selected_annotation_xref)
+            if annot is None:
+                raise ValueError("Annotation nicht gefunden.")
+            self._push_undo_state()
+            page.delete_annot(annot)
+            self.selected_annotation_xref = None
+            self._update_selected_annotation_ui()
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage("Annotation gelöscht")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Annotation konnte nicht gelöscht werden:\n{e}")
+
+    def edit_selected_annotation_comment(self) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Annotation auswählen.")
+            return
+        page = self.doc[self.current_page]
+        try:
+            annot = page.load_annot(self.selected_annotation_xref)
+            if annot is None:
+                raise ValueError("Annotation nicht gefunden.")
+            current_text = ""
+            try:
+                info = annot.info or {}
+                current_text = str(info.get("content") or info.get("subject") or "")
+            except Exception:
+                current_text = ""
+            text, ok = QInputDialog.getMultiLineText(
+                self,
+                "Kommentar bearbeiten",
+                "Kommentar / Inhalt der Annotation:",
+                text=current_text,
+            )
+            if not ok:
+                return
+            self._push_undo_state()
+            try:
+                annot.set_info(content=text)
+            except Exception:
+                annot.set_info(info={"content": text})
+            annot.update()
+            self._set_dirty(True)
+            self._update_selected_annotation_ui()
+            self.render_current_page()
+            self.statusBar().showMessage("Annotation-Kommentar aktualisiert")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Kommentar konnte nicht bearbeitet werden:\n{e}")
+
+    def edit_selected_annotation_style(self) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Annotation auswählen.")
+            return
+        page = self.doc[self.current_page]
+        try:
+            annot = page.load_annot(self.selected_annotation_xref)
+            if annot is None:
+                raise ValueError("Annotation nicht gefunden.")
+            color_raw, ok = QInputDialog.getText(
+                self,
+                "Stil bearbeiten",
+                "Neue Farbe (RGB oder Hex):",
+                text="0, 120, 215",
+            )
+            if not ok:
+                return
+            color = self._parse_rgb_color(color_raw, (0.0, 120 / 255.0, 215 / 255.0))
+            width, ok = QInputDialog.getDouble(self, "Stil bearbeiten", "Linienstärke in pt:", 2.0, 0.1, 20.0, 1)
+            if not ok:
+                return
+            self._push_undo_state()
+            try:
+                annot.set_colors(stroke=color)
+            except Exception:
+                pass
+            try:
+                annot.set_border(width=width)
+            except Exception:
+                pass
+            annot.update()
+            self._set_dirty(True)
+            self._update_selected_annotation_ui()
+            self.render_current_page()
+            self.statusBar().showMessage("Annotationsstil aktualisiert")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Annotationsstil konnte nicht geändert werden:\n{e}")
+
+    def reply_to_selected_annotation(self) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Annotation auswählen.")
+            return
+        page = self.doc[self.current_page]
+        try:
+            annot = page.load_annot(self.selected_annotation_xref)
+            if annot is None:
+                raise ValueError("Annotation nicht gefunden.")
+            text, ok = QInputDialog.getMultiLineText(
+                self,
+                "Antwort hinzufügen",
+                "Antwort / Review-Notiz:",
+            )
+            if not ok or not text.strip():
+                return
+            self._push_undo_state()
+            rect = annot.rect
+            point = fitz.Point(rect.x1 + 12, rect.y0)
+            reply = page.add_text_annot(point, text.strip())
+            try:
+                reply.set_info(title="Antwort", subject="Review-Antwort")
+            except Exception:
+                pass
+            reply.update()
+            self.selected_annotation_xref = getattr(reply, "xref", None)
+            self._set_dirty(True)
+            self._update_selected_annotation_ui()
+            self.render_current_page()
+            self.statusBar().showMessage("Antwort-Notiz hinzugefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Antwort konnte nicht hinzugefügt werden:\n{e}")
+
+    def edit_pdf_metadata(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        metadata = dict(self.doc.metadata or {})
+        fields = [
+            ("title", "Titel"),
+            ("author", "Autor"),
+            ("subject", "Betreff"),
+            ("keywords", "Schlüsselwörter"),
+        ]
+        updated = dict(metadata)
+        for key, label in fields:
+            value, ok = QInputDialog.getText(
+                self,
+                "PDF-Metadaten bearbeiten",
+                f"{label}:",
+                text=str(updated.get(key, "") or ""),
+            )
+            if not ok:
+                return
+            updated[key] = value
+        try:
+            self._push_undo_state()
+            self.doc.set_metadata(updated)
+            self._set_dirty(True)
+            self.statusBar().showMessage("PDF-Metadaten aktualisiert")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht aktualisiert werden:\n{e}")
 
     def open_search(self) -> None:
         self.search_bar_widget.setVisible(True)
@@ -2557,7 +3389,7 @@ class MainWindow(QMainWindow):
         # Akzent: warmes Blau
         # Hintergrund: sehr helles Grau mit minimalem Blaustich
         # Text: Dunkelgrau (kein hartes Schwarz)
-        self.setStyleSheet("""
+        base_styles = """
             /* ── Fenster & Container ──────────────────────────────────── */
             QMainWindow, QWidget {
                 background: #f7f8fa;
@@ -2568,26 +3400,69 @@ class MainWindow(QMainWindow):
 
             /* ── Toolbar-Hintergrund ───────────────────────────────────── */
             QWidget[role="toolbar"] {
-                background: #ffffff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:0.55 #f7f9ff, stop:1 #eef3ff);
                 border-bottom: 1px solid #e4e7ef;
             }
 
             /* ── Namens-Zeile ─────────────────────────────────────────── */
             QWidget[role="namebar"] {
-                background: #f0f2f7;
+                background: #f5f7fc;
                 border-bottom: 1px solid #e4e7ef;
             }
 
             /* ── Suchleiste ───────────────────────────────────────────── */
             QWidget[role="searchbar"] {
-                background: #fff8e7;
-                border-bottom: 1px solid #f0d580;
+                background: #f7faff;
+                border-bottom: 1px solid #e4eaf6;
             }
 
             /* ── OCR-Statusleiste ─────────────────────────────────────── */
             QWidget[role="ocrbar"] {
-                background: #f0f2f7;
+                background: #f7f9fd;
                 border-top: 1px solid #e4e7ef;
+            }
+            QWidget[role="sidepanel"] {
+                background: #f9fbff;
+                border-left: 1px solid #e4e7ef;
+            }
+            QWidget[role="thumbpanel"] {
+                background: #f5f8ff;
+                border-right: 1px solid #e4eaf6;
+            }
+            QWidget[role="sectioncard"] {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #e5eaf6;
+                border-radius: 12px;
+            }
+            QWidget[role="previewcard"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fdfefe, stop:1 #f6f8fc);
+                border-left: 1px solid #edf1f8;
+                border-right: 1px solid #edf1f8;
+            }
+            QWidget[role="ribbongroup"] {
+                background: rgba(255, 255, 255, 0.9);
+                border: 1px solid #e4e8f4;
+                border-radius: 14px;
+            }
+            QLabel[role="ribbontitle"] {
+                color: #5f6c8c;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+            QWidget[role="panelcard"] {
+                background: #ffffff;
+                border: 1px solid #e5eaf6;
+                border-radius: 14px;
+            }
+            QWidget[role="namebar"], QWidget[role="searchbar"], QWidget[role="ocrbar"] {
+                border-bottom: 1px solid #e8edf7;
+            }
+            QLabel[role="cardtitle"] {
+                color: #1e2432;
+                font-size: 14px;
+                font-weight: 700;
             }
 
             /* ── Trennlinie in der Toolbar ────────────────────────────── */
@@ -2602,9 +3477,10 @@ class MainWindow(QMainWindow):
                 background: #f0f2f7;
                 color: #1e2432;
                 border: 1px solid #dde0ea;
-                border-radius: 7px;
-                padding: 5px 11px;
+                border-radius: 9px;
+                padding: 6px 12px;
                 font-size: 13px;
+                font-weight: 500;
             }
             QPushButton:hover {
                 background: #e6e9f4;
@@ -2647,10 +3523,10 @@ class MainWindow(QMainWindow):
                 background: #3d5afe;
                 color: #ffffff;
                 border: 1px solid #2a45e8;
-                border-radius: 7px;
-                padding: 5px 14px;
+                border-radius: 10px;
+                padding: 6px 14px;
                 font-size: 13px;
-                font-weight: 500;
+                font-weight: 700;
             }
             QPushButton[btnRole="primary"]:hover {
                 background: #5472ff;
@@ -2671,9 +3547,12 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
                 color: #2d3a5e;
                 border: 1px solid #cdd2e8;
-                border-radius: 7px;
-                padding: 5px 11px;
+                border-radius: 10px;
+                padding: 6px 11px;
                 font-size: 13px;
+            }
+            QPushButton[btnRole="action"]::icon {
+                padding-right: 4px;
             }
             QPushButton[btnRole="action"]:hover {
                 background: #eef0fb;
@@ -2686,9 +3565,37 @@ class MainWindow(QMainWindow):
                 color: #aab0c4;
                 border-color: #e4e7ef;
             }
+            QPushButton[btnRole="tool"] {
+                background: #ffffff;
+                color: #2d3a5e;
+                border: 1px solid #d7dcef;
+                border-radius: 10px;
+                padding: 5px 8px;
+                font-size: 12px;
+                font-weight: 600;
+                min-width: 64px;
+            }
+            QPushButton[btnRole="tool"]:hover {
+                background: #eef3ff;
+                border-color: #9fb2ea;
+            }
+            QPushButton[btnRole="tool"]:pressed {
+                background: #dde7ff;
+                border-color: #7f98e2;
+            }
+            QPushButton[btnRole="tool"]:disabled {
+                color: #aab0c4;
+                border-color: #e4e7ef;
+            }
+            QPushButton[toolActive="true"] {
+                background: #e9efff;
+                border-color: #7c93ff;
+                color: #20337d;
+                font-weight: 600;
+            }
 
             /* ── Eingabefelder ────────────────────────────────────────── */
-            QLineEdit {
+            QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit {
                 background: #ffffff;
                 color: #1e2432;
                 border: 1px solid #cdd2e8;
@@ -2697,7 +3604,7 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
                 selection-background-color: #c2ccff;
             }
-            QLineEdit:focus {
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {
                 border-color: #3d5afe;
                 background: #ffffff;
             }
@@ -2726,19 +3633,54 @@ class MainWindow(QMainWindow):
             QLabel[role="fieldlabel"] {
                 color: #6b748a;
                 font-size: 11px;
-                font-weight: 500;
-                letter-spacing: 0.5px;
+                font-weight: 700;
+                letter-spacing: 0.7px;
             }
             QLabel[role="pageinfo"] {
-                color: #6b748a;
+                color: #52607a;
                 font-size: 12px;
-                padding: 0 8px;
+                padding: 6px 10px;
+                background: #ffffff;
+                border: 1px solid #dfe5f2;
+                border-radius: 10px;
             }
             QLabel[role="counter"] {
                 color: #6b748a;
                 font-size: 12px;
                 min-width: 48px;
                 text-align: center;
+            }
+            QLabel[role="hintchip"] {
+                background: #eef2ff;
+                color: #40508b;
+                border: 1px solid #d7defc;
+                border-radius: 11px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel[role="hintchip"][active="true"] {
+                background: #fff4d6;
+                color: #8a5a00;
+                border-color: #f2d27a;
+            }
+            QLabel[role="paneltitle"] {
+                color: #1e2432;
+                font-size: 19px;
+                font-weight: 700;
+            }
+            QLabel[role="panelsubtitle"] {
+                color: #6b748a;
+                font-size: 12px;
+                line-height: 1.4;
+            }
+            QLabel[role="panelinfo"] {
+                background: #f7f9fd;
+                border: 1px solid #e4e7ef;
+                border-radius: 10px;
+                color: #47516b;
+                padding: 10px;
+                font-size: 12px;
             }
 
             /* ── Listen (Suchtreffer, Thumbnails) ─────────────────────── */
@@ -2748,13 +3690,21 @@ class MainWindow(QMainWindow):
                 border-right: 1px solid #e4e7ef;
                 outline: none;
             }
+            QListWidget[role="thumbrail"] {
+                background: transparent;
+                border: 1px solid #e3e8f5;
+                border-radius: 14px;
+            }
             QListWidget::item {
-                padding: 5px 10px;
-                border-bottom: 1px solid #f0f2f7;
+                padding: 7px 10px;
+                border-bottom: 1px solid #edf1f8;
                 color: #1e2432;
+                margin: 2px 4px;
+                border-radius: 10px;
             }
             QListWidget::item:selected {
                 background: #e8ecff;
+                border: 1px solid #cbd6ff;
                 color: #1e2432;
             }
             QListWidget::item:hover {
@@ -2765,6 +3715,11 @@ class MainWindow(QMainWindow):
             QScrollArea {
                 background: #ebedf5;
                 border: none;
+            }
+            QScrollArea[role="previewarea"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #edf1fb, stop:1 #e7ebf6);
+                border-left: 1px solid #edf1f8;
+                border-right: 1px solid #edf1f8;
             }
             QScrollBar:vertical {
                 background: #f0f2f7;
@@ -2793,6 +3748,13 @@ class MainWindow(QMainWindow):
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
             /* ── Splitter ─────────────────────────────────────────────── */
+            QLabel[role="pagepreview"] {
+                background: #ffffff;
+                border: 1px solid #d9deeb;
+                border-radius: 18px;
+                padding: 14px;
+            }
+
             QSplitter::handle {
                 background: #e4e7ef;
                 width: 1px;
@@ -2888,7 +3850,144 @@ class MainWindow(QMainWindow):
             QDialogButtonBox QPushButton {
                 min-width: 80px;
             }
-        """)
+        """
+        dark_overrides = """
+            QMainWindow, QWidget {
+                background: #0f1724;
+                color: #e5ecf6;
+            }
+            QWidget[role="toolbar"] {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #131c2b, stop:0.55 #162235, stop:1 #1a2840);
+                border-bottom: 1px solid #22304a;
+            }
+            QWidget[role="namebar"], QWidget[role="ocrbar"], QWidget[role="sidepanel"] {
+                background: #111a29;
+                border-color: #22304a;
+            }
+            QWidget[role="thumbpanel"] {
+                background: #0f1724;
+                border-right: 1px solid #22304a;
+            }
+            QWidget[role="previewcard"] {
+                background: #0f1724;
+                border-left: 1px solid #22304a;
+                border-right: 1px solid #22304a;
+            }
+            QWidget[role="searchbar"] {
+                background: #111a29;
+                border-bottom: 1px solid #22304a;
+            }
+            QWidget[role="ribbongroup"], QWidget[role="panelcard"], QWidget[role="sectioncard"], QLabel[role="panelinfo"], QLabel[role="hintchip"] {
+                background: #162235;
+                border-color: #253654;
+                color: #dbe6f7;
+            }
+            QLabel[role="ribbontitle"], QLabel[role="fieldlabel"], QLabel[role="pageinfo"], QLabel[role="counter"], QLabel[role="panelsubtitle"] {
+                color: #98a8c4;
+            }
+            QLabel[role="paneltitle"], QLabel[role="cardtitle"], QLabel {
+                color: #e5ecf6;
+            }
+            QLabel[role="hintchip"][active="true"] {
+                background: #3b2c10;
+                color: #ffd98a;
+                border-color: #7b5b1f;
+            }
+            QPushButton {
+                background: #1a2840;
+                color: #e5ecf6;
+                border-color: #2a3c5f;
+            }
+            QPushButton:hover {
+                background: #22324f;
+                border-color: #4b67a3;
+            }
+            QPushButton:pressed {
+                background: #293a5d;
+            }
+            QPushButton:disabled {
+                background: #121b2a;
+                color: #72819a;
+                border-color: #1d293d;
+            }
+            QPushButton[btnRole="icon"] {
+                background: transparent;
+                color: #dbe6f7;
+            }
+            QPushButton[btnRole="icon"]:hover {
+                background: #1e2d47;
+                border-color: #35507c;
+            }
+            QPushButton[btnRole="primary"] {
+                background: #4b6bff;
+                border-color: #6782ff;
+                color: #ffffff;
+            }
+            QPushButton[btnRole="primary"]:hover {
+                background: #6481ff;
+            }
+            QPushButton[btnRole="action"] {
+                background: #142033;
+                color: #dbe6f7;
+                border-color: #29405f;
+            }
+            QPushButton[btnRole="tool"] {
+                background: #142033;
+                color: #dbe6f7;
+                border-color: #29405f;
+            }
+            QPushButton[toolActive="true"] {
+                background: #243858;
+                border-color: #7d9cff;
+                color: #eef4ff;
+            }
+            QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget, QTableWidget, QMenuBar, QMenu, QScrollArea, QLabel[role="pagepreview"] {
+                background: #0f1724;
+                color: #e5ecf6;
+                border-color: #243654;
+            }
+            QLabel[role="pageinfo"] {
+                background: #162235;
+                border-color: #253654;
+            }
+            QListWidget[role="thumbrail"] {
+                background: transparent;
+                border: 1px solid #22304a;
+            }
+            QListWidget::item {
+                color: #dbe6f7;
+                border-bottom: 1px solid #1a2740;
+            }
+            QListWidget::item:selected {
+                background: #20314d;
+                border: 1px solid #4669a2;
+            }
+            QListWidget::item:hover {
+                background: #1a2840;
+            }
+            QScrollArea[role="previewarea"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #111a29, stop:1 #0d1522);
+            }
+            QScrollBar:vertical, QScrollBar:horizontal, QStatusBar, QHeaderView::section {
+                background: #162235;
+                color: #c9d5ea;
+                border-color: #22304a;
+            }
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal, QProgressBar::chunk {
+                background: #4b6bff;
+            }
+            QMenuBar::item:selected, QMenu::item:selected {
+                background: #1d2d47;
+                color: #eef4ff;
+            }
+            QSplitter::handle {
+                background: #22304a;
+            }
+        """
+        self.setStyleSheet(base_styles + (dark_overrides if self._is_dark_mode() else ""))
+
+    def _is_dark_mode(self) -> bool:
+        return self.palette().window().color().lightness() < 128
 
     @staticmethod
     def _ensure_pdf_suffix(path: str) -> str:
@@ -2925,6 +4024,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.clear()
         self._update_search_counter()
         self._refresh_thumbnails()
+        self._update_thumbnail_meta()
         self._set_dirty(False)
         self._update_undo_redo_buttons()
         self.statusBar().showMessage("PDF geschlossen.")
@@ -2954,6 +4054,25 @@ class MainWindow(QMainWindow):
         self.pdf_path = Path(file_name)
         try:
             self.doc = fitz.open(file_name)
+            if self.doc.needs_pass:
+                password = ""
+                authenticated = 0
+                for _ in range(3):
+                    password, ok = QInputDialog.getText(
+                        self,
+                        "Passwort erforderlich",
+                        f"Passwort für {self.pdf_path.name} eingeben:",
+                        QLineEdit.EchoMode.Password,
+                    )
+                    if not ok:
+                        self.doc.close()
+                        self.doc = None
+                        return
+                    authenticated = self.doc.authenticate(password)
+                    if authenticated:
+                        break
+                if not authenticated:
+                    raise ValueError("Passwort war falsch oder PDF konnte nicht entschlüsselt werden.")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"PDF konnte nicht geöffnet werden:\n{e}")
             self.doc = None
@@ -2979,6 +4098,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.clear()
         self._update_search_counter()
         self._set_dirty(False)
+        self._update_thumbnail_meta()
         self._update_undo_redo_buttons()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
@@ -3064,6 +4184,7 @@ class MainWindow(QMainWindow):
 
     def render_current_page(self) -> None:
         if not self.doc or len(self.doc) == 0:
+            self._clear_pending_annotation()
             self.preview.clear()
             self.preview.setText("Kein PDF geladen")
             self.preview.adjustSize()
@@ -3149,6 +4270,110 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
+        if self.selected_annotation_xref is not None:
+            try:
+                annot = page.load_annot(self.selected_annotation_xref)
+                if annot is not None:
+                    box = self._map_search_rect_to_view(
+                        rect=annot.rect,
+                        page_width=float(page.rect.width),
+                        page_height=float(page.rect.height),
+                        rotation=rotation,
+                        scale=self.zoom_factor,
+                        view_width=qpix.width(),
+                        view_height=qpix.height(),
+                    )
+                    if box is not None:
+                        painter = QPainter(qpix)
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                        pen = QPen(QColor(61, 90, 254, 235))
+                        pen.setWidth(3)
+                        painter.setPen(pen)
+                        painter.setBrush(QColor(61, 90, 254, 40))
+                        x, y, w, h = box
+                        painter.drawRoundedRect(x, y, w, h, 8, 8)
+                        painter.end()
+            except Exception:
+                self.selected_annotation_xref = None
+                self._update_selected_annotation_ui()
+
+        if self.pending_annotation and self.preview_drag_start and self.preview_drag_current:
+            try:
+                kind = self.pending_annotation.get("kind")
+                rect_spec = self._rect_percent_from_drag(
+                    self.preview_drag_start[0],
+                    self.preview_drag_start[1],
+                    self.preview_drag_current[0],
+                    self.preview_drag_current[1],
+                )
+                if rect_spec is not None:
+                    box = self._rect_percent_to_view_box(rect_spec, qpix.width(), qpix.height())
+                    if box is not None:
+                        painter = QPainter(qpix)
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                        x, y, w, h = box
+                        if kind == "crop":
+                            overlay = QColor(15, 23, 36, 105 if not self._is_dark_mode() else 150)
+                            painter.fillRect(0, 0, qpix.width(), y, overlay)
+                            painter.fillRect(0, y, x, h, overlay)
+                            painter.fillRect(x + w, y, max(0, qpix.width() - (x + w)), h, overlay)
+                            painter.fillRect(0, y + h, qpix.width(), max(0, qpix.height() - (y + h)), overlay)
+                            pen = QPen(QColor(56, 189, 248, 235))
+                            pen.setWidth(3)
+                            painter.setPen(pen)
+                            painter.setBrush(QColor(56, 189, 248, 28))
+                            painter.drawRoundedRect(x, y, w, h, 10, 10)
+                        elif kind == "image":
+                            if self.annotation_image_preview is not None and not self.annotation_image_preview.isNull():
+                                scaled = self.annotation_image_preview.scaled(
+                                    w,
+                                    h,
+                                    Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation,
+                                )
+                                draw_x = x + max(0, (w - scaled.width()) // 2)
+                                draw_y = y + max(0, (h - scaled.height()) // 2)
+                                painter.setOpacity(0.78)
+                                painter.drawPixmap(draw_x, draw_y, scaled)
+                                painter.setOpacity(1.0)
+                            pen = QPen(QColor(34, 197, 94, 235))
+                            pen.setWidth(3)
+                            painter.setPen(pen)
+                            painter.setBrush(QColor(34, 197, 94, 24))
+                            painter.drawRoundedRect(x, y, w, h, 10, 10)
+                        elif kind == "redact":
+                            pen = QPen(QColor(239, 68, 68, 235))
+                            pen.setWidth(3)
+                            painter.setPen(pen)
+                            painter.setBrush(QColor(17, 17, 17, 150))
+                            painter.drawRoundedRect(x, y, w, h, 8, 8)
+                        else:
+                            pen = QPen(QColor(61, 90, 254, 220))
+                            pen.setWidth(2)
+                            painter.setPen(pen)
+                            painter.setBrush(QColor(61, 90, 254, 24))
+                            painter.drawRoundedRect(x, y, w, h, 8, 8)
+                        painter.end()
+                elif kind == "freehand" and len(self.preview_drag_points) >= 2:
+                    painter = QPainter(qpix)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    pen = QPen(QColor(220, 20, 60, 220))
+                    try:
+                        pen.setWidthF(float(self.pending_annotation.get("line_width", 2.5)))
+                    except Exception:
+                        pen.setWidth(3)
+                    painter.setPen(pen)
+                    last = None
+                    for px, py in self.preview_drag_points:
+                        cx = int(round((px / 100.0) * qpix.width()))
+                        cy = int(round((py / 100.0) * qpix.height()))
+                        if last is not None:
+                            painter.drawLine(last[0], last[1], cx, cy)
+                        last = (cx, cy)
+                    painter.end()
+            except Exception:
+                pass
+
         self.preview.setText("")
         self.preview.setPixmap(qpix)
         self.preview.resize(qpix.size())
@@ -3194,6 +4419,9 @@ class MainWindow(QMainWindow):
 
         if key == Qt.Key.Key_Delete and self.thumb_list.hasFocus():
             self.delete_selected_pages()
+            return
+        if key == Qt.Key.Key_Backspace and self.selected_annotation_xref is not None:
+            self.delete_selected_annotation()
             return
 
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
@@ -4173,6 +5401,304 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
 
+    def _clone_document_with_current_state(self) -> fitz.Document:
+        if not self.doc:
+            raise ValueError("Kein PDF geladen.")
+        out_doc = fitz.open()
+        out_doc.insert_pdf(self.doc)
+        try:
+            out_doc.set_metadata(self.doc.metadata or {})
+        except Exception:
+            pass
+        for idx, rot in self.page_rotations.items():
+            if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                out_doc[idx].set_rotation(rot % 360)
+        return out_doc
+
+    def apply_export_preset(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        profiles = [
+            "Archivmodus — starke Optimierung bei unveränderten Farben",
+            "Druckmodus — komplette PDF in Graustufen mit Komprimierung",
+            "Entwurfsmodus — Wasserzeichen 'ENTWURF' plus Seitennummern",
+        ]
+        profile, ok = QInputDialog.getItem(self, "Preset-Profil", "Profil auswählen:", profiles, 0, False)
+        if not ok:
+            return
+
+        if profile.startswith("Archivmodus"):
+            default_name = self.pdf_path.with_name(f"{self.pdf_path.stem}_archive.pdf")
+        elif profile.startswith("Druckmodus"):
+            default_name = self.pdf_path.with_name(f"{self.pdf_path.stem}_print.pdf")
+        else:
+            default_name = self.pdf_path.with_name(f"{self.pdf_path.stem}_draft.pdf")
+
+        out_path, _ = QFileDialog.getSaveFileName(self, "Preset-Export speichern", str(default_name), "PDF-Dateien (*.pdf)")
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+
+        try:
+            if profile.startswith("Archivmodus"):
+                out_doc = self._clone_document_with_current_state()
+                try:
+                    out_doc.save(out_path, garbage=4, deflate=True, deflate_images=True, use_objstms=1)
+                finally:
+                    out_doc.close()
+            elif profile.startswith("Druckmodus"):
+                out_doc = fitz.open()
+                try:
+                    for idx in range(len(self.doc)):
+                        page = self.doc[idx]
+                        rotation = self.page_rotations.get(idx, 0)
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2).prerotate(rotation), alpha=False)
+                        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                        gray = ImageOps.grayscale(img)
+                        buf = io.BytesIO()
+                        gray.save(buf, format="PNG")
+                        new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
+                        new_page.insert_image(new_page.rect, stream=buf.getvalue())
+                    try:
+                        out_doc.set_metadata(self.doc.metadata or {})
+                    except Exception:
+                        pass
+                    out_doc.save(out_path, garbage=4, deflate=True, deflate_images=True, use_objstms=1)
+                finally:
+                    out_doc.close()
+            else:
+                out_doc = self._clone_document_with_current_state()
+                try:
+                    for idx in range(len(out_doc)):
+                        page = out_doc[idx]
+                        rect = page.rect
+                        box = fitz.Rect(rect.width * 0.12, rect.height * 0.4, rect.width * 0.88, rect.height * 0.6)
+                        page.insert_textbox(
+                            box,
+                            "ENTWURF",
+                            fontsize=42,
+                            color=(160 / 255.0, 160 / 255.0, 160 / 255.0),
+                            align=1,
+                            overlay=True,
+                            stroke_opacity=0.18,
+                            fill_opacity=0.18,
+                            render_mode=0,
+                            morph=(fitz.Point(0, 0), fitz.Matrix(1, 0, 0, 1).prerotate(45)),
+                        )
+                        num_box = fitz.Rect(rect.width - 138, rect.height - 38, rect.width - 18, rect.height - 18)
+                        page.insert_textbox(num_box, str(idx + 1), fontsize=11, color=(80 / 255.0, 80 / 255.0, 80 / 255.0), align=2)
+                    out_doc.save(out_path, garbage=3, deflate=True)
+                finally:
+                    out_doc.close()
+            QMessageBox.information(self, "Erfolg", f"Preset-Export gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Preset angewendet: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Preset-Export fehlgeschlagen:\n{e}")
+
+    def export_encrypted_pdf_copy(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        user_pw, ok = QInputDialog.getText(
+            self,
+            "PDF schützen",
+            "Öffnungs-Passwort:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not user_pw:
+            return
+        owner_pw, ok = QInputDialog.getText(
+            self,
+            "PDF schützen",
+            "Owner-/Admin-Passwort (leer = gleiches Passwort):",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+        owner_pw = owner_pw or user_pw
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Geschützte PDF speichern",
+            str(self.pdf_path.with_name(f"{self.pdf_path.stem}_protected.pdf")),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+        out_doc = fitz.open()
+        try:
+            out_doc.insert_pdf(self.doc)
+            for idx, rot in self.page_rotations.items():
+                if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                    out_doc[idx].set_rotation(rot % 360)
+            out_doc.save(
+                out_path,
+                encryption=fitz.PDF_ENCRYPT_AES_256,
+                user_pw=user_pw,
+                owner_pw=owner_pw,
+            )
+            QMessageBox.information(self, "Erfolg", f"Geschützte PDF gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Geschützte PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"PDF-Schutz fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    def export_decrypted_pdf_copy(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Entschlüsselte PDF speichern",
+            str(self.pdf_path.with_name(f"{self.pdf_path.stem}_decrypted.pdf")),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+        out_doc = fitz.open()
+        try:
+            out_doc.insert_pdf(self.doc)
+            for idx, rot in self.page_rotations.items():
+                if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                    out_doc[idx].set_rotation(rot % 360)
+            out_doc.save(out_path)
+            QMessageBox.information(self, "Erfolg", f"Entschlüsselte PDF gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Entschlüsselte PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Entschlüsseltes Speichern fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    def export_optimized_pdf_copy(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        profile, ok = QInputDialog.getItem(
+            self,
+            "PDF optimieren",
+            "Optimierungsprofil:",
+            ["Standard", "Stark komprimieren"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Optimierte PDF speichern",
+            str(self.pdf_path.with_name(f"{self.pdf_path.stem}_optimized.pdf")),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+        out_doc = fitz.open()
+        try:
+            out_doc.insert_pdf(self.doc)
+            for idx, rot in self.page_rotations.items():
+                if 0 <= idx < len(out_doc) and rot % 360 != 0:
+                    out_doc[idx].set_rotation(rot % 360)
+            save_kwargs = {"garbage": 3, "deflate": True}
+            if profile == "Stark komprimieren":
+                save_kwargs.update({"garbage": 4, "deflate_images": True, "use_objstms": 1})
+            out_doc.save(out_path, **save_kwargs)
+            try:
+                orig_size = self.pdf_path.stat().st_size
+                new_size = Path(out_path).stat().st_size
+                diff = orig_size - new_size
+                pct = (diff / orig_size * 100.0) if orig_size else 0.0
+                msg = f"Optimierte PDF gespeichert:\n{out_path}\n\nAlt: {orig_size/1024:.1f} KB\nNeu: {new_size/1024:.1f} KB\nErsparnis: {pct:.1f}%"
+            except Exception:
+                msg = f"Optimierte PDF gespeichert:\n{out_path}"
+            QMessageBox.information(self, "Erfolg", msg)
+            self.statusBar().showMessage(f"Optimierte PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Optimierung fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    def show_document_info(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        metadata = self.doc.metadata or {}
+        try:
+            file_size = self.pdf_path.stat().st_size
+            size_text = f"{file_size / 1024:.1f} KB"
+        except Exception:
+            size_text = "unbekannt"
+        total_pages = len(self.doc)
+        widths: list[float] = []
+        heights: list[float] = []
+        images = 0
+        annotations = 0
+        form_fields = 0
+        try:
+            for i in range(total_pages):
+                page = self.doc[i]
+                widths.append(float(page.rect.width))
+                heights.append(float(page.rect.height))
+                images += len(page.get_images(full=True))
+                annotations += len(list(page.annots() or []))
+                form_fields += len(list(page.widgets() or []))
+        except Exception:
+            pass
+        info_lines = [
+            f"Datei: {self.pdf_path.name}",
+            f"Seiten: {total_pages}",
+            f"Dateigröße: {size_text}",
+            f"Verschlüsselt: {'ja' if bool(getattr(self.doc, 'is_encrypted', False)) else 'nein'}",
+            f"Eingebettete Bilder: {images}",
+            f"Annotationen: {annotations}",
+            f"Formularfelder: {form_fields}",
+        ]
+        if widths and heights:
+            info_lines.append(f"Seitengröße erste Seite: {widths[0]:.0f} × {heights[0]:.0f} pt")
+        for key, label in (("title", "Titel"), ("author", "Autor"), ("subject", "Betreff"), ("keywords", "Schlüsselwörter"), ("creator", "Erzeugt von"), ("producer", "Producer")):
+            value = metadata.get(key)
+            if value:
+                info_lines.append(f"{label}: {value}")
+        QMessageBox.information(self, "Dokumentinfos", "\n".join(info_lines))
+
+    def show_page_overview(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Seitenübersicht")
+        dlg.resize(860, 520)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Übersicht über Seiten, Größen, Bilder und Annotationen."))
+        table = QTableWidget(len(self.doc), 6, dlg)
+        table.setHorizontalHeaderLabels(["Seite", "Größe (pt)", "Rotation", "Bilder", "Annotationen", "Formulare"])
+        table.setSortingEnabled(False)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        for idx in range(len(self.doc)):
+            page = self.doc[idx]
+            image_count = len(page.get_images(full=True))
+            annot_count = len(list(page.annots() or []))
+            widget_count = len(list(page.widgets() or []))
+            rotation = self.page_rotations.get(idx, 0) % 360
+            table.setItem(idx, 0, SortableTableWidgetItem(str(idx + 1), idx + 1))
+            table.setItem(idx, 1, QTableWidgetItem(f"{page.rect.width:.0f} × {page.rect.height:.0f}"))
+            table.setItem(idx, 2, SortableTableWidgetItem(f"{rotation}°", rotation))
+            table.setItem(idx, 3, SortableTableWidgetItem(str(image_count), image_count))
+            table.setItem(idx, 4, SortableTableWidgetItem(str(annot_count), annot_count))
+            table.setItem(idx, 5, SortableTableWidgetItem(str(widget_count), widget_count))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.exec()
+
     def export_current_file(self) -> None:
         if not self.doc or not self.pdf_path:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
@@ -4194,6 +5720,291 @@ class MainWindow(QMainWindow):
         data = [record]
         self._write_export_data(Path(out_path), fmt, data)
         self.statusBar().showMessage(f"Export erstellt: {Path(out_path).name}")
+
+    def export_pages_as_images(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seiten als Bilder exportieren",
+            "Welche Seiten exportieren? (z.B. current, 1-3, odd, even, all)",
+            text="current",
+        )
+        if not ok or not page_spec.strip():
+            return
+
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+
+        fmt, ok = QInputDialog.getItem(self, "Bildformat", "Format:", ["PNG", "JPG"], 0, False)
+        if not ok:
+            return
+        zoom, ok = QInputDialog.getDouble(self, "Auflösung", "Zoomfaktor fürs Rendering:", 2.0, 0.5, 6.0, 1)
+        if not ok:
+            return
+
+        out_dir = QFileDialog.getExistingDirectory(self, "Zielordner für Bilder auswählen", str(self.pdf_path.parent))
+        if not out_dir:
+            return
+
+        suffix = ".png" if fmt == "PNG" else ".jpg"
+        try:
+            for idx in page_indices:
+                page = self.doc[idx]
+                rotation = self.page_rotations.get(idx, 0)
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom).prerotate(rotation), alpha=False)
+                target = Path(out_dir) / f"{self.pdf_path.stem}_page_{idx + 1:03d}{suffix}"
+                pix.save(str(target))
+            self.statusBar().showMessage(f"{len(page_indices)} Seite(n) als {fmt} exportiert")
+            QMessageBox.information(self, "Erfolg", f"{len(page_indices)} Seite(n) nach\n{out_dir}\nexportiert.")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Bildexport fehlgeschlagen:\n{e}")
+
+    def extract_images_from_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Bilder extrahieren",
+            "Welche Seiten durchsuchen? (z.B. current, 1-3, all)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        out_dir = QFileDialog.getExistingDirectory(self, "Zielordner für extrahierte Bilder auswählen", str(self.pdf_path.parent))
+        if not out_dir:
+            return
+        written = 0
+        seen_xrefs: set[int] = set()
+        try:
+            for idx in page_indices:
+                page = self.doc[idx]
+                for img_no, img in enumerate(page.get_images(full=True), start=1):
+                    xref = int(img[0])
+                    if xref in seen_xrefs:
+                        continue
+                    seen_xrefs.add(xref)
+                    info = self.doc.extract_image(xref)
+                    ext = info.get("ext", "bin")
+                    data = info.get("image")
+                    if not data:
+                        continue
+                    target = Path(out_dir) / f"{self.pdf_path.stem}_page_{idx + 1:03d}_img_{img_no:02d}.{ext}"
+                    target.write_bytes(data)
+                    written += 1
+            if written == 0:
+                QMessageBox.information(self, "Hinweis", "Keine eingebetteten Bilder gefunden.")
+                return
+            QMessageBox.information(self, "Erfolg", f"{written} Bild(er) nach\n{out_dir}\nextrahiert.")
+            self.statusBar().showMessage(f"{written} Bild(er) extrahiert")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Bildextraktion fehlgeschlagen:\n{e}")
+
+    def export_grayscale_pdf_copy(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Graustufen-PDF exportieren",
+            "Welche Seiten in Graustufen konvertieren? (z.B. all, 1-3, current)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Graustufen-PDF speichern",
+            str(self.pdf_path.with_name(f"{self.pdf_path.stem}_grayscale.pdf")),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+        out_doc = fitz.open()
+        try:
+            selected = set(page_indices)
+            for idx in range(len(self.doc)):
+                page = self.doc[idx]
+                if idx in selected:
+                    rotation = self.page_rotations.get(idx, 0)
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2).prerotate(rotation), alpha=False)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    gray = ImageOps.grayscale(img)
+                    buffer = io.BytesIO()
+                    gray.save(buffer, format="PNG")
+                    buffer.seek(0)
+                    new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
+                    new_page.insert_image(new_page.rect, stream=buffer.getvalue())
+                else:
+                    out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+            out_doc.save(out_path, garbage=3, deflate=True)
+            QMessageBox.information(self, "Erfolg", f"Graustufen-PDF gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Graustufen-PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Graustufen-Export fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    def insert_page_numbers(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seitennummern einfügen",
+            "Welche Seiten nummerieren? (z.B. all, 1-3, current)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        position, ok = QInputDialog.getItem(
+            self,
+            "Position",
+            "Seitennummer-Position:",
+            ["Unten mittig", "Unten rechts", "Unten links", "Oben rechts", "Oben links"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+        font_size, ok = QInputDialog.getInt(self, "Schriftgröße", "Schriftgröße in pt:", 11, 6, 48, 1)
+        if not ok:
+            return
+        color_raw, ok = QInputDialog.getText(
+            self,
+            "Farbe",
+            "RGB oder Hex (z.B. 80,80,80 oder #505050):",
+            text="80, 80, 80",
+        )
+        if not ok:
+            return
+        color = self._parse_rgb_color(color_raw, (80 / 255.0, 80 / 255.0, 80 / 255.0))
+        start_number, ok = QInputDialog.getInt(self, "Startnummer", "Start bei:", 1, -99999, 99999, 1)
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            for offset, idx in enumerate(page_indices):
+                page = self.doc[idx]
+                rect = page.rect
+                text = str(start_number + offset)
+                box_width = 120
+                box_height = max(24, font_size + 10)
+                margin = 18
+                if position == "Unten mittig":
+                    box = fitz.Rect((rect.width - box_width) / 2, rect.height - box_height - margin, (rect.width + box_width) / 2, rect.height - margin)
+                    align = 1
+                elif position == "Unten rechts":
+                    box = fitz.Rect(rect.width - box_width - margin, rect.height - box_height - margin, rect.width - margin, rect.height - margin)
+                    align = 2
+                elif position == "Unten links":
+                    box = fitz.Rect(margin, rect.height - box_height - margin, margin + box_width, rect.height - margin)
+                    align = 0
+                elif position == "Oben rechts":
+                    box = fitz.Rect(rect.width - box_width - margin, margin, rect.width - margin, margin + box_height)
+                    align = 2
+                else:
+                    box = fitz.Rect(margin, margin, margin + box_width, margin + box_height)
+                    align = 0
+                rc = page.insert_textbox(box, text, fontsize=font_size, color=color, align=align)
+                if rc < 0:
+                    raise ValueError(f"Seitennummer passt auf Seite {idx + 1} nicht in den Zielbereich.")
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"Seitennummern auf {len(page_indices)} Seite(n) eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Seitennummern konnten nicht eingefügt werden:\n{e}")
+
+    def add_text_watermark(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        watermark, ok = QInputDialog.getText(
+            self,
+            "Wasserzeichen",
+            "Wasserzeichen-Text:",
+            text="ENTWURF",
+        )
+        if not ok or not watermark.strip():
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Wasserzeichen",
+            "Welche Seiten markieren? (z.B. all, 1-3, current)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        font_size, ok = QInputDialog.getInt(self, "Wasserzeichen", "Schriftgröße in pt:", 42, 12, 200, 1)
+        if not ok:
+            return
+        opacity_pct, ok = QInputDialog.getInt(self, "Wasserzeichen", "Deckkraft in %:", 18, 5, 100, 1)
+        if not ok:
+            return
+        diagonal, ok = QInputDialog.getItem(self, "Wasserzeichen", "Ausrichtung:", ["Diagonal", "Horizontal"], 0, False)
+        if not ok:
+            return
+        color_raw, ok = QInputDialog.getText(
+            self,
+            "Farbe",
+            "RGB oder Hex (z.B. 160,160,160 oder #a0a0a0):",
+            text="160, 160, 160",
+        )
+        if not ok:
+            return
+        color = self._parse_rgb_color(color_raw, (160 / 255.0, 160 / 255.0, 160 / 255.0))
+        try:
+            self._push_undo_state()
+            morph = None
+            if diagonal == "Diagonal":
+                morph = (fitz.Point(0, 0), fitz.Matrix(1, 0, 0, 1).prerotate(45))
+            for idx in page_indices:
+                page = self.doc[idx]
+                rect = page.rect
+                box = fitz.Rect(rect.width * 0.12, rect.height * 0.4, rect.width * 0.88, rect.height * 0.6)
+                kwargs = {
+                    "fontsize": font_size,
+                    "color": color,
+                    "align": 1,
+                    "overlay": True,
+                    "stroke_opacity": opacity_pct / 100.0,
+                    "fill_opacity": opacity_pct / 100.0,
+                    "render_mode": 0,
+                }
+                if morph is not None:
+                    kwargs["morph"] = morph
+                rc = page.insert_textbox(box, watermark.strip(), **kwargs)
+                if rc < 0:
+                    raise ValueError(f"Wasserzeichen passt auf Seite {idx + 1} nicht in den Zielbereich.")
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"Wasserzeichen auf {len(page_indices)} Seite(n) eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Wasserzeichen konnte nicht eingefügt werden:\n{e}")
 
     def export_folder_aggregate(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "PDF-Ordner auswählen")
@@ -4739,6 +6550,50 @@ class MainWindow(QMainWindow):
         finally:
             merged.close()
 
+    def images_to_pdf(self) -> None:
+        file_names, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Bilder für PDF auswählen",
+            "",
+            "Bilder (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)",
+        )
+        if not file_names:
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "PDF aus Bildern speichern",
+            str(Path(file_names[0]).with_suffix(".pdf")),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+
+        doc = fitz.open()
+        try:
+            for file_name in file_names:
+                img = Image.open(file_name)
+                if img.mode not in {"RGB", "L"}:
+                    img = img.convert("RGB")
+                width_px, height_px = img.size
+                dpi = img.info.get("dpi", (72, 72))
+                dpi_x = dpi[0] if isinstance(dpi, tuple) and dpi and dpi[0] else 72
+                dpi_y = dpi[1] if isinstance(dpi, tuple) and len(dpi) > 1 and dpi[1] else dpi_x
+                width_pt = max(72.0, width_px * 72.0 / float(dpi_x or 72))
+                height_pt = max(72.0, height_px * 72.0 / float(dpi_y or 72))
+                page = doc.new_page(width=width_pt, height=height_pt)
+                buffer = io.BytesIO()
+                img.save(buffer, format="PNG")
+                page.insert_image(page.rect, stream=buffer.getvalue())
+            doc.save(out_path)
+            QMessageBox.information(self, "Erfolg", f"PDF aus {len(file_names)} Bild(er)n gespeichert:\n{out_path}")
+            self.statusBar().showMessage(f"Bild-PDF erstellt: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Bild-zu-PDF fehlgeschlagen:\n{e}")
+        finally:
+            doc.close()
+
     def split_pdf_into_chunks(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
@@ -4843,6 +6698,246 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Seitenextrakt erstellt: {Path(out_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Seitenextraktion fehlgeschlagen:\n{e}")
+        finally:
+            out_doc.close()
+
+    def add_text_annotation(self) -> None:
+        self.select_annotation_tool("text", activate=True)
+
+    def add_rectangle_annotation(self) -> None:
+        self.select_annotation_tool("rect", activate=True)
+
+    def add_highlight_annotation(self) -> None:
+        self.select_annotation_tool("highlight", activate=True)
+
+    def add_line_annotation(self) -> None:
+        self.select_annotation_tool("line", activate=True)
+
+    def add_arrow_annotation(self) -> None:
+        self.select_annotation_tool("arrow", activate=True)
+
+    def add_image_annotation(self) -> None:
+        self.select_annotation_tool("image", activate=True)
+
+    def add_redaction_annotation(self) -> None:
+        self.select_annotation_tool("redact", activate=True)
+
+    def add_note_annotation(self) -> None:
+        self.select_annotation_tool("note", activate=True)
+
+    def add_freehand_annotation(self) -> None:
+        self.select_annotation_tool("freehand", activate=True)
+
+    def replace_text_annotation(self) -> None:
+        self.select_annotation_tool("text-replace", activate=True)
+
+    def pick_annotation_image(self) -> None:
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Bild für PDF auswählen",
+            "",
+            "Bilder (*.png *.jpg *.jpeg *.webp *.bmp *.gif)",
+        )
+        if not file_name:
+            return
+        path = Path(file_name)
+        preview = QPixmap(str(path))
+        if preview.isNull():
+            QMessageBox.warning(self, "Ungültig", "Die ausgewählte Bilddatei konnte nicht geladen werden.")
+            return
+        self.annotation_image_path = path
+        self.annotation_image_preview = preview
+        self.annotation_image_path_label.setText(path.name)
+        self.statusBar().showMessage(f"Bild ausgewählt: {path.name}")
+
+    def edit_form_fields_on_current_page(self) -> None:
+        page = self._require_current_pdf_page()
+        if page is None:
+            return
+        widgets = list(page.widgets() or [])
+        if not widgets:
+            QMessageBox.information(self, "Hinweis", "Auf der aktuellen Seite wurden keine Formularfelder gefunden.")
+            return
+
+        items: list[str] = []
+        widget_map: dict[str, object] = {}
+        for idx, widget in enumerate(widgets, start=1):
+            field_name = getattr(widget, "field_name", None) or f"Feld {idx}"
+            field_label = getattr(widget, "field_label", None) or ""
+            field_value = getattr(widget, "field_value", None)
+            field_type = getattr(widget, "field_type_string", None) or str(getattr(widget, "field_type", "Widget"))
+            display = f"{field_name} ({field_type})"
+            if field_label:
+                display += f" – {field_label}"
+            if field_value not in (None, ""):
+                display += f" = {field_value}"
+            items.append(display)
+            widget_map[display] = widget
+
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Formularfeld bearbeiten",
+            "Feld auswählen:",
+            items,
+            0,
+            False,
+        )
+        if not ok or not choice:
+            return
+        widget = widget_map[choice]
+        field_name = getattr(widget, "field_name", None) or "Formularfeld"
+        current_value = getattr(widget, "field_value", None)
+        try:
+            field_type_text = str(getattr(widget, "field_type_string", None) or getattr(widget, "field_type", "")).lower()
+            is_bool_field = any(token in field_type_text for token in ("checkbox", "check", "radio", "button", "bool"))
+            if any(token in field_type_text for token in ("choice", "combo", "list", "select")):
+                options = []
+                for attr_name in ("choice_values", "options"):
+                    try:
+                        values = getattr(widget, attr_name, None)
+                        if values:
+                            options = [str(v) for v in values]
+                            break
+                    except Exception:
+                        pass
+                if not options:
+                    options_text, ok = QInputDialog.getText(
+                        self,
+                        "Auswahloptionen",
+                        "Optionen konnten nicht gelesen werden. Erlaubte Werte manuell eingeben (kommagetrennt):",
+                        text="",
+                    )
+                    if not ok:
+                        return
+                    options = [p.strip() for p in options_text.split(",") if p.strip()]
+                if not options:
+                    QMessageBox.information(self, "Hinweis", "Für dieses Auswahlfeld sind keine Optionen verfügbar.")
+                    return
+                current_index = options.index(str(current_value)) if current_value is not None and str(current_value) in options else 0
+                selected_value, ok = QInputDialog.getItem(
+                    self,
+                    "Formularwert bearbeiten",
+                    f"Wert für '{field_name}':",
+                    options,
+                    current_index,
+                    False,
+                )
+                if not ok:
+                    return
+                new_value = selected_value
+            elif is_bool_field:
+                current_bool = str(current_value).lower() in {"1", "true", "yes", "on"}
+                choice_value, ok = QInputDialog.getItem(
+                    self,
+                    "Formularwert bearbeiten",
+                    f"Wert für '{field_name}':",
+                    ["Aus", "An"],
+                    1 if current_bool else 0,
+                    False,
+                )
+                if not ok:
+                    return
+                new_value = choice_value == "An"
+            else:
+                new_value, ok = QInputDialog.getText(
+                    self,
+                    "Formularwert bearbeiten",
+                    f"Neuer Wert für '{field_name}':",
+                    text="" if current_value is None else str(current_value),
+                )
+                if not ok:
+                    return
+            self._push_undo_state()
+            widget.field_value = new_value
+            widget.update()
+            self._set_dirty(True)
+            self.render_current_page()
+            self.statusBar().showMessage(f"Formularfeld aktualisiert: {field_name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Formularfeld konnte nicht aktualisiert werden:\n{e}")
+
+    def crop_pages_to_new_pdf(self) -> None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seiten zuschneiden",
+            "Welche Seiten zuschneiden? (z.B. current, 1-3, odd, even, all)",
+            text="current",
+        )
+        if not ok or not page_spec.strip():
+            return
+
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+
+        margins_raw, ok = QInputDialog.getText(
+            self,
+            "Ränder in Prozent",
+            "Ränder links, oben, rechts, unten in Prozent eingeben (z.B. 5, 5, 5, 5):",
+            text="5, 5, 5, 5",
+        )
+        if not ok or not margins_raw.strip():
+            return
+
+        margins = self._parse_crop_margins_percent(margins_raw)
+        if margins is None:
+            QMessageBox.warning(
+                self,
+                "Ungültig",
+                "Bitte genau vier nichtnegative Prozentwerte angeben, z.B. 5, 5, 5, 5.",
+            )
+            return
+
+        left_pct, top_pct, right_pct, bottom_pct = margins
+
+        default_name = f"{self.pdf_path.stem}_crop.pdf"
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Zugeschnittene PDF speichern",
+            str(self.pdf_path.with_name(default_name)),
+            "PDF-Dateien (*.pdf)",
+        )
+        if not out_path:
+            return
+        out_path = self._ensure_pdf_suffix(out_path)
+
+        out_doc = fitz.open()
+        try:
+            for idx in page_indices:
+                out_doc.insert_pdf(self.doc, from_page=idx, to_page=idx)
+                out_page = out_doc[-1]
+                base_rect = out_page.rect
+                crop_rect = fitz.Rect(
+                    base_rect.x0 + (base_rect.width * left_pct / 100.0),
+                    base_rect.y0 + (base_rect.height * top_pct / 100.0),
+                    base_rect.x1 - (base_rect.width * right_pct / 100.0),
+                    base_rect.y1 - (base_rect.height * bottom_pct / 100.0),
+                )
+                if crop_rect.width < 36 or crop_rect.height < 36:
+                    raise ValueError(
+                        f"Seite {idx + 1} würde zu klein werden ({crop_rect.width:.1f} x {crop_rect.height:.1f} pt)."
+                    )
+                out_page.set_cropbox(crop_rect)
+                rot = self.page_rotations.get(idx, 0) % 360
+                if rot:
+                    out_page.set_rotation(rot)
+
+            out_doc.save(out_path)
+            QMessageBox.information(
+                self,
+                "Erfolg",
+                "Zugeschnittene PDF gespeichert:\n"
+                f"{out_path}\n\n"
+                f"Ränder: links {left_pct:g}%, oben {top_pct:g}%, rechts {right_pct:g}%, unten {bottom_pct:g}%",
+            )
+            self.statusBar().showMessage(f"PDF zugeschnitten: {Path(out_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Zuschneiden fehlgeschlagen:\n{e}")
         finally:
             out_doc.close()
 
@@ -5022,6 +7117,686 @@ class MainWindow(QMainWindow):
                     if 1 <= p <= total_pages:
                         add_page(p - 1)
         return ordered
+
+    def _parse_crop_margins_percent(self, spec: str) -> tuple[float, float, float, float] | None:
+        parts = [p.strip().replace("%", "") for p in re.split(r"[;,\s]+", spec or "") if p.strip()]
+        if len(parts) != 4:
+            return None
+        try:
+            left, top, right, bottom = (float(part.replace(",", ".")) for part in parts)
+        except ValueError:
+            return None
+        margins = (left, top, right, bottom)
+        if any(value < 0 for value in margins):
+            return None
+        if left + right >= 95 or top + bottom >= 95:
+            return None
+        return margins
+
+    def _parse_rect_percent(self, spec: str) -> tuple[float, float, float, float] | None:
+        parts = [p.strip().replace("%", "") for p in re.split(r"[;,\s]+", spec or "") if p.strip()]
+        if len(parts) != 4:
+            return None
+        try:
+            left, top, width, height = (float(part.replace(",", ".")) for part in parts)
+        except ValueError:
+            return None
+        if min(left, top, width, height) < 0:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        if left + width > 100 or top + height > 100:
+            return None
+        return left, top, width, height
+
+    def _anchor_rect_percent(
+        self,
+        anchor_x: float,
+        anchor_y: float,
+        width_pct: float,
+        height_pct: float,
+    ) -> tuple[float, float, float, float]:
+        left = min(max(anchor_x, 0.0), max(0.0, 100.0 - width_pct))
+        top = min(max(anchor_y, 0.0), max(0.0, 100.0 - height_pct))
+        return left, top, width_pct, height_pct
+
+    def _rect_percent_from_drag(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+    ) -> tuple[float, float, float, float] | None:
+        left = max(0.0, min(start_x, end_x))
+        top = max(0.0, min(start_y, end_y))
+        right = min(100.0, max(start_x, end_x))
+        bottom = min(100.0, max(start_y, end_y))
+        width = right - left
+        height = bottom - top
+        if width < 1.0 or height < 1.0:
+            return None
+        return left, top, width, height
+
+    def _rect_from_percent(self, page: fitz.Page, spec: tuple[float, float, float, float]) -> fitz.Rect:
+        left, top, width, height = spec
+        base = page.rect
+        return fitz.Rect(
+            base.x0 + base.width * left / 100.0,
+            base.y0 + base.height * top / 100.0,
+            base.x0 + base.width * (left + width) / 100.0,
+            base.y0 + base.height * (top + height) / 100.0,
+        )
+
+    def _rect_percent_to_view_box(
+        self,
+        spec: tuple[float, float, float, float],
+        view_width: int,
+        view_height: int,
+    ) -> tuple[int, int, int, int] | None:
+        left, top, width, height = spec
+        if width <= 0 or height <= 0 or view_width <= 0 or view_height <= 0:
+            return None
+        x = int(round((left / 100.0) * view_width))
+        y = int(round((top / 100.0) * view_height))
+        w = int(round((width / 100.0) * view_width))
+        h = int(round((height / 100.0) * view_height))
+        if w <= 0 or h <= 0:
+            return None
+        return x, y, w, h
+
+    def _require_current_pdf_page(self) -> fitz.Page | None:
+        if not self.doc or not self.pdf_path:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return None
+        if not (0 <= self.current_page < len(self.doc)):
+            QMessageBox.warning(self, "Ungültig", "Aktuelle Seite ist nicht verfügbar.")
+            return None
+        return self.doc[self.current_page]
+
+    def _parse_rgb_color(self, spec: str, default: tuple[float, float, float]) -> tuple[float, float, float]:
+        value = (spec or "").strip()
+        if value.startswith("#"):
+            hex_value = value[1:]
+            if len(hex_value) == 3:
+                hex_value = "".join(ch * 2 for ch in hex_value)
+            if len(hex_value) == 6:
+                try:
+                    return tuple(int(hex_value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))  # type: ignore[return-value]
+                except ValueError:
+                    return default
+        parts = [p.strip() for p in re.split(r"[;,\s]+", spec or "") if p.strip()]
+        if len(parts) != 3:
+            return default
+        try:
+            values = [max(0, min(255, int(float(part.replace(",", "."))))) / 255.0 for part in parts]
+        except ValueError:
+            return default
+        return values[0], values[1], values[2]
+
+    def _color_tuple_to_text(self, color: tuple[float, float, float]) -> str:
+        values = [max(0, min(255, round(channel * 255))) for channel in color]
+        return f"{values[0]}, {values[1]}, {values[2]}"
+
+    def _color_tuple_to_hex(self, color: tuple[float, float, float]) -> str:
+        values = [max(0, min(255, round(channel * 255))) for channel in color]
+        return f"#{values[0]:02x}{values[1]:02x}{values[2]:02x}"
+
+    def _set_annotation_defaults(self, kind: str) -> None:
+        defaults = {
+            "text": {"hint": "Text hinzufügen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
+            "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
+            "line": {"hint": "Linie ziehen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "arrow": {"hint": "Pfeil ziehen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.5, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
+            "image": {"hint": "Bild platzieren", "width": 35.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "redact": {"hint": "Bereich irreversibel schwärzen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (0.0, 0.0, 0.0)},
+            "note": {"hint": "Notiz platzieren", "text": "", "width": 30.0, "height": 14.0, "font": 12, "line": 2.0, "color": (255 / 255.0, 235 / 255.0, 59 / 255.0)},
+            "freehand": {"hint": "Freihand zeichnen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.5, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
+            "text-replace": {"hint": "Bereich wählen und Text ersetzen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (17 / 255.0, 24 / 255.0, 39 / 255.0)},
+        }
+        cfg = defaults.get(kind, defaults["text"])
+        self.annotation_form_hint.setText(cfg["hint"])
+        self.annotation_width_spin.setValue(float(cfg["width"]))
+        self.annotation_height_spin.setValue(float(cfg["height"]))
+        self.annotation_font_size_spin.setValue(int(cfg["font"]))
+        self.annotation_line_width_spin.setValue(float(cfg["line"]))
+        if kind == "text":
+            self.annotation_text_input.clear()
+        self._set_annotation_color(cfg["color"])
+        self._update_annotation_form_visibility(kind)
+
+    def _update_annotation_form_visibility(self, kind: str) -> None:
+        is_text = kind in {"text", "note", "text-replace"}
+        uses_size = kind in {"text", "rect", "highlight"}
+        uses_line = kind in {"rect", "line", "arrow", "freehand"}
+        uses_color = kind in {"text", "rect", "highlight", "line", "arrow", "freehand", "text-replace"}
+        uses_image = kind == "image"
+        self.annotation_text_label.setVisible(is_text)
+        self.annotation_text_input.setVisible(is_text)
+        self.annotation_image_label.setVisible(uses_image)
+        self.annotation_image_path_label.setVisible(uses_image)
+        self.btn_annotation_pick_image.setVisible(uses_image)
+        self.annotation_width_label.setVisible(uses_size)
+        self.annotation_width_spin.setVisible(uses_size)
+        self.annotation_height_label.setVisible(uses_size)
+        self.annotation_height_spin.setVisible(uses_size)
+        self.annotation_font_label.setVisible(is_text)
+        self.annotation_font_size_spin.setVisible(is_text)
+        self.annotation_line_width_label.setVisible(uses_line)
+        self.annotation_line_width_spin.setVisible(uses_line)
+        self.annotation_color_label.setVisible(uses_color)
+        self.annotation_color_input.setVisible(uses_color)
+        for button, _ in self.annotation_color_buttons:
+            button.setVisible(uses_color)
+
+    def _set_annotation_color(self, color: str | tuple[float, float, float]) -> None:
+        if isinstance(color, str):
+            parsed = self._parse_rgb_color(color, (0.0, 120 / 255.0, 215 / 255.0))
+        else:
+            parsed = color
+        self.annotation_color_input.setText(self._color_tuple_to_text(parsed))
+        self._refresh_annotation_color_buttons()
+
+    def _refresh_annotation_color_buttons(self) -> None:
+        current = self._color_tuple_to_hex(self._parse_rgb_color(self.annotation_color_input.text(), (0.0, 120 / 255.0, 215 / 255.0)))
+        for button, color_hex in self.annotation_color_buttons:
+            is_active = current.lower() == color_hex.lower()
+            border = "#1f2937" if color_hex.lower() == "#ffffff" else ("#1e2432" if is_active else "#d6dbea")
+            width = 3 if is_active else 1
+            button.setStyleSheet(
+                f"background:{color_hex}; border:{width}px solid {border}; border-radius:14px;"
+            )
+
+    def _sync_annotation_tool_buttons(self) -> None:
+        for kind, button in self.annotation_tool_buttons.items():
+            button.setProperty("toolActive", "true" if kind == self.annotation_tool_kind else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def select_annotation_tool(self, kind: str, activate: bool = False) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        self.annotation_tool_kind = kind
+        self._set_annotation_defaults(kind)
+        self._sync_annotation_tool_buttons()
+        if activate:
+            self.activate_selected_annotation_tool()
+
+    def activate_selected_annotation_tool(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        kind = self.annotation_tool_kind
+        default_color = {
+            "text": (220 / 255.0, 20 / 255.0, 60 / 255.0),
+            "rect": (0.0, 120 / 255.0, 215 / 255.0),
+            "highlight": (1.0, 235 / 255.0, 59 / 255.0),
+            "line": (0.0, 120 / 255.0, 215 / 255.0),
+            "arrow": (220 / 255.0, 20 / 255.0, 60 / 255.0),
+        }.get(kind, (0.0, 120 / 255.0, 215 / 255.0))
+        color = self._parse_rgb_color(self.annotation_color_input.text(), default_color)
+
+        if kind == "text":
+            text = self.annotation_text_input.toPlainText().strip()
+            if not text:
+                QMessageBox.information(self, "Hinweis", "Bitte zuerst den Text in der Sidebar eingeben.")
+                self.annotation_text_input.setFocus()
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "text",
+                    "text": text,
+                    "width_pct": self.annotation_width_spin.value(),
+                    "height_pct": self.annotation_height_spin.value(),
+                    "font_size": self.annotation_font_size_spin.value(),
+                    "color": color,
+                },
+                "Textmodus aktiv – klicke in der Vorschau auf die gewünschte Position.",
+            )
+            return
+
+        if kind == "note":
+            text = self.annotation_text_input.toPlainText().strip()
+            if not text:
+                QMessageBox.information(self, "Hinweis", "Bitte zuerst den Notiztext in der Sidebar eingeben.")
+                self.annotation_text_input.setFocus()
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "note",
+                    "text": text,
+                },
+                "Notizmodus aktiv – klicke in der Vorschau auf die gewünschte Position.",
+            )
+            return
+
+        if kind == "text-replace":
+            text = self.annotation_text_input.toPlainText().strip()
+            if not text:
+                QMessageBox.information(self, "Hinweis", "Bitte zuerst den neuen Text in der Sidebar eingeben.")
+                self.annotation_text_input.setFocus()
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "text-replace",
+                    "text": text,
+                    "font_size": self.annotation_font_size_spin.value(),
+                    "color": color,
+                },
+                "Text-Ersetzen aktiv – ziehe den Bereich auf, der neu gesetzt werden soll.",
+            )
+            return
+
+        if kind == "rect":
+            self._begin_pending_annotation(
+                {
+                    "kind": "rect",
+                    "width_pct": self.annotation_width_spin.value(),
+                    "height_pct": self.annotation_height_spin.value(),
+                    "color": color,
+                    "line_width": self.annotation_line_width_spin.value(),
+                },
+                "Rechteckmodus aktiv – in der Vorschau klicken und ziehen.",
+            )
+            return
+
+        if kind == "highlight":
+            self._begin_pending_annotation(
+                {
+                    "kind": "highlight",
+                    "width_pct": self.annotation_width_spin.value(),
+                    "height_pct": self.annotation_height_spin.value(),
+                    "color": color,
+                },
+                "Markierungsmodus aktiv – in der Vorschau klicken und ziehen.",
+            )
+            return
+
+        if kind == "image":
+            if self.annotation_image_path is None:
+                self.pick_annotation_image()
+            if self.annotation_image_path is None:
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "image",
+                    "image_path": str(self.annotation_image_path),
+                },
+                "Bildmodus aktiv – ziehe in der Vorschau die gewünschte Größe auf.",
+            )
+            return
+
+        if kind == "redact":
+            self._begin_pending_annotation(
+                {"kind": "redact"},
+                "Schwärzungsmodus aktiv – ziehe den Bereich auf, der endgültig entfernt werden soll.",
+            )
+            return
+
+        if kind == "freehand":
+            self._begin_pending_annotation(
+                {
+                    "kind": "freehand",
+                    "color": color,
+                    "line_width": self.annotation_line_width_spin.value(),
+                },
+                "Freihandmodus aktiv – mit gedrückter Maus zeichnen.",
+            )
+            return
+
+        self._begin_pending_annotation(
+            {
+                "kind": kind,
+                "color": color,
+                "line_width": self.annotation_line_width_spin.value(),
+            },
+            "Pfeilmodus aktiv – in der Vorschau klicken und ziehen." if kind == "arrow" else "Linienmodus aktiv – in der Vorschau klicken und ziehen.",
+        )
+
+    def start_visual_crop(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        self.selected_annotation_xref = None
+        self._update_selected_annotation_ui()
+        self._begin_pending_annotation(
+            {"kind": "crop"},
+            "Crop-Modus aktiv – ziehe in der Vorschau den gewünschten Seitenausschnitt auf.",
+        )
+        self.render_current_page()
+
+    def _set_annotation_hint(self, text: str, active: bool = False) -> None:
+        self.annotation_hint.setText(text)
+        self.annotation_hint.setProperty("active", active)
+        self.annotation_hint.style().unpolish(self.annotation_hint)
+        self.annotation_hint.style().polish(self.annotation_hint)
+
+    def _update_thumbnail_meta(self) -> None:
+        if not self.doc:
+            self.thumb_meta_label.setText("Noch kein PDF geladen")
+            return
+        total = len(self.doc)
+        current = self.current_page + 1 if 0 <= self.current_page < total else 0
+        selected = len(self.thumb_list.selectedItems()) if self.thumb_list.count() else 0
+        if selected > 1:
+            self.thumb_meta_label.setText(f"{total} Seiten · Auswahl: {selected}")
+        else:
+            self.thumb_meta_label.setText(f"{total} Seiten · aktuell {current}")
+
+    def _update_selected_annotation_ui(self) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            self.annotation_selection_label.setText("Keine Annotation ausgewählt")
+            self.btn_delete_annotation.setEnabled(False)
+            self.btn_edit_annotation_style.setEnabled(False)
+            self.btn_edit_annotation_comment.setEnabled(False)
+            self.btn_reply_annotation.setEnabled(False)
+            return
+        info = None
+        for annot in self.doc[self.current_page].annots() or []:
+            if annot.xref == self.selected_annotation_xref:
+                subtype = annot.type[1] if isinstance(annot.type, tuple) and len(annot.type) > 1 else "Annotation"
+                rect = annot.rect
+                info = f"Ausgewählt: {subtype}\nPos: {rect.x0:.0f}, {rect.y0:.0f} · {rect.width:.0f}×{rect.height:.0f} pt"
+                break
+        if info is None:
+            self.selected_annotation_xref = None
+            self.annotation_selection_label.setText("Keine Annotation ausgewählt")
+            self.btn_delete_annotation.setEnabled(False)
+            self.btn_edit_annotation_style.setEnabled(False)
+            self.btn_edit_annotation_comment.setEnabled(False)
+            self.btn_reply_annotation.setEnabled(False)
+        else:
+            self.annotation_selection_label.setText(info)
+            self.btn_delete_annotation.setEnabled(True)
+            self.btn_edit_annotation_style.setEnabled(True)
+            self.btn_edit_annotation_comment.setEnabled(True)
+            self.btn_reply_annotation.setEnabled(True)
+
+    def _view_to_page_point(self, x: float, y: float) -> fitz.Point | None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return None
+        pixmap = self.preview.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return None
+        page = self.doc[self.current_page]
+        rot = self.page_rotations.get(self.current_page, 0) % 360
+        page_width = float(page.rect.width)
+        page_height = float(page.rect.height)
+        px = max(0.0, min(float(pixmap.width()), x)) / max(self.zoom_factor, 1e-6)
+        py = max(0.0, min(float(pixmap.height()), y)) / max(self.zoom_factor, 1e-6)
+        if rot == 0:
+            return fitz.Point(px, py)
+        if rot == 90:
+            return fitz.Point(py, page_height - px)
+        if rot == 180:
+            return fitz.Point(page_width - px, page_height - py)
+        if rot == 270:
+            return fitz.Point(page_width - py, px)
+        return fitz.Point(px, py)
+
+    def _select_annotation_at_page_point(self, point: fitz.Point) -> bool:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return False
+        page = self.doc[self.current_page]
+        selected = None
+        for annot in page.annots() or []:
+            rect = annot.rect
+            if rect.contains(point):
+                selected = annot.xref
+        self.selected_annotation_xref = selected
+        self._update_selected_annotation_ui()
+        self.render_current_page()
+        return selected is not None
+
+    def _set_line_end_style(self, annot, arrow: bool = False) -> None:
+        if not arrow:
+            return
+        for start_style, end_style in ((0, 4), (0, 5), (0, 2)):
+            try:
+                annot.set_line_ends(start_style, end_style)
+                return
+            except Exception:
+                continue
+
+    def _normalize_preview_percent(self, x: float, y: float) -> tuple[float, float] | None:
+        pixmap = self.preview.pixmap()
+        if pixmap is None or pixmap.isNull() or pixmap.width() <= 0 or pixmap.height() <= 0:
+            return None
+        px = max(0.0, min(100.0, (x / pixmap.width()) * 100.0))
+        py = max(0.0, min(100.0, (y / pixmap.height()) * 100.0))
+        return px, py
+
+    def _begin_pending_annotation(self, config: dict, hint: str) -> None:
+        self.pending_annotation = config
+        self.preview_drag_points = []
+        self.preview.setCursor(Qt.CursorShape.CrossCursor)
+        self._set_annotation_hint(hint, active=True)
+        self.statusBar().showMessage(hint)
+
+    def _clear_pending_annotation(self) -> None:
+        self.pending_annotation = None
+        self.preview_drag_start = None
+        self.preview_drag_current = None
+        self.preview_drag_points = []
+        self.preview.setCursor(Qt.CursorShape.ArrowCursor)
+        self._set_annotation_hint("Bereit", active=False)
+
+    def _handle_preview_drag_start(self, x: float, y: float) -> None:
+        if not self.pending_annotation:
+            return
+        norm = self._normalize_preview_percent(x, y)
+        if norm is None:
+            return
+        self.preview_drag_start = norm
+        self.preview_drag_current = norm
+        self.preview_drag_points = [norm]
+
+    def _handle_preview_drag_move(self, x: float, y: float) -> None:
+        if not self.pending_annotation or self.preview_drag_start is None:
+            return
+        norm = self._normalize_preview_percent(x, y)
+        if norm is None:
+            return
+        self.preview_drag_current = norm
+        self.preview_drag_points.append(norm)
+        kind = self.pending_annotation.get("kind")
+        if kind == "crop":
+            self._set_annotation_hint("Loslassen zum Zuschneiden – nur der markierte Bereich bleibt sichtbar.", active=True)
+            self.render_current_page()
+        elif kind == "image":
+            self._set_annotation_hint("Loslassen zum Einfügen – Bild wird in den aufgezogenen Bereich gesetzt.", active=True)
+            self.render_current_page()
+        elif kind == "redact":
+            self._set_annotation_hint("Loslassen zum Schwärzen – Inhalt wird danach endgültig entfernt.", active=True)
+            self.render_current_page()
+        elif kind == "freehand":
+            self._set_annotation_hint("Loslassen zum Abschließen – du zeichnest direkt auf die Seite.", active=True)
+            self.render_current_page()
+        elif kind == "text-replace":
+            self._set_annotation_hint("Loslassen zum Ersetzen – der Bereich wird bereinigt und neu beschrieben.", active=True)
+            self.render_current_page()
+        elif kind in {"rect", "highlight"}:
+            self._set_annotation_hint("Loslassen zum Platzieren – Ziehen definiert Größe und Position.", active=True)
+            self.render_current_page()
+        elif kind in {"line", "arrow"}:
+            self.render_current_page()
+
+    def _handle_preview_click(self, x: float, y: float) -> None:
+        if not self.doc:
+            return
+        if not self.pending_annotation:
+            point = self._view_to_page_point(x, y)
+            if point is not None:
+                if self._select_annotation_at_page_point(point):
+                    self.statusBar().showMessage("Annotation ausgewählt")
+                else:
+                    self.selected_annotation_xref = None
+                    self._update_selected_annotation_ui()
+                    self.render_current_page()
+            return
+        norm = self._normalize_preview_percent(x, y)
+        if norm is None:
+            return
+
+        anchor_x, anchor_y = norm
+        kind = self.pending_annotation.get("kind")
+        if kind in {"rect", "highlight", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+            self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
+            self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
+            return
+        try:
+            self._push_undo_state()
+            page = self.doc[self.current_page]
+            if kind == "text":
+                rect_spec = self._anchor_rect_percent(anchor_x, anchor_y, self.pending_annotation["width_pct"], self.pending_annotation["height_pct"])
+                rect = self._rect_from_percent(page, rect_spec)
+                rc = page.insert_textbox(
+                    rect,
+                    self.pending_annotation["text"],
+                    fontsize=self.pending_annotation["font_size"],
+                    color=self.pending_annotation["color"],
+                )
+                if rc < 0:
+                    raise ValueError("Der Text passt an dieser Position nicht in das Feld.")
+                message = "Text platziert"
+            elif kind == "note":
+                point = self._view_to_page_point(x, y)
+                if point is None:
+                    raise ValueError("Notiz konnte nicht platziert werden.")
+                annot = page.add_text_annot(point, self.pending_annotation["text"])
+                annot.update()
+                self.selected_annotation_xref = getattr(annot, "xref", None)
+                message = "Notiz platziert"
+            else:
+                return
+
+            if kind == "text":
+                self.selected_annotation_xref = None
+            self._update_selected_annotation_ui()
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(message)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Platzierung fehlgeschlagen:\n{e}")
+        finally:
+            self._clear_pending_annotation()
+
+    def _handle_preview_drag_finish(self, x: float, y: float) -> None:
+        if not self.pending_annotation or not self.doc:
+            return
+        if self.preview_drag_start is None:
+            return
+        end = self._normalize_preview_percent(x, y)
+        if end is None:
+            self._clear_pending_annotation()
+            return
+        start_x, start_y = self.preview_drag_start
+        end_x, end_y = end
+        kind = self.pending_annotation.get("kind")
+        rect_spec = self._rect_percent_from_drag(start_x, start_y, end_x, end_y)
+        if kind != "freehand" and rect_spec is None:
+            self._set_annotation_hint("Auswahl zu klein – bitte etwas größer ziehen.", active=True)
+            self.statusBar().showMessage("Auswahl zu klein für Annotation.")
+            self._clear_pending_annotation()
+            return
+        try:
+            self._push_undo_state()
+            page = self.doc[self.current_page]
+            if kind == "freehand":
+                if len(self.preview_drag_points) < 2:
+                    raise ValueError("Freihandspur ist zu kurz.")
+                stroke: list[fitz.Point] = []
+                for px, py in self.preview_drag_points:
+                    point = self._view_to_page_point(
+                        (px / 100.0) * self.preview.pixmap().width(),
+                        (py / 100.0) * self.preview.pixmap().height(),
+                    )
+                    if point is not None:
+                        stroke.append(point)
+                if len(stroke) < 2:
+                    raise ValueError("Freihandspur konnte nicht platziert werden.")
+                annot = page.add_ink_annot([stroke])
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Freihand-Markierung platziert"
+            elif kind == "crop":
+                rect = self._rect_from_percent(page, rect_spec)
+                if rect.width < 36 or rect.height < 36:
+                    raise ValueError("Der gewählte Ausschnitt ist zu klein.")
+                page.set_cropbox(rect)
+                message = "Seite zugeschnitten"
+                self.selected_annotation_xref = None
+            else:
+                rect = self._rect_from_percent(page, rect_spec)
+            if kind == "rect":
+                annot = page.add_rect_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Rechteck platziert"
+            elif kind == "highlight":
+                annot = page.add_highlight_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.update()
+                message = "Markierung platziert"
+            elif kind in {"line", "arrow"}:
+                start_point = self._view_to_page_point(
+                    (start_x / 100.0) * self.preview.pixmap().width(),
+                    (start_y / 100.0) * self.preview.pixmap().height(),
+                )
+                end_point = self._view_to_page_point(
+                    (end_x / 100.0) * self.preview.pixmap().width(),
+                    (end_y / 100.0) * self.preview.pixmap().height(),
+                )
+                if start_point is None or end_point is None:
+                    raise ValueError("Linie konnte nicht platziert werden.")
+                annot = page.add_line_annot(start_point, end_point)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                self._set_line_end_style(annot, arrow=(kind == "arrow"))
+                annot.update()
+                message = "Pfeil platziert" if kind == "arrow" else "Linie platziert"
+            elif kind == "image":
+                image_path = self.pending_annotation.get("image_path")
+                if not image_path:
+                    raise ValueError("Keine Bilddatei ausgewählt.")
+                page.insert_image(rect, filename=str(image_path), overlay=True)
+                annot = None
+                message = f"Bild eingefügt: {Path(str(image_path)).name}"
+            elif kind == "redact":
+                annot = page.add_redact_annot(rect, fill=(0, 0, 0))
+                annot.update()
+                page.apply_redactions()
+                annot = None
+                message = "Bereich irreversibel geschwärzt"
+            elif kind == "text-replace":
+                annot = page.add_redact_annot(rect, fill=(1, 1, 1))
+                annot.update()
+                page.apply_redactions()
+                rc = page.insert_textbox(
+                    rect,
+                    self.pending_annotation["text"],
+                    fontsize=self.pending_annotation["font_size"],
+                    color=self.pending_annotation["color"],
+                )
+                if rc < 0:
+                    raise ValueError("Der neue Text passt nicht in den gewählten Bereich.")
+                annot = None
+                message = "Textbereich ersetzt"
+            elif kind == "crop":
+                annot = None
+            else:
+                return
+            self.selected_annotation_xref = getattr(annot, "xref", None) if annot is not None else None
+            self._update_selected_annotation_ui()
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(message)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Platzierung fehlgeschlagen:\n{e}")
+        finally:
+            self._clear_pending_annotation()
 
     def _parse_order_spec(self, spec: str, total_pages: int) -> list[int]:
         ordered: list[int] = []
