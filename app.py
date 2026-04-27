@@ -1133,6 +1133,7 @@ class MainWindow(QMainWindow):
         self.preview_drag_current: tuple[float, float] | None = None
         self.preview_drag_points: list[tuple[float, float]] = []
         self.selected_annotation_xref: int | None = None
+        self.annotation_drag_state: dict | None = None
         self.annotation_image_path: Path | None = None
         self.annotation_image_preview: QPixmap | None = None
 
@@ -1605,8 +1606,8 @@ class MainWindow(QMainWindow):
 
         self.annotation_panel = QWidget()
         self.annotation_panel.setProperty("role", "sidepanel")
-        self.annotation_panel.setMinimumWidth(260)
-        self.annotation_panel.setMaximumWidth(340)
+        self.annotation_panel.setMinimumWidth(220)
+        self.annotation_panel.setMaximumWidth(300)
         annotation_layout = QVBoxLayout(self.annotation_panel)
         annotation_layout.setContentsMargins(12, 12, 12, 12)
         annotation_layout.setSpacing(10)
@@ -1773,7 +1774,19 @@ class MainWindow(QMainWindow):
         self.btn_delete_annotation.clicked.connect(self.delete_selected_annotation)
         self.btn_delete_annotation.setEnabled(False)
         annotation_layout.addWidget(self.btn_delete_annotation)
+        self.btn_apply_redactions = _action_btn("Schwärzungen final anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
+        self.btn_apply_redactions.clicked.connect(self.apply_pending_redactions)
+        annotation_layout.addWidget(self.btn_apply_redactions)
         annotation_layout.addStretch(1)
+
+        self.annotation_panel_scroll = QScrollArea()
+        self.annotation_panel_scroll.setWidget(self.annotation_panel)
+        self.annotation_panel_scroll.setWidgetResizable(True)
+        self.annotation_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.annotation_panel_scroll.setProperty("role", "previewarea")
+        self.annotation_panel_scroll.setMinimumWidth(220)
+        self.annotation_panel_scroll.setMaximumWidth(312)
+        self.annotation_panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         # ── Toolbar ──────────────────────────────────────────────────────────
         toolbar_widget = QWidget()
@@ -1856,11 +1869,11 @@ class MainWindow(QMainWindow):
         self.content_splitter.setHandleWidth(6)
         self.content_splitter.addWidget(self.thumb_panel)
         self.content_splitter.addWidget(self.preview_scroll)
-        self.content_splitter.addWidget(self.annotation_panel)
+        self.content_splitter.addWidget(self.annotation_panel_scroll)
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
         self.content_splitter.setStretchFactor(2, 0)
-        self.content_splitter.setSizes([190, 860, 290])
+        self.content_splitter.setSizes([170, 900, 250])
 
         # ── Haupt-Layout ─────────────────────────────────────────────────────
         layout = QVBoxLayout()
@@ -2033,6 +2046,10 @@ class MainWindow(QMainWindow):
         act_add_arrow = QAction("Pfeil hinzufügen …", self)
         act_add_arrow.triggered.connect(self.add_arrow_annotation)
         menu_tools.addAction(act_add_arrow)
+
+        act_apply_redactions = QAction("Schwärzungen final anwenden", self)
+        act_apply_redactions.triggered.connect(self.apply_pending_redactions)
+        menu_tools.addAction(act_apply_redactions)
 
         act_merge = QAction("PDFs zusammenführen", self)
         act_merge.triggered.connect(self.merge_pdfs)
@@ -2718,6 +2735,76 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Leere Seite eingefügt")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Leere Seite konnte nicht eingefügt werden:\n{e}")
+
+    @staticmethod
+    def _annotation_subtype_name(annot) -> str:
+        try:
+            annot_type = getattr(annot, "type", None)
+            if isinstance(annot_type, tuple) and len(annot_type) > 1:
+                return str(annot_type[1] or "")
+        except Exception:
+            pass
+        return ""
+
+    def _pending_redaction_summary(self) -> tuple[int, list[int]]:
+        if not self.doc:
+            return 0, []
+        total = 0
+        pages: list[int] = []
+        for idx in range(len(self.doc)):
+            count = 0
+            for annot in self.doc[idx].annots() or []:
+                subtype = self._annotation_subtype_name(annot).strip().casefold()
+                if subtype in {"redact", "redaction"}:
+                    count += 1
+            if count:
+                total += count
+                pages.append(idx + 1)
+        return total, pages
+
+    def apply_pending_redactions(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        total, pages = self._pending_redaction_summary()
+        if total <= 0:
+            QMessageBox.information(self, "Hinweis", "Es sind aktuell keine platzierten Schwärzungen zum finalen Anwenden vorhanden.")
+            return
+        page_preview = ", ".join(str(p) for p in pages[:8])
+        if len(pages) > 8:
+            page_preview += ", …"
+        answer = QMessageBox.question(
+            self,
+            "Schwärzungen final anwenden",
+            f"{total} Schwärzung(en) auf {len(pages)} Seite(n) endgültig anwenden?\n\n"
+            "Danach kann der geschwärzte Inhalt nicht mehr verschoben oder bearbeitet werden."
+            + (f"\n\nBetroffene Seiten: {page_preview}" if page_preview else ""),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._push_undo_state()
+            for idx in range(len(self.doc)):
+                page = self.doc[idx]
+                has_redactions = False
+                for annot in page.annots() or []:
+                    subtype = self._annotation_subtype_name(annot).strip().casefold()
+                    if subtype in {"redact", "redaction"}:
+                        has_redactions = True
+                        break
+                if has_redactions:
+                    page.apply_redactions()
+            self.selected_annotation_xref = None
+            self._update_selected_annotation_ui()
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"{total} Schwärzung(en) final angewendet")
+            QMessageBox.information(self, "Erfolg", f"{total} Schwärzung(en) wurden endgültig angewendet.")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Schwärzungen konnten nicht final angewendet werden:\n{e}")
 
     def delete_selected_annotation(self) -> None:
         if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
@@ -7243,7 +7330,7 @@ class MainWindow(QMainWindow):
 
     def _set_annotation_defaults(self, kind: str) -> None:
         defaults = {
-            "text": {"hint": "Text hinzufügen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
+            "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
             "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
             "line": {"hint": "Linie ziehen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
@@ -7260,14 +7347,14 @@ class MainWindow(QMainWindow):
         self.annotation_height_spin.setValue(float(cfg["height"]))
         self.annotation_font_size_spin.setValue(int(cfg["font"]))
         self.annotation_line_width_spin.setValue(float(cfg["line"]))
-        if kind == "text":
+        if kind in {"text", "note", "text-replace"}:
             self.annotation_text_input.clear()
         self._set_annotation_color(cfg["color"])
         self._update_annotation_form_visibility(kind)
 
     def _update_annotation_form_visibility(self, kind: str) -> None:
-        is_text = kind in {"text", "note", "text-replace"}
-        uses_size = kind in {"text", "rect", "highlight"}
+        is_text = kind in {"note", "text-replace"}
+        uses_size = kind in {"rect", "highlight"}
         uses_line = kind in {"rect", "line", "arrow", "freehand"}
         uses_color = kind in {"text", "rect", "highlight", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
@@ -7336,21 +7423,14 @@ class MainWindow(QMainWindow):
         color = self._parse_rgb_color(self.annotation_color_input.text(), default_color)
 
         if kind == "text":
-            text = self.annotation_text_input.toPlainText().strip()
-            if not text:
-                QMessageBox.information(self, "Hinweis", "Bitte zuerst den Text in der Sidebar eingeben.")
-                self.annotation_text_input.setFocus()
-                return
             self._begin_pending_annotation(
                 {
                     "kind": "text",
-                    "text": text,
-                    "width_pct": self.annotation_width_spin.value(),
-                    "height_pct": self.annotation_height_spin.value(),
+                    "text": "",
                     "font_size": self.annotation_font_size_spin.value(),
                     "color": color,
                 },
-                "Textmodus aktiv – klicke in der Vorschau auf die gewünschte Position.",
+                "Textmodus aktiv – ziehe in der Vorschau ein Textfeld auf.",
             )
             return
 
@@ -7428,7 +7508,7 @@ class MainWindow(QMainWindow):
         if kind == "redact":
             self._begin_pending_annotation(
                 {"kind": "redact"},
-                "Schwärzungsmodus aktiv – ziehe den Bereich auf, der endgültig entfernt werden soll.",
+                "Schwärzungsmodus aktiv – ziehe den Bereich auf. Danach kannst du ihn noch verschieben oder löschen.",
             )
             return
 
@@ -7494,7 +7574,7 @@ class MainWindow(QMainWindow):
             if annot.xref == self.selected_annotation_xref:
                 subtype = annot.type[1] if isinstance(annot.type, tuple) and len(annot.type) > 1 else "Annotation"
                 rect = annot.rect
-                info = f"Ausgewählt: {subtype}\nPos: {rect.x0:.0f}, {rect.y0:.0f} · {rect.width:.0f}×{rect.height:.0f} pt"
+                info = f"Ausgewählt: {subtype}\nPos: {rect.x0:.0f}, {rect.y0:.0f} · {rect.width:.0f}×{rect.height:.0f} pt\nTipp: mit der Maus ziehen zum Verschieben"
                 break
         if info is None:
             self.selected_annotation_xref = None
@@ -7532,19 +7612,60 @@ class MainWindow(QMainWindow):
             return fitz.Point(page_width - py, px)
         return fitz.Point(px, py)
 
-    def _select_annotation_at_page_point(self, point: fitz.Point) -> bool:
+    def _find_annotation_at_page_point(self, point: fitz.Point) -> int | None:
         if not self.doc or not (0 <= self.current_page < len(self.doc)):
-            return False
+            return None
         page = self.doc[self.current_page]
         selected = None
         for annot in page.annots() or []:
             rect = annot.rect
             if rect.contains(point):
                 selected = annot.xref
+        return selected
+
+    def _select_annotation_at_page_point(self, point: fitz.Point) -> bool:
+        selected = self._find_annotation_at_page_point(point)
         self.selected_annotation_xref = selected
         self._update_selected_annotation_ui()
         self.render_current_page()
         return selected is not None
+
+    def _move_selected_annotation(self, dx: float, dy: float) -> None:
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return
+        page = self.doc[self.current_page]
+        annot = page.load_annot(self.selected_annotation_xref)
+        if annot is None:
+            return
+        rect = fitz.Rect(annot.rect)
+        page_rect = fitz.Rect(page.rect)
+        new_rect = fitz.Rect(rect.x0 + dx, rect.y0 + dy, rect.x1 + dx, rect.y1 + dy)
+        if new_rect.x0 < page_rect.x0:
+            new_rect.x1 += page_rect.x0 - new_rect.x0
+            new_rect.x0 = page_rect.x0
+        if new_rect.y0 < page_rect.y0:
+            new_rect.y1 += page_rect.y0 - new_rect.y0
+            new_rect.y0 = page_rect.y0
+        if new_rect.x1 > page_rect.x1:
+            new_rect.x0 -= new_rect.x1 - page_rect.x1
+            new_rect.x1 = page_rect.x1
+        if new_rect.y1 > page_rect.y1:
+            new_rect.y0 -= new_rect.y1 - page_rect.y1
+            new_rect.y1 = page_rect.y1
+        try:
+            self._push_undo_state()
+            annot.set_rect(new_rect)
+            annot.update()
+        except Exception as e:
+            QMessageBox.warning(self, "Verschieben nicht möglich", f"Diese Annotation konnte nicht verschoben werden:\n{e}")
+            return
+        self._set_dirty(True)
+        self._update_selected_annotation_ui()
+        self._refresh_thumbnails()
+        self.render_current_page()
+        self.statusBar().showMessage("Annotation verschoben")
 
     def _set_line_end_style(self, annot, arrow: bool = False) -> None:
         if not arrow:
@@ -7581,6 +7702,17 @@ class MainWindow(QMainWindow):
 
     def _handle_preview_drag_start(self, x: float, y: float) -> None:
         if not self.pending_annotation:
+            point = self._view_to_page_point(x, y)
+            annot_xref = self._find_annotation_at_page_point(point) if point is not None else None
+            self.annotation_drag_state = None
+            if annot_xref is not None and point is not None:
+                self.selected_annotation_xref = annot_xref
+                self._update_selected_annotation_ui()
+                self.annotation_drag_state = {
+                    "xref": annot_xref,
+                    "start_point": point,
+                }
+                self.preview.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
         norm = self._normalize_preview_percent(x, y)
         if norm is None:
@@ -7590,7 +7722,11 @@ class MainWindow(QMainWindow):
         self.preview_drag_points = [norm]
 
     def _handle_preview_drag_move(self, x: float, y: float) -> None:
-        if not self.pending_annotation or self.preview_drag_start is None:
+        if not self.pending_annotation:
+            if self.annotation_drag_state is not None:
+                self.statusBar().showMessage("Annotation verschieben – Maus loslassen zum Ablegen.")
+            return
+        if self.preview_drag_start is None:
             return
         norm = self._normalize_preview_percent(x, y)
         if norm is None:
@@ -7605,16 +7741,17 @@ class MainWindow(QMainWindow):
             self._set_annotation_hint("Loslassen zum Einfügen – Bild wird in den aufgezogenen Bereich gesetzt.", active=True)
             self.render_current_page()
         elif kind == "redact":
-            self._set_annotation_hint("Loslassen zum Schwärzen – Inhalt wird danach endgültig entfernt.", active=True)
+            self._set_annotation_hint("Loslassen zum Platzieren – final entfernt wird der Inhalt erst nach 'Schwärzungen final anwenden'.", active=True)
             self.render_current_page()
         elif kind == "freehand":
             self._set_annotation_hint("Loslassen zum Abschließen – du zeichnest direkt auf die Seite.", active=True)
             self.render_current_page()
         elif kind == "text-replace":
-            self._set_annotation_hint("Loslassen zum Ersetzen – der Bereich wird bereinigt und neu beschrieben.", active=True)
+            self._set_annotation_hint("Loslassen zum Platzieren – das Ersatz-Textfeld wird über den Bereich gelegt.", active=True)
             self.render_current_page()
-        elif kind in {"rect", "highlight"}:
-            self._set_annotation_hint("Loslassen zum Platzieren – Ziehen definiert Größe und Position.", active=True)
+        elif kind in {"text", "rect", "highlight"}:
+            hint = "Loslassen zum Platzieren – danach gibst du den Text ein." if kind == "text" else "Loslassen zum Platzieren – Ziehen definiert Größe und Position."
+            self._set_annotation_hint(hint, active=True)
             self.render_current_page()
         elif kind in {"line", "arrow"}:
             self.render_current_page()
@@ -7638,7 +7775,7 @@ class MainWindow(QMainWindow):
 
         anchor_x, anchor_y = norm
         kind = self.pending_annotation.get("kind")
-        if kind in {"rect", "highlight", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+        if kind in {"text", "rect", "highlight", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
             return
@@ -7681,6 +7818,18 @@ class MainWindow(QMainWindow):
             self._clear_pending_annotation()
 
     def _handle_preview_drag_finish(self, x: float, y: float) -> None:
+        if self.annotation_drag_state is not None and self.doc:
+            try:
+                end_point = self._view_to_page_point(x, y)
+                start_point = self.annotation_drag_state.get("start_point")
+                if end_point is not None and start_point is not None:
+                    dx = float(end_point.x - start_point.x)
+                    dy = float(end_point.y - start_point.y)
+                    self._move_selected_annotation(dx, dy)
+            finally:
+                self.annotation_drag_state = None
+                self.preview.setCursor(Qt.CursorShape.ArrowCursor)
+            return
         if not self.pending_annotation or not self.doc:
             return
         if self.preview_drag_start is None:
@@ -7728,7 +7877,33 @@ class MainWindow(QMainWindow):
                 self.selected_annotation_xref = None
             else:
                 rect = self._rect_from_percent(page, rect_spec)
-            if kind == "rect":
+            if kind == "text":
+                text = (self.pending_annotation.get("text") or "").strip()
+                if not text:
+                    text, ok = QInputDialog.getMultiLineText(
+                        self,
+                        "Textfeld einfügen",
+                        "Text für dieses Feld:",
+                    )
+                    if not ok or not text.strip():
+                        return
+                    text = text.strip()
+                annot = page.add_freetext_annot(
+                    rect,
+                    text,
+                    fontsize=self.pending_annotation["font_size"],
+                    text_color=self.pending_annotation["color"],
+                    fill_color=(1, 1, 1),
+                    border_color=self.pending_annotation["color"],
+                    align=0,
+                )
+                try:
+                    annot.set_border(width=1)
+                except Exception:
+                    pass
+                annot.update()
+                message = "Textfeld platziert"
+            elif kind == "rect":
                 annot = page.add_rect_annot(rect)
                 annot.set_colors(stroke=self.pending_annotation["color"])
                 annot.set_border(width=self.pending_annotation["line_width"])
@@ -7766,23 +7941,23 @@ class MainWindow(QMainWindow):
             elif kind == "redact":
                 annot = page.add_redact_annot(rect, fill=(0, 0, 0))
                 annot.update()
-                page.apply_redactions()
-                annot = None
-                message = "Bereich irreversibel geschwärzt"
+                message = "Schwärzung platziert"
             elif kind == "text-replace":
-                annot = page.add_redact_annot(rect, fill=(1, 1, 1))
-                annot.update()
-                page.apply_redactions()
-                rc = page.insert_textbox(
+                annot = page.add_freetext_annot(
                     rect,
                     self.pending_annotation["text"],
                     fontsize=self.pending_annotation["font_size"],
-                    color=self.pending_annotation["color"],
+                    text_color=self.pending_annotation["color"],
+                    fill_color=(1, 1, 1),
+                    border_color=self.pending_annotation["color"],
+                    align=0,
                 )
-                if rc < 0:
-                    raise ValueError("Der neue Text passt nicht in den gewählten Bereich.")
-                annot = None
-                message = "Textbereich ersetzt"
+                try:
+                    annot.set_border(width=1)
+                except Exception:
+                    pass
+                annot.update()
+                message = "Textfeld für Ersetzung platziert"
             elif kind == "crop":
                 annot = None
             else:
