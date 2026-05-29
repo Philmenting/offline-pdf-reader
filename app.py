@@ -1089,7 +1089,7 @@ class MainWindow(QMainWindow):
 
         self.preview = PreviewLabel("Kein PDF geladen")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(460)
+        self.preview.setMinimumSize(400, 460)
         self.preview.setCursor(Qt.CursorShape.ArrowCursor)
         self.preview.setProperty("role", "pagepreview")
 
@@ -1606,8 +1606,8 @@ class MainWindow(QMainWindow):
 
         self.annotation_panel = QWidget()
         self.annotation_panel.setProperty("role", "sidepanel")
-        self.annotation_panel.setMinimumWidth(220)
-        self.annotation_panel.setMaximumWidth(300)
+        self.annotation_panel.setMinimumWidth(240)
+        self.annotation_panel.setMaximumWidth(360)
         annotation_layout = QVBoxLayout(self.annotation_panel)
         annotation_layout.setContentsMargins(12, 12, 12, 12)
         annotation_layout.setSpacing(10)
@@ -1784,8 +1784,8 @@ class MainWindow(QMainWindow):
         self.annotation_panel_scroll.setWidgetResizable(True)
         self.annotation_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.annotation_panel_scroll.setProperty("role", "previewarea")
-        self.annotation_panel_scroll.setMinimumWidth(220)
-        self.annotation_panel_scroll.setMaximumWidth(312)
+        self.annotation_panel_scroll.setMinimumWidth(240)
+        self.annotation_panel_scroll.setMaximumWidth(372)
         self.annotation_panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         # ── Toolbar ──────────────────────────────────────────────────────────
@@ -1873,7 +1873,7 @@ class MainWindow(QMainWindow):
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
         self.content_splitter.setStretchFactor(2, 0)
-        self.content_splitter.setSizes([170, 900, 250])
+        self.content_splitter.setSizes([170, 840, 310])
 
         # ── Haupt-Layout ─────────────────────────────────────────────────────
         layout = QVBoxLayout()
