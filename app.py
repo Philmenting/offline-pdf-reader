@@ -1133,6 +1133,7 @@ class MainWindow(QMainWindow):
         self.preview_drag_current: tuple[float, float] | None = None
         self.preview_drag_points: list[tuple[float, float]] = []
         self.selected_annotation_xref: int | None = None
+        self.selected_widget_xref: int | None = None
         self.annotation_drag_state: dict | None = None
         self.annotation_image_path: Path | None = None
         self.annotation_image_preview: QPixmap | None = None
@@ -1777,6 +1778,26 @@ class MainWindow(QMainWindow):
         self.btn_apply_redactions = _action_btn("Schwärzungen final anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
         self.btn_apply_redactions.clicked.connect(self.apply_pending_redactions)
         annotation_layout.addWidget(self.btn_apply_redactions)
+
+        # ── Inline-Textbearbeitung ────────────────────────────────────────
+        self.inline_edit_card = QWidget()
+        self.inline_edit_card.setProperty("role", "panelcard")
+        inline_edit_layout = QVBoxLayout(self.inline_edit_card)
+        inline_edit_layout.setContentsMargins(12, 12, 12, 12)
+        inline_edit_layout.setSpacing(8)
+        inline_edit_title = QLabel("Text bearbeiten")
+        inline_edit_title.setProperty("role", "cardtitle")
+        inline_edit_layout.addWidget(inline_edit_title)
+        self.inline_text_edit = QTextEdit()
+        self.inline_text_edit.setPlaceholderText("Text der ausgewählten Annotation oder des Formularfelds …")
+        self.inline_text_edit.setFixedHeight(100)
+        inline_edit_layout.addWidget(self.inline_text_edit)
+        self.btn_save_inline = _primary_btn("Änderung speichern", "Text direkt in der Annotation oder im Formularfeld speichern – kein Dialog")
+        self.btn_save_inline.clicked.connect(self.save_inline_text_edit)
+        inline_edit_layout.addWidget(self.btn_save_inline)
+        self.inline_edit_card.setVisible(False)
+        annotation_layout.addWidget(self.inline_edit_card)
+
         annotation_layout.addStretch(1)
 
         self.annotation_panel_scroll = QScrollArea()
@@ -2647,6 +2668,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.clear()
         self._update_search_counter()
         self.selected_annotation_xref = None
+        self.selected_widget_xref = None
         self._update_selected_annotation_ui()
         self._set_dirty(True)
         self._refresh_thumbnails()
@@ -2704,6 +2726,7 @@ class MainWindow(QMainWindow):
         self.search_results_list.clear()
         self._update_search_counter()
         self.selected_annotation_xref = None
+        self.selected_widget_xref = None
         self._update_selected_annotation_ui()
         self._set_dirty(True)
         self._refresh_thumbnails()
@@ -2736,6 +2759,7 @@ class MainWindow(QMainWindow):
             self.search_results_list.clear()
             self._update_search_counter()
             self.selected_annotation_xref = None
+            self.selected_widget_xref = None
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
@@ -2805,6 +2829,7 @@ class MainWindow(QMainWindow):
                 if has_redactions:
                     page.apply_redactions()
             self.selected_annotation_xref = None
+            self.selected_widget_xref = None
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
@@ -2826,6 +2851,7 @@ class MainWindow(QMainWindow):
             self._push_undo_state()
             page.delete_annot(annot)
             self.selected_annotation_xref = None
+            self.selected_widget_xref = None
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
@@ -2869,6 +2895,47 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Annotation-Kommentar aktualisiert")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Kommentar konnte nicht bearbeitet werden:\n{e}")
+
+    def save_inline_text_edit(self) -> None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return
+        page = self.doc[self.current_page]
+        new_text = self.inline_text_edit.toPlainText()
+
+        if self.selected_widget_xref is not None:
+            for w in page.widgets() or []:
+                if w.xref == self.selected_widget_xref:
+                    try:
+                        self._push_undo_state()
+                        w.field_value = new_text
+                        w.update()
+                        self._set_dirty(True)
+                        self._refresh_thumbnails()
+                        self.render_current_page()
+                        self.statusBar().showMessage("Formularfeld gespeichert.")
+                    except Exception as e:
+                        QMessageBox.critical(self, "Fehler", f"Speichern fehlgeschlagen:\n{e}")
+                    return
+            return
+
+        if self.selected_annotation_xref is not None:
+            try:
+                annot = page.load_annot(self.selected_annotation_xref)
+                if annot is None:
+                    raise ValueError("Annotation nicht gefunden.")
+                self._push_undo_state()
+                try:
+                    annot.set_info(content=new_text)
+                except Exception:
+                    annot.set_info(info={"content": new_text})
+                annot.update()
+                self._set_dirty(True)
+                self._update_selected_annotation_ui()
+                self._refresh_thumbnails()
+                self.render_current_page()
+                self.statusBar().showMessage("Annotation gespeichert.")
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"Speichern fehlgeschlagen:\n{e}")
 
     def edit_selected_annotation_style(self) -> None:
         if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
@@ -4390,6 +4457,7 @@ class MainWindow(QMainWindow):
                         painter.end()
             except Exception:
                 self.selected_annotation_xref = None
+                self.selected_widget_xref = None
                 self._update_selected_annotation_ui()
 
         if self.pending_annotation and self.preview_drag_start and self.preview_drag_current:
@@ -7544,6 +7612,7 @@ class MainWindow(QMainWindow):
         if self._require_current_pdf_page() is None:
             return
         self.selected_annotation_xref = None
+        self.selected_widget_xref = None
         self._update_selected_annotation_ui()
         self._begin_pending_annotation(
             {"kind": "crop"},
@@ -7570,33 +7639,65 @@ class MainWindow(QMainWindow):
             self.thumb_meta_label.setText(f"{total} Seiten · aktuell {current}")
 
     def _update_selected_annotation_ui(self) -> None:
-        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+        def _no_selection() -> None:
             self.annotation_selection_label.setText("Keine Annotation ausgewählt")
             self.btn_delete_annotation.setEnabled(False)
             self.btn_edit_annotation_style.setEnabled(False)
             self.btn_edit_annotation_comment.setEnabled(False)
             self.btn_reply_annotation.setEnabled(False)
+            self.inline_edit_card.setVisible(False)
+
+        # ── Formularfeld ausgewählt? ──────────────────────────────────────
+        if self.selected_widget_xref is not None and self.doc and 0 <= self.current_page < len(self.doc):
+            for w in self.doc[self.current_page].widgets() or []:
+                if w.xref == self.selected_widget_xref:
+                    label = w.field_label or w.field_name or "Formularfeld"
+                    ftype = w.field_type_string or ""
+                    self.annotation_selection_label.setText(
+                        f"Ausgewählt: Formularfeld\n{label}" + (f" ({ftype})" if ftype else "")
+                    )
+                    self.btn_delete_annotation.setEnabled(False)
+                    self.btn_edit_annotation_style.setEnabled(False)
+                    self.btn_edit_annotation_comment.setEnabled(False)
+                    self.btn_reply_annotation.setEnabled(False)
+                    self.inline_text_edit.setPlainText(str(w.field_value or ""))
+                    self.inline_edit_card.setVisible(True)
+                    return
+            self.selected_widget_xref = None
+
+        # ── Annotation ausgewählt? ────────────────────────────────────────
+        if self.selected_annotation_xref is None or not self.doc or not (0 <= self.current_page < len(self.doc)):
+            _no_selection()
             return
         info = None
+        inline_text: str | None = None
         for annot in self.doc[self.current_page].annots() or []:
             if annot.xref == self.selected_annotation_xref:
                 subtype = annot.type[1] if isinstance(annot.type, tuple) and len(annot.type) > 1 else "Annotation"
                 rect = annot.rect
                 info = f"Ausgewählt: {subtype}\nPos: {rect.x0:.0f}, {rect.y0:.0f} · {rect.width:.0f}×{rect.height:.0f} pt\nTipp: mit der Maus ziehen zum Verschieben"
+                if subtype in {"FreeText", "Text"}:
+                    try:
+                        ainfo = annot.info or {}
+                        inline_text = str(ainfo.get("content") or "")
+                    except Exception:
+                        pass
                 break
         if info is None:
             self.selected_annotation_xref = None
-            self.annotation_selection_label.setText("Keine Annotation ausgewählt")
-            self.btn_delete_annotation.setEnabled(False)
-            self.btn_edit_annotation_style.setEnabled(False)
-            self.btn_edit_annotation_comment.setEnabled(False)
-            self.btn_reply_annotation.setEnabled(False)
+            self.selected_widget_xref = None
+            _no_selection()
         else:
             self.annotation_selection_label.setText(info)
             self.btn_delete_annotation.setEnabled(True)
             self.btn_edit_annotation_style.setEnabled(True)
             self.btn_edit_annotation_comment.setEnabled(True)
             self.btn_reply_annotation.setEnabled(True)
+            if inline_text is not None:
+                self.inline_text_edit.setPlainText(inline_text)
+                self.inline_edit_card.setVisible(True)
+            else:
+                self.inline_edit_card.setVisible(False)
 
     def _view_to_page_point(self, x: float, y: float) -> fitz.Point | None:
         if not self.doc or not (0 <= self.current_page < len(self.doc)):
@@ -7631,9 +7732,19 @@ class MainWindow(QMainWindow):
                 selected = annot.xref
         return selected
 
+    def _find_widget_at_page_point(self, point: fitz.Point) -> "fitz.Widget | None":
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return None
+        for w in self.doc[self.current_page].widgets() or []:
+            if w.rect.contains(point):
+                return w
+        return None
+
     def _select_annotation_at_page_point(self, point: fitz.Point) -> bool:
         selected = self._find_annotation_at_page_point(point)
         self.selected_annotation_xref = selected
+        if selected is not None:
+            self.selected_widget_xref = None
         self._update_selected_annotation_ui()
         self.render_current_page()
         return selected is not None
@@ -7773,9 +7884,21 @@ class MainWindow(QMainWindow):
                 if self._select_annotation_at_page_point(point):
                     self.statusBar().showMessage("Annotation ausgewählt")
                 else:
-                    self.selected_annotation_xref = None
-                    self._update_selected_annotation_ui()
-                    self.render_current_page()
+                    widget = self._find_widget_at_page_point(point)
+                    if widget is not None:
+                        self.selected_annotation_xref = None
+                        self.selected_widget_xref = None
+                        self.selected_widget_xref = widget.xref
+                        self._update_selected_annotation_ui()
+                        self.render_current_page()
+                        name = widget.field_label or widget.field_name or "Feld"
+                        self.statusBar().showMessage(f"Formularfeld ausgewählt: {name}")
+                    else:
+                        self.selected_annotation_xref = None
+                        self.selected_widget_xref = None
+                        self.selected_widget_xref = None
+                        self._update_selected_annotation_ui()
+                        self.render_current_page()
             return
         norm = self._normalize_preview_percent(x, y)
         if norm is None:
@@ -7815,6 +7938,7 @@ class MainWindow(QMainWindow):
 
             if kind == "text":
                 self.selected_annotation_xref = None
+                self.selected_widget_xref = None
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
@@ -7883,6 +8007,7 @@ class MainWindow(QMainWindow):
                 page.set_cropbox(rect)
                 message = "Seite zugeschnitten"
                 self.selected_annotation_xref = None
+                self.selected_widget_xref = None
             else:
                 rect = self._rect_from_percent(page, rect_spec)
             if kind == "text":
