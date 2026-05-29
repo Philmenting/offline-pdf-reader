@@ -7951,21 +7951,20 @@ class MainWindow(QMainWindow):
                 annot.update()
                 message = "Schwärzung platziert"
             elif kind == "text-replace":
-                annot = page.add_freetext_annot(
+                # Paint a white rectangle directly into the page content stream
+                # to cover the original text, then insert the replacement text.
+                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+                rc = page.insert_textbox(
                     rect,
                     self.pending_annotation["text"],
                     fontsize=self.pending_annotation["font_size"],
-                    text_color=self.pending_annotation["color"],
-                    fill_color=(1, 1, 1),
-                    border_color=self.pending_annotation["color"],
+                    color=self.pending_annotation["color"],
                     align=0,
                 )
-                try:
-                    annot.set_border(width=1)
-                except Exception:
-                    pass
-                annot.update()
-                message = "Textfeld für Ersetzung platziert"
+                if rc < 0:
+                    raise ValueError("Der Ersetzungstext passt nicht in den markierten Bereich – bitte einen größeren Bereich wählen oder die Schriftgröße verringern.")
+                annot = None
+                message = "Text ersetzt"
             elif kind == "crop":
                 annot = None
             else:
