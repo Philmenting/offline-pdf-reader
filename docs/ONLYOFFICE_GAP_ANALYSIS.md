@@ -11,7 +11,13 @@
 > - ✅ **Schriftformatierung** für Text-Werkzeuge (Familie Helvetica/Times/Courier + Fett/Kursiv)
 > - ✅ **Kommentar-Panel** in der Sidebar (Liste aller Annotationen, Anspringen, Erledigt-Status)
 >
-> Als Nächstes: P2 (Einfügen-Objekte). Konvertierung (P3) via LibreOffice-Headless. Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
+> **Umsetzungsfortschritt (P2 abgeschlossen):**
+> - ✅ **Ellipse/Kreis** als Form-Werkzeug
+> - ✅ **Hyperlink** einfügen (Bereich + URL)
+> - ✅ **Kopf-/Fußzeile** über Seitenbereich
+> - ✅ **Tabelle** (Raster Zeilen×Spalten)
+>
+> Als Nächstes: P3 (Konvertierung) via LibreOffice-Headless. Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
 
 ---
 
@@ -107,13 +113,13 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Form: Rechteck | ✅ | `add_rectangle_annotation` |
 | Form: Linie / Pfeil | ✅ | `add_line_annotation`, `add_arrow_annotation` |
 | Freihand zeichnen | ✅ | `freehand`-Werkzeug |
-| Textfeld | ◐ | über FreeText-Annotation, kein dediziertes „Textfeld"-Objekt |
-| **Tabelle** | ❌ | nicht vorhanden |
-| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ❌ | nur Rechteck/Linie/Pfeil |
-| **Hyperlink** | ❌ | nicht vorhanden |
+| Textfeld | ✅ | Text-Werkzeug (FreeText-Annotation) deckt das Textfeld ab |
+| **Tabelle** | ✅ | `insert_table` (Raster Zeilen×Spalten auf aktueller Seite) |
+| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ◐ | Rechteck/Ellipse/Linie/Pfeil/Freihand (`add_ellipse_annotation`); Sterne/Callouts noch offen |
+| **Hyperlink** | ✅ | `add_link_annotation` (Bereich ziehen → URL, `insert_link` + sichtbare Linie) |
 | **TextArt / WordArt** | ❌ | nicht vorhanden |
 | **Symbol / Gleichung** | ❌ | nicht vorhanden |
-| Kopf-/Fußzeile | ◐ | Seitenzahlen (`insert_page_numbers`), Wasserzeichen (`add_text_watermark`); keine freie Kopf-/Fußzeile |
+| Kopf-/Fußzeile | ✅ | `insert_header_footer` (Kopf/Fuß × links/mittig/rechts, Seitenbereich) |
 | Seitennummern | ✅ | `insert_page_numbers` |
 
 ### 3.6 Ansicht
@@ -171,11 +177,11 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 3. ✅ **Schriftformatierung** für Text-/FreeText-Objekte (Font-Familie, Fett/Kursiv) im Eigenschaften-Panel.
 4. ✅ **Kommentar-Panel** mit Liste, Navigation und Resolve-Status.
 
-**P2 – Einfügen-Objekte:**
-5. Weitere **Formen** (Ellipse/Kreis, Mehrfachpfeile, Callout).
-6. **Hyperlink** einfügen (PyMuPDF `insert_link`).
-7. Dediziertes **Textfeld**-Objekt + **Kopf-/Fußzeile**.
-8. **Tabelle** einfügen (einfaches Raster).
+**P2 – Einfügen-Objekte — ✅ weitgehend abgeschlossen:**
+5. ✅ **Ellipse/Kreis** ergänzt (`add_ellipse_annotation`); Sterne/Callouts optional später.
+6. ✅ **Hyperlink** einfügen (`add_link_annotation`, PyMuPDF `insert_link`).
+7. ✅ **Kopf-/Fußzeile** (`insert_header_footer`); Textfeld via Text-Werkzeug.
+8. ✅ **Tabelle** einfügen (`insert_table`, einfaches Raster).
 
 **P3 – Konvertierung (Scope „+ Konvertierung"):**
 9. **DOCX/XLSX/PPTX → PDF** via LibreOffice-Headless (offline-fähig).

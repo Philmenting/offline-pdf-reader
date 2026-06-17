@@ -1314,6 +1314,12 @@ class MainWindow(QMainWindow):
                 painter.setFont(font)
                 painter.drawRoundedRect(3, 4, 14, 12, 2, 2)
                 painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "Aa")
+            elif kind == "ellipse":
+                painter.drawEllipse(3, 5, 14, 10)
+            elif kind == "link":
+                painter.drawArc(3, 7, 9, 6, 30 * 16, 180 * 16)
+                painter.drawArc(8, 7, 9, 6, 210 * 16, 180 * 16)
+                painter.drawLine(8, 10, 12, 10)
 
             painter.end()
             return QIcon(pix)
@@ -1428,6 +1434,8 @@ class MainWindow(QMainWindow):
         btn_form_fields  = _tool_btn("Form",              "Formularfelder auf der aktuellen Seite bearbeiten")
         btn_add_text     = _action_btn("Text",            "Text auf PDF hinzufügen")
         btn_add_rect     = _action_btn("Rechteck",        "Rechteck auf PDF hinzufügen")
+        btn_add_ellipse  = _action_btn("Ellipse",         "Ellipse / Kreis auf PDF hinzufügen")
+        btn_add_link     = _action_btn("Hyperlink",       "Klickbaren Web-Link auf PDF einfügen")
         btn_add_highlight = _action_btn("Marker",         "Markierung auf PDF hinzufügen")
         btn_add_strikeout = _action_btn("Durchstreichen", "Text durchstreichen")
         btn_add_underline = _action_btn("Unterstreichen", "Text unterstreichen")
@@ -1470,6 +1478,8 @@ class MainWindow(QMainWindow):
         btn_remove_empty.setIcon(_make_toolbar_icon("remove-empty"))
         btn_add_text.setIcon(_make_annotation_icon("text"))
         btn_add_rect.setIcon(_make_annotation_icon("rect"))
+        btn_add_ellipse.setIcon(_make_annotation_icon("ellipse"))
+        btn_add_link.setIcon(_make_annotation_icon("link"))
         btn_add_highlight.setIcon(_make_annotation_icon("highlight"))
         btn_add_strikeout.setIcon(_make_annotation_icon("strikeout"))
         btn_add_underline.setIcon(_make_annotation_icon("underline"))
@@ -1569,6 +1579,8 @@ class MainWindow(QMainWindow):
         btn_form_fields.setAccessibleName("Formularfelder bearbeiten")
         btn_add_text.setAccessibleName("Text auf PDF hinzufügen")
         btn_add_rect.setAccessibleName("Rechteck auf PDF hinzufügen")
+        btn_add_ellipse.setAccessibleName("Ellipse auf PDF hinzufügen")
+        btn_add_link.setAccessibleName("Hyperlink auf PDF einfügen")
         btn_add_highlight.setAccessibleName("Markierung auf PDF hinzufügen")
         btn_add_strikeout.setAccessibleName("Text im PDF durchstreichen")
         btn_add_underline.setAccessibleName("Text im PDF unterstreichen")
@@ -1595,6 +1607,8 @@ class MainWindow(QMainWindow):
         btn_form_fields.clicked.connect(self.edit_form_fields_on_current_page)
         btn_add_text.clicked.connect(self.add_text_annotation)
         btn_add_rect.clicked.connect(self.add_rectangle_annotation)
+        btn_add_ellipse.clicked.connect(self.add_ellipse_annotation)
+        btn_add_link.clicked.connect(self.add_link_annotation)
         btn_add_highlight.clicked.connect(self.add_highlight_annotation)
         btn_add_strikeout.clicked.connect(self.add_strikeout_annotation)
         btn_add_underline.clicked.connect(self.add_underline_annotation)
@@ -1620,6 +1634,8 @@ class MainWindow(QMainWindow):
         self.annotation_tool_buttons: dict[str, QPushButton] = {
             "text": btn_add_text,
             "rect": btn_add_rect,
+            "ellipse": btn_add_ellipse,
+            "link": btn_add_link,
             "highlight": btn_add_highlight,
             "strikeout": btn_add_strikeout,
             "underline": btn_add_underline,
@@ -1660,16 +1676,18 @@ class MainWindow(QMainWindow):
         tool_grid.setVerticalSpacing(8)
         tool_grid.addWidget(btn_add_text, 0, 0)
         tool_grid.addWidget(btn_add_rect, 0, 1)
-        tool_grid.addWidget(btn_add_highlight, 1, 0)
-        tool_grid.addWidget(btn_add_strikeout, 1, 1)
-        tool_grid.addWidget(btn_add_underline, 2, 0)
-        tool_grid.addWidget(btn_add_line, 2, 1)
-        tool_grid.addWidget(btn_add_arrow, 3, 0)
-        tool_grid.addWidget(btn_add_image, 3, 1)
-        tool_grid.addWidget(btn_add_redact, 4, 0)
-        tool_grid.addWidget(btn_add_note, 4, 1)
-        tool_grid.addWidget(btn_add_freehand, 5, 0)
-        tool_grid.addWidget(btn_replace_text, 5, 1)
+        tool_grid.addWidget(btn_add_ellipse, 1, 0)
+        tool_grid.addWidget(btn_add_line, 1, 1)
+        tool_grid.addWidget(btn_add_arrow, 2, 0)
+        tool_grid.addWidget(btn_add_freehand, 2, 1)
+        tool_grid.addWidget(btn_add_highlight, 3, 0)
+        tool_grid.addWidget(btn_add_strikeout, 3, 1)
+        tool_grid.addWidget(btn_add_underline, 4, 0)
+        tool_grid.addWidget(btn_add_link, 4, 1)
+        tool_grid.addWidget(btn_add_image, 5, 0)
+        tool_grid.addWidget(btn_add_note, 5, 1)
+        tool_grid.addWidget(btn_add_redact, 6, 0)
+        tool_grid.addWidget(btn_replace_text, 6, 1)
         tool_card_layout.addLayout(tool_grid)
         annotation_layout.addWidget(tool_card)
 
@@ -2144,6 +2162,14 @@ class MainWindow(QMainWindow):
         act_add_rect.triggered.connect(self.add_rectangle_annotation)
         menu_tools.addAction(act_add_rect)
 
+        act_add_ellipse = QAction("Ellipse / Kreis hinzufügen …", self)
+        act_add_ellipse.triggered.connect(self.add_ellipse_annotation)
+        menu_tools.addAction(act_add_ellipse)
+
+        act_add_link = QAction("Hyperlink einfügen …", self)
+        act_add_link.triggered.connect(self.add_link_annotation)
+        menu_tools.addAction(act_add_link)
+
         act_add_highlight = QAction("Markierung hinzufügen …", self)
         act_add_highlight.triggered.connect(self.add_highlight_annotation)
         menu_tools.addAction(act_add_highlight)
@@ -2215,6 +2241,14 @@ class MainWindow(QMainWindow):
         act_add_page_numbers.triggered.connect(self.insert_page_numbers)
         menu_tools.addAction(act_add_page_numbers)
 
+        act_add_header_footer = QAction("Kopf-/Fußzeile einfügen …", self)
+        act_add_header_footer.triggered.connect(self.insert_header_footer)
+        menu_tools.addAction(act_add_header_footer)
+
+        act_insert_table = QAction("Tabelle einfügen …", self)
+        act_insert_table.triggered.connect(self.insert_table)
+        menu_tools.addAction(act_insert_table)
+
         act_add_watermark = QAction("Wasserzeichen einfügen …", self)
         act_add_watermark.triggered.connect(self.add_text_watermark)
         menu_tools.addAction(act_add_watermark)
@@ -2283,6 +2317,8 @@ class MainWindow(QMainWindow):
             act_crop,
             act_add_text,
             act_add_rect,
+            act_add_ellipse,
+            act_add_link,
             act_add_highlight,
             act_add_strikeout,
             act_add_underline,
@@ -6257,6 +6293,99 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Seitennummern konnten nicht eingefügt werden:\n{e}")
 
+    def insert_header_footer(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        text, ok = QInputDialog.getText(self, "Kopf-/Fußzeile", "Text:")
+        if not ok or not text.strip():
+            return
+        text = text.strip()
+        position, ok = QInputDialog.getItem(
+            self,
+            "Position",
+            "Wo soll der Text erscheinen?",
+            [
+                "Kopfzeile links", "Kopfzeile mittig", "Kopfzeile rechts",
+                "Fußzeile links", "Fußzeile mittig", "Fußzeile rechts",
+            ],
+            1,
+            False,
+        )
+        if not ok:
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seitenbereich",
+            "Auf welchen Seiten? (z.B. all, 1-3, current)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        font_size = 10
+        color = (80 / 255.0, 80 / 255.0, 80 / 255.0)
+        is_header = position.startswith("Kopfzeile")
+        align = 0 if position.endswith("links") else (1 if position.endswith("mittig") else 2)
+        try:
+            self._push_undo_state()
+            for idx in page_indices:
+                page = self.doc[idx]
+                rect = page.rect
+                margin = 18
+                box_height = font_size + 8
+                if is_header:
+                    box = fitz.Rect(margin, margin, rect.width - margin, margin + box_height)
+                else:
+                    box = fitz.Rect(margin, rect.height - box_height - margin, rect.width - margin, rect.height - margin)
+                rc = page.insert_textbox(box, text, fontsize=font_size, color=color, align=align)
+                if rc < 0:
+                    raise ValueError(f"Text passt auf Seite {idx + 1} nicht in den Zielbereich.")
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"{'Kopfzeile' if is_header else 'Fußzeile'} auf {len(page_indices)} Seite(n) eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Kopf-/Fußzeile konnte nicht eingefügt werden:\n{e}")
+
+    def insert_table(self) -> None:
+        page = self._require_current_pdf_page()
+        if page is None:
+            return
+        rows, ok = QInputDialog.getInt(self, "Tabelle einfügen", "Anzahl Zeilen:", 3, 1, 100, 1)
+        if not ok:
+            return
+        cols, ok = QInputDialog.getInt(self, "Tabelle einfügen", "Anzahl Spalten:", 3, 1, 50, 1)
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            rect = page.rect
+            # Zentrierter Bereich: 80 % Breite, ab 25 % Höhe, max. 50 % Höhe.
+            left = rect.width * 0.10
+            right = rect.width * 0.90
+            top = rect.height * 0.25
+            row_height = min(28.0, (rect.height * 0.5) / rows)
+            bottom = top + row_height * rows
+            col_width = (right - left) / cols
+            line_color = (0.2, 0.2, 0.2)
+            line_width = 1.0
+            for r in range(rows + 1):
+                y = top + r * row_height
+                page.draw_line(fitz.Point(left, y), fitz.Point(right, y), color=line_color, width=line_width)
+            for c in range(cols + 1):
+                x = left + c * col_width
+                page.draw_line(fitz.Point(x, top), fitz.Point(x, bottom), color=line_color, width=line_width)
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"Tabelle {rows}×{cols} auf Seite {self.current_page + 1} eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Tabelle konnte nicht eingefügt werden:\n{e}")
+
     def add_text_watermark(self) -> None:
         if not self.doc:
             QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
@@ -7030,6 +7159,12 @@ class MainWindow(QMainWindow):
     def add_rectangle_annotation(self) -> None:
         self.select_annotation_tool("rect", activate=True)
 
+    def add_ellipse_annotation(self) -> None:
+        self.select_annotation_tool("ellipse", activate=True)
+
+    def add_link_annotation(self) -> None:
+        self.select_annotation_tool("link", activate=True)
+
     def add_highlight_annotation(self) -> None:
         self.select_annotation_tool("highlight", activate=True)
 
@@ -7587,6 +7722,8 @@ class MainWindow(QMainWindow):
         defaults = {
             "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "ellipse": {"hint": "Ellipse ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "link": {"hint": "Linkbereich ziehen", "width": 40.0, "height": 10.0, "font": 12, "line": 1.0, "color": (0.0, 90 / 255.0, 200 / 255.0)},
             "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
             "strikeout": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "underline": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
@@ -7611,9 +7748,9 @@ class MainWindow(QMainWindow):
 
     def _update_annotation_form_visibility(self, kind: str) -> None:
         is_text = kind in {"note", "text-replace"}
-        uses_size = kind in {"rect", "highlight", "strikeout", "underline"}
-        uses_line = kind in {"rect", "line", "arrow", "freehand"}
-        uses_color = kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
+        uses_size = kind in {"rect", "ellipse", "link", "highlight", "strikeout", "underline"}
+        uses_line = kind in {"rect", "ellipse", "line", "arrow", "freehand"}
+        uses_color = kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
         uses_font = kind in {"text", "text-replace"}
         self.annotation_text_label.setVisible(is_text)
@@ -7730,16 +7867,37 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if kind == "rect":
+        if kind in {"rect", "ellipse"}:
             self._begin_pending_annotation(
                 {
-                    "kind": "rect",
+                    "kind": kind,
                     "width_pct": self.annotation_width_spin.value(),
                     "height_pct": self.annotation_height_spin.value(),
                     "color": color,
                     "line_width": self.annotation_line_width_spin.value(),
                 },
-                "Rechteckmodus aktiv – in der Vorschau klicken und ziehen.",
+                "Rechteckmodus aktiv – in der Vorschau klicken und ziehen." if kind == "rect"
+                else "Ellipsenmodus aktiv – in der Vorschau klicken und ziehen.",
+            )
+            return
+
+        if kind == "link":
+            url, ok = QInputDialog.getText(
+                self,
+                "Hyperlink einfügen",
+                "Ziel-URL (z. B. https://example.com):",
+                text="https://",
+            )
+            if not ok or not url.strip() or url.strip() == "https://":
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "link",
+                    "uri": url.strip(),
+                    "color": color,
+                    "line_width": self.annotation_line_width_spin.value(),
+                },
+                "Linkmodus aktiv – ziehe den klickbaren Bereich auf.",
             )
             return
 
@@ -8166,7 +8324,7 @@ class MainWindow(QMainWindow):
         elif kind == "text-replace":
             self._set_annotation_hint("Loslassen zum Platzieren – das Ersatz-Textfeld wird über den Bereich gelegt.", active=True)
             self.render_current_page()
-        elif kind in {"text", "rect", "highlight", "strikeout", "underline"}:
+        elif kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline"}:
             hint = "Loslassen zum Platzieren – danach gibst du den Text ein." if kind == "text" else "Loslassen zum Platzieren – Ziehen definiert Größe und Position."
             self._set_annotation_hint(hint, active=True)
             self.render_current_page()
@@ -8204,7 +8362,7 @@ class MainWindow(QMainWindow):
 
         anchor_x, anchor_y = norm
         kind = self.pending_annotation.get("kind")
-        if kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+        if kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
             return
@@ -8342,6 +8500,27 @@ class MainWindow(QMainWindow):
                 annot.set_border(width=self.pending_annotation["line_width"])
                 annot.update()
                 message = "Rechteck platziert"
+            elif kind == "ellipse":
+                annot = page.add_circle_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Ellipse platziert"
+            elif kind == "link":
+                uri = self.pending_annotation.get("uri")
+                if not uri:
+                    raise ValueError("Keine Ziel-URL angegeben.")
+                page.insert_link({"kind": fitz.LINK_URI, "from": rect, "uri": uri})
+                # Sichtbare blaue Unterstreichung als Hinweis auf den Link.
+                color = self.pending_annotation["color"]
+                page.draw_line(
+                    fitz.Point(rect.x0, rect.y1),
+                    fitz.Point(rect.x1, rect.y1),
+                    color=color,
+                    width=max(0.5, float(self.pending_annotation.get("line_width", 1.0))),
+                )
+                annot = None
+                message = f"Hyperlink eingefügt: {uri}"
             elif kind == "highlight":
                 annot = page.add_highlight_annot(rect)
                 annot.set_colors(stroke=self.pending_annotation["color"])
