@@ -241,7 +241,11 @@ Nach P1–P4 umgesetzt:
 - **Vollständige Modularisierung** von `app.py` (über die ausgelagerten reinen Helfer hinaus) — riskanter Großumbau, braucht lauffähige Umgebung.
 - **Getabbte Ribbon-Leiste** und **fortlaufende Mehrseiten-Scrollansicht** — große UI-Umbauten (Letzteres bricht das Einzelseiten-Koordinatenmodell).
 - **Annotationen per Maus skalieren / Mehrfachauswahl / Copy-Paste** — Erweiterung der vorhandenen Verschiebe-Logik.
-- **Digitale Signatur mit Zertifikat** (pyHanko) und **Offline-Bundling** von LibreOffice/Tesseract in den Build.
+- **Digitale Signatur mit Zertifikat** (pyHanko) — noch offen.
+
+Zusätzlich umgesetzt (Eigenständigkeit/Datenschutz für den Arbeitsrechner):
+- ✅ **Metadaten-/Datenschutz-Bereinigung** (`scrub_metadata`): leert Dokument-Metadaten + XML-Paket.
+- ✅ **Offline-Bundling**: Der Windows-Build bündelt **Tesseract** (OCR) **und LibreOffice** (Konvertierung); `_find_soffice` findet das mitgebündelte LibreOffice neben der EXE. Damit läuft OCR und Office↔PDF ohne Zusatzinstallation auf dem Zielrechner.
 
 ## 7. Fazit
 

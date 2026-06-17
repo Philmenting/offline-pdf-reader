@@ -2114,6 +2114,10 @@ class MainWindow(QMainWindow):
         act_edit_metadata.triggered.connect(self.edit_pdf_metadata)
         menu_file.addAction(act_edit_metadata)
 
+        act_scrub_metadata = QAction("Metadaten & versteckte Daten bereinigen …", self)
+        act_scrub_metadata.triggered.connect(self.scrub_metadata)
+        menu_file.addAction(act_scrub_metadata)
+
         act_encrypt_pdf = QAction("PDF mit Passwort schützen …", self)
         act_encrypt_pdf.triggered.connect(self.export_encrypted_pdf_copy)
         menu_file.addAction(act_encrypt_pdf)
@@ -3284,6 +3288,39 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("PDF-Metadaten aktualisiert")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht aktualisiert werden:\n{e}")
+
+    def scrub_metadata(self) -> None:
+        """Entfernt Dokument-Metadaten und versteckte Daten (Datenschutz).
+
+        Leert die Standard-Metadaten (Autor/Titel/…) und das XML-Metadaten-
+        Paket. Relevant für internen Gebrauch, bevor Dateien weitergegeben
+        werden.
+        """
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Metadaten bereinigen",
+            "Alle Dokument-Metadaten (Autor, Titel, Betreff, Schlüsselwörter, "
+            "Erstell-/Änderungsprogramm) und das XML-Metadatenpaket entfernen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._push_undo_state()
+            cleared = {key: "" for key in (self.doc.metadata or {}).keys()}
+            self.doc.set_metadata(cleared)
+            try:
+                self.doc.del_xml_metadata()
+            except Exception:
+                pass
+            self._set_dirty(True)
+            self.statusBar().showMessage("Metadaten bereinigt – zum Speichern nicht vergessen.")
+            QMessageBox.information(self, "Fertig", "Metadaten und XML-Paket wurden entfernt.")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht bereinigt werden:\n{e}")
 
     def open_search(self) -> None:
         self.search_bar_widget.setVisible(True)
@@ -5772,12 +5809,39 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _find_soffice() -> str | None:
-        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung)."""
+        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung).
+
+        Reihenfolge: **mitgebündeltes** LibreOffice neben der Anwendung
+        (für eine eigenständige Installation auf dem Arbeitsrechner) →
+        PATH → bekannte System-Installationspfade.
+        """
+        # 1) Mitgebündelt: relativ zur EXE bzw. zum PyInstaller-Bundle.
+        bundle_roots: list[Path] = []
+        try:
+            bundle_roots.append(Path(sys.executable).resolve().parent)
+        except Exception:
+            pass
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundle_roots.append(Path(meipass))
+        bundle_roots.append(Path(__file__).resolve().parent)
+        bundle_rel = [
+            Path("libreoffice") / "program" / ("soffice.exe" if os.name == "nt" else "soffice"),
+            Path("libreoffice") / "program" / "soffice.bin",
+        ]
+        for root in bundle_roots:
+            for rel in bundle_rel:
+                candidate = root / rel
+                if candidate.exists():
+                    return str(candidate)
+
+        # 2) PATH.
         for name in ("soffice", "libreoffice"):
             found = shutil.which(name)
             if found:
                 return found
-        # Häufige feste Pfade (inkl. gebündelter Installationen).
+
+        # 3) Bekannte System-Installationspfade.
         candidates = [
             "/usr/bin/soffice",
             "/usr/lib/libreoffice/program/soffice",
