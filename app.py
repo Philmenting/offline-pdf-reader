@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import json
 import math
@@ -18,7 +19,7 @@ import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image, ImageFilter, ImageOps
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
@@ -1159,6 +1160,7 @@ class MainWindow(QMainWindow):
         self.ocr_cache_order: list[str] = []
         self.ocr_cache_max_entries = 80
         self.doc_revision = 0
+        self._page_render_cache: dict[tuple, QPixmap] = {}
         self.last_ocr_failed_pages: list[int] = []
         self.last_recognized_page_texts: dict[int, str] = {}
         self._installed_ocr_langs_cache: set[str] | None = None
@@ -2447,6 +2449,17 @@ class MainWindow(QMainWindow):
         self._update_ocr_mode_label()
         self._apply_styles()
 
+        # ── Autosave / Crash-Recovery ─────────────────────────────────────
+        self._recovery_dir = Path.home() / ".offline-pdf-reader" / "recovery"
+        try:
+            self._recovery_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._recovery_dir = Path(tempfile.gettempdir())
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(60_000)  # alle 60 s
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start()
+
     def _configure_tesseract_runtime(self) -> None:
         if os.name != "nt":
             return
@@ -2688,6 +2701,8 @@ class MainWindow(QMainWindow):
         if dirty:
             self.doc_revision += 1
             self._clear_ocr_cache()
+            if hasattr(self, "_page_render_cache"):
+                self._page_render_cache.clear()
         self.is_dirty = dirty
         self.setWindowTitle(self._compose_window_title())
 
@@ -4402,6 +4417,7 @@ class MainWindow(QMainWindow):
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.doc_revision = 0
+        self._page_render_cache.clear()
         self._clear_ocr_cache()
         self.last_ocr_failed_pages = []
         self.last_recognized_page_texts = {}
@@ -4478,6 +4494,7 @@ class MainWindow(QMainWindow):
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.doc_revision = 0
+        self._page_render_cache.clear()
         self._clear_ocr_cache()
         self.last_ocr_failed_pages = []
         self.last_recognized_page_texts = {}
@@ -4497,6 +4514,7 @@ class MainWindow(QMainWindow):
         self._refresh_comment_list()
         self._refresh_outline()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
+        self._maybe_offer_recovery()
 
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF-Dateien (*.pdf)")
@@ -4592,11 +4610,22 @@ class MainWindow(QMainWindow):
 
         page = self.doc[self.current_page]
         rotation = self.page_rotations.get(self.current_page, 0)
-        matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor).prerotate(rotation)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        fmt = QImage.Format.Format_RGB888
-        img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
-        qpix = QPixmap.fromImage(img)
+        # Basis-Render (teures get_pixmap) cachen; bei jeder Änderung wird der
+        # Cache in _set_dirty geleert, daher ist der Schlüssel kollisionsfrei.
+        cache_key = (self.current_page, round(self.zoom_factor, 4), rotation % 360, self.doc_revision)
+        cached_base = self._page_render_cache.get(cache_key)
+        if cached_base is not None:
+            qpix = cached_base.copy()
+        else:
+            matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor).prerotate(rotation)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            fmt = QImage.Format.Format_RGB888
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
+            base = QPixmap.fromImage(img)
+            if len(self._page_render_cache) > 12:
+                self._page_render_cache.clear()
+            self._page_render_cache[cache_key] = base
+            qpix = base.copy()
 
         if 0 <= self.current_search_hit < len(self.search_hits):
             hit = self.search_hits[self.current_search_hit]
@@ -5921,6 +5950,79 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Als DOCX exportiert (LibreOffice): {Path(out_path).name}")
         QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
 
+    def _recovery_path_for(self, source: Path) -> Path:
+        digest = hashlib.sha1(str(source.resolve()).encode("utf-8", "replace")).hexdigest()[:16]
+        return self._recovery_dir / f"{digest}.recovery.pdf"
+
+    def _autosave_tick(self) -> None:
+        """Schreibt periodisch eine Wiederherstellungskopie, solange es
+        ungespeicherte Änderungen gibt."""
+        if not self.doc or not self.pdf_path or not self.is_dirty:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            work = fitz.open()
+            try:
+                work.insert_pdf(self.doc)
+                for idx, rot in self.page_rotations.items():
+                    if 0 <= idx < len(work) and rot % 360 != 0:
+                        work[idx].set_rotation(rot % 360)
+                work.save(str(recovery))
+            finally:
+                work.close()
+            self.statusBar().showMessage("Automatische Sicherung erstellt", 2000)
+        except Exception:
+            # Autosave darf den Nutzer nie stören.
+            pass
+
+    def _clear_recovery(self) -> None:
+        if not self.pdf_path:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            if recovery.exists():
+                recovery.unlink()
+        except Exception:
+            pass
+
+    def _maybe_offer_recovery(self) -> None:
+        """Prüft beim Laden, ob eine neuere Wiederherstellungskopie existiert,
+        und bietet an, deren Stand zu übernehmen."""
+        if not self.pdf_path:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            if not recovery.exists():
+                return
+            if recovery.stat().st_mtime <= self.pdf_path.stat().st_mtime:
+                self._clear_recovery()
+                return
+        except Exception:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Wiederherstellung gefunden",
+            "Für diese Datei existiert eine neuere automatische Sicherung "
+            "(z. B. nach einem Absturz). Möchtest du deren Stand laden?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            recovered = fitz.open(str(recovery))
+            self.doc = recovered
+            self.page_rotations.clear()
+            self.doc_revision = 0
+            self._page_render_cache.clear()
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self._set_dirty(True)
+            self._refresh_comment_list()
+            self._refresh_outline()
+            self.statusBar().showMessage("Automatische Sicherung geladen – bitte prüfen und speichern.")
+        except Exception as e:
+            QMessageBox.warning(self, "Hinweis", f"Wiederherstellung konnte nicht geladen werden:\n{e}")
+
     def print_document(self) -> None:
         """Druckt das aktuelle PDF über den System-Druckdialog.
 
@@ -6024,6 +6126,7 @@ class MainWindow(QMainWindow):
             self._refresh_thumbnails()
             self.render_current_page()
             self._set_dirty(False)
+            self._clear_recovery()
             self.statusBar().showMessage(f"Gespeichert: {source_path.name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
@@ -6075,6 +6178,7 @@ class MainWindow(QMainWindow):
             self._refresh_thumbnails()
             self.render_current_page()
             self._set_dirty(False)
+            self._clear_recovery()
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
             self.statusBar().showMessage(f"Gespeichert: {Path(out_path).name}")
         except Exception as e:
