@@ -21,6 +21,8 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -1749,6 +1751,24 @@ class MainWindow(QMainWindow):
         size_grid.addWidget(self.annotation_line_width_spin, 3, 1)
         properties_layout.addLayout(size_grid)
 
+        self.annotation_font_family_label = QLabel("Schriftart")
+        self.annotation_font_family_label.setProperty("role", "fieldlabel")
+        properties_layout.addWidget(self.annotation_font_family_label)
+        self.annotation_font_family_combo = QComboBox()
+        # Base-14-Fonts, die PyMuPDF ohne externe Schriftdatei einbetten kann.
+        for label in ("Helvetica", "Times", "Courier"):
+            self.annotation_font_family_combo.addItem(label)
+        properties_layout.addWidget(self.annotation_font_family_combo)
+
+        self.annotation_font_style_row = QHBoxLayout()
+        self.annotation_font_style_row.setSpacing(6)
+        self.annotation_bold_check = QCheckBox("Fett")
+        self.annotation_italic_check = QCheckBox("Kursiv")
+        self.annotation_font_style_row.addWidget(self.annotation_bold_check)
+        self.annotation_font_style_row.addWidget(self.annotation_italic_check)
+        self.annotation_font_style_row.addStretch(1)
+        properties_layout.addLayout(self.annotation_font_style_row)
+
         self.annotation_color_label = QLabel("Farbe")
         self.annotation_color_label.setProperty("role", "fieldlabel")
         properties_layout.addWidget(self.annotation_color_label)
@@ -1805,6 +1825,34 @@ class MainWindow(QMainWindow):
         self.btn_apply_redactions = _action_btn("Schwärzungen final anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
         self.btn_apply_redactions.clicked.connect(self.apply_pending_redactions)
         annotation_layout.addWidget(self.btn_apply_redactions)
+
+        # ── Kommentare / Annotationsübersicht ─────────────────────────────
+        self.comment_card = QWidget()
+        self.comment_card.setProperty("role", "panelcard")
+        comment_layout = QVBoxLayout(self.comment_card)
+        comment_layout.setContentsMargins(12, 12, 12, 12)
+        comment_layout.setSpacing(8)
+        comment_title = QLabel("Kommentare")
+        comment_title.setProperty("role", "cardtitle")
+        comment_layout.addWidget(comment_title)
+        comment_hint = QLabel("Alle Annotationen des Dokuments – anklicken zum Anspringen.")
+        comment_hint.setWordWrap(True)
+        comment_hint.setProperty("role", "panelsubtitle")
+        comment_layout.addWidget(comment_hint)
+        self.comment_list = QListWidget()
+        self.comment_list.setMinimumHeight(120)
+        self.comment_list.itemClicked.connect(self._on_comment_item_clicked)
+        comment_layout.addWidget(self.comment_list)
+        comment_btn_row = QHBoxLayout()
+        comment_btn_row.setSpacing(6)
+        self.btn_toggle_resolved = _action_btn("Erledigt umschalten", "Ausgewählten Kommentar als erledigt markieren / wieder öffnen")
+        self.btn_toggle_resolved.clicked.connect(self.toggle_selected_comment_resolved)
+        self.btn_refresh_comments = _action_btn("Aktualisieren", "Kommentarliste neu aufbauen")
+        self.btn_refresh_comments.clicked.connect(self._refresh_comment_list)
+        comment_btn_row.addWidget(self.btn_toggle_resolved)
+        comment_btn_row.addWidget(self.btn_refresh_comments)
+        comment_layout.addLayout(comment_btn_row)
+        annotation_layout.addWidget(self.comment_card)
 
         # ── Inline-Textbearbeitung ────────────────────────────────────────
         self.inline_edit_card = QWidget()
@@ -2898,6 +2946,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage("Annotation gelöscht")
         except Exception as e:
@@ -2934,6 +2983,7 @@ class MainWindow(QMainWindow):
             annot.update()
             self._set_dirty(True)
             self._update_selected_annotation_ui()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage("Annotation-Kommentar aktualisiert")
         except Exception as e:
@@ -4232,6 +4282,7 @@ class MainWindow(QMainWindow):
         self._update_thumbnail_meta()
         self._set_dirty(False)
         self._update_undo_redo_buttons()
+        self._refresh_comment_list()
         self.statusBar().showMessage("PDF geschlossen.")
 
     def closeEvent(self, event) -> None:
@@ -4305,6 +4356,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         self._update_thumbnail_meta()
         self._update_undo_redo_buttons()
+        self._refresh_comment_list()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
@@ -7518,6 +7570,19 @@ class MainWindow(QMainWindow):
         values = [max(0, min(255, round(channel * 255))) for channel in color]
         return f"#{values[0]:02x}{values[1]:02x}{values[2]:02x}"
 
+    def _resolve_fontname(self) -> str:
+        """Bildet die gewählte Schriftart + Fett/Kursiv auf einen
+        PyMuPDF-Base-14-Fontcode ab (ohne externe Schriftdatei einbettbar)."""
+        family = self.annotation_font_family_combo.currentText()
+        bold = self.annotation_bold_check.isChecked()
+        italic = self.annotation_italic_check.isChecked()
+        table = {
+            "Helvetica": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
+            "Times": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
+            "Courier": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
+        }
+        return table.get(family, table["Helvetica"])[(bold, italic)]
+
     def _set_annotation_defaults(self, kind: str) -> None:
         defaults = {
             "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
@@ -7550,8 +7615,13 @@ class MainWindow(QMainWindow):
         uses_line = kind in {"rect", "line", "arrow", "freehand"}
         uses_color = kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
+        uses_font = kind in {"text", "text-replace"}
         self.annotation_text_label.setVisible(is_text)
         self.annotation_text_input.setVisible(is_text)
+        self.annotation_font_family_label.setVisible(uses_font)
+        self.annotation_font_family_combo.setVisible(uses_font)
+        self.annotation_bold_check.setVisible(uses_font)
+        self.annotation_italic_check.setVisible(uses_font)
         self.annotation_image_label.setVisible(uses_image)
         self.annotation_image_path_label.setVisible(uses_image)
         self.btn_annotation_pick_image.setVisible(uses_image)
@@ -7559,8 +7629,8 @@ class MainWindow(QMainWindow):
         self.annotation_width_spin.setVisible(uses_size)
         self.annotation_height_label.setVisible(uses_size)
         self.annotation_height_spin.setVisible(uses_size)
-        self.annotation_font_label.setVisible(is_text)
-        self.annotation_font_size_spin.setVisible(is_text)
+        self.annotation_font_label.setVisible(is_text or uses_font)
+        self.annotation_font_size_spin.setVisible(is_text or uses_font)
         self.annotation_line_width_label.setVisible(uses_line)
         self.annotation_line_width_spin.setVisible(uses_line)
         self.annotation_color_label.setVisible(uses_color)
@@ -7620,6 +7690,7 @@ class MainWindow(QMainWindow):
                     "kind": "text",
                     "text": "",
                     "font_size": self.annotation_font_size_spin.value(),
+                    "fontname": self._resolve_fontname(),
                     "color": color,
                 },
                 "Textmodus aktiv – ziehe in der Vorschau ein Textfeld auf.",
@@ -7652,6 +7723,7 @@ class MainWindow(QMainWindow):
                     "kind": "text-replace",
                     "text": text,
                     "font_size": self.annotation_font_size_spin.value(),
+                    "fontname": self._resolve_fontname(),
                     "color": color,
                 },
                 "Text-Ersetzen aktiv – ziehe den Bereich auf, der neu gesetzt werden soll.",
@@ -7819,6 +7891,111 @@ class MainWindow(QMainWindow):
                 self.inline_edit_card.setVisible(True)
             else:
                 self.inline_edit_card.setVisible(False)
+
+    RESOLVE_TAG = "erledigt"
+
+    _ANNOT_TYPE_LABELS = {
+        "FreeText": "Text",
+        "Text": "Notiz",
+        "Highlight": "Markierung",
+        "StrikeOut": "Durchstreichung",
+        "Underline": "Unterstreichung",
+        "Square": "Rechteck",
+        "Line": "Linie/Pfeil",
+        "Ink": "Freihand",
+        "Redact": "Schwärzung",
+    }
+
+    def _is_annot_resolved(self, annot) -> bool:
+        try:
+            return str((annot.info or {}).get("subject", "")).strip().lower() == self.RESOLVE_TAG
+        except Exception:
+            return False
+
+    def _set_annot_resolved(self, annot, resolved: bool) -> None:
+        subject = self.RESOLVE_TAG if resolved else ""
+        try:
+            annot.set_info(subject=subject)
+        except Exception:
+            try:
+                annot.set_info(info={"subject": subject})
+            except Exception:
+                pass
+        try:
+            annot.update()
+        except Exception:
+            pass
+
+    def _refresh_comment_list(self) -> None:
+        if not hasattr(self, "comment_list"):
+            return
+        self.comment_list.clear()
+        if not self.doc:
+            return
+        for pidx in range(len(self.doc)):
+            try:
+                annots = list(self.doc[pidx].annots() or [])
+            except Exception:
+                continue
+            for annot in annots:
+                subtype = annot.type[1] if isinstance(annot.type, tuple) and len(annot.type) > 1 else "Annotation"
+                label_type = self._ANNOT_TYPE_LABELS.get(subtype, subtype)
+                try:
+                    content = str((annot.info or {}).get("content", "")).strip()
+                except Exception:
+                    content = ""
+                snippet = f": {content[:40]}" if content else ""
+                resolved = self._is_annot_resolved(annot)
+                prefix = "✓ " if resolved else ""
+                item = QListWidgetItem(f"{prefix}S{pidx + 1} · {label_type}{snippet}")
+                item.setData(Qt.ItemDataRole.UserRole, (pidx, getattr(annot, "xref", None)))
+                if resolved:
+                    font = item.font()
+                    font.setStrikeOut(True)
+                    item.setFont(font)
+                    item.setForeground(QColor("#9aa3b2"))
+                self.comment_list.addItem(item)
+
+    def _on_comment_item_clicked(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        pidx, xref = data
+        if not self.doc or not (0 <= pidx < len(self.doc)):
+            return
+        self.current_page = pidx
+        self.selected_widget_xref = None
+        self.selected_annotation_xref = xref
+        self.render_current_page()
+        self._update_selected_annotation_ui()
+        self.statusBar().showMessage(f"Kommentar auf Seite {pidx + 1} ausgewählt")
+
+    def toggle_selected_comment_resolved(self) -> None:
+        item = self.comment_list.currentItem() if hasattr(self, "comment_list") else None
+        if item is None:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Kommentar in der Liste auswählen.")
+            return
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        pidx, xref = data
+        if not self.doc or not (0 <= pidx < len(self.doc)) or xref is None:
+            return
+        target = None
+        for annot in self.doc[pidx].annots() or []:
+            if getattr(annot, "xref", None) == xref:
+                target = annot
+                break
+        if target is None:
+            self._refresh_comment_list()
+            return
+        self._push_undo_state()
+        new_state = not self._is_annot_resolved(target)
+        self._set_annot_resolved(target, new_state)
+        self._set_dirty(True)
+        self._refresh_comment_list()
+        self.render_current_page()
+        self.statusBar().showMessage("Kommentar als erledigt markiert" if new_state else "Kommentar wieder geöffnet")
 
     def _view_to_page_point(self, x: float, y: float) -> fitz.Point | None:
         if not self.doc or not (0 <= self.current_page < len(self.doc)):
@@ -8063,6 +8240,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage(message)
         except Exception as e:
@@ -8146,6 +8324,7 @@ class MainWindow(QMainWindow):
                     rect,
                     text,
                     fontsize=self.pending_annotation["font_size"],
+                    fontname=self.pending_annotation.get("fontname", "helv"),
                     text_color=self.pending_annotation["color"],
                     fill_color=(1, 1, 1),
                     border_color=self.pending_annotation["color"],
@@ -8214,6 +8393,7 @@ class MainWindow(QMainWindow):
                     rect,
                     self.pending_annotation["text"],
                     fontsize=self.pending_annotation["font_size"],
+                    fontname=self.pending_annotation.get("fontname", "helv"),
                     color=self.pending_annotation["color"],
                     align=0,
                 )
@@ -8229,6 +8409,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage(message)
         except Exception as e:

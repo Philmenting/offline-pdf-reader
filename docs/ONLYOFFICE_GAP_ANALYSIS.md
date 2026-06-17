@@ -5,6 +5,14 @@
 **Umfang (vom Auftraggeber festgelegt):** PDF-Editor-Funktionen + Konvertierung. **Ausgenommen: KI-Funktionen.**
 **Vorgehen:** OnlyOffice wird *nicht* kopiert (AGPL-v3, inkompatibel mit dem MIT-Projekt und anderer Tech-Stack). Stattdessen dienen sein Look & sein Funktionsumfang als **Vorbild**, das in der bestehenden Python/PySide6-App (`app.py`) nachgebaut wird.
 
+> **Umsetzungsfortschritt (P1 abgeschlossen):**
+> - ✅ Text-Markup **Durchstreichen** + **Unterstreichen** (PyMuPDF `add_strikeout_annot`/`add_underline_annot`)
+> - ✅ **Echter Druckdialog** (`Ctrl+P`, `QtPrintSupport`, Seitenbereich)
+> - ✅ **Schriftformatierung** für Text-Werkzeuge (Familie Helvetica/Times/Courier + Fett/Kursiv)
+> - ✅ **Kommentar-Panel** in der Sidebar (Liste aller Annotationen, Anspringen, Erledigt-Status)
+>
+> Als Nächstes: P2 (Einfügen-Objekte). Konvertierung (P3) via LibreOffice-Headless. Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
+
 ---
 
 ## 1. Methodik
@@ -54,7 +62,7 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Metadaten bearbeiten | ✅ | `edit_pdf_metadata` (über OnlyOffice hinaus) |
 | Passwortschutz / Entschlüsseln | ✅ | `export_encrypted_pdf_copy`, `export_decrypted_pdf_copy` |
 | Optimieren / Komprimieren | ✅ | `export_optimized_pdf_copy` (über OnlyOffice hinaus) |
-| **Drucken (echter Druckdialog)** | ❌ | nur `_print.pdf`-Export, kein `QPrintDialog` |
+| **Drucken (echter Druckdialog)** | ✅ | `print_document` (Ctrl+P, `QPrintDialog`/`QPrinter`, Seitenbereich) |
 | **Herunterladen als → Office-Format (Konvertierung)** | ❌ | siehe §4 |
 | Versionsverlauf | 🚫 | Kollaboration/Server |
 
@@ -65,7 +73,7 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Rückgängig / Wiederholen | ✅ | `undo_last_change`, `redo_last_change` |
 | Text ersetzen (Inhaltsbearbeitung, einfach) | ◐ | `text-replace`-Werkzeug + Inline-Edit von FreeText/Formularfeldern |
 | **Echte WYSIWYG-Textbearbeitung** (Inhalt im Textfluss editieren) | ❌ | nicht vorhanden – größte Lücke |
-| **Schriftformatierung** (Font, Größe, Fett/Kursiv/Unterstrichen, Farbe) | ◐ | nur Schriftgröße + Farbe für Annotationen, keine Font-Familie/Stile |
+| **Schriftformatierung** (Font, Größe, Fett/Kursiv/Unterstrichen, Farbe) | ✅ | Familie (Helvetica/Times/Courier) + Fett/Kursiv + Größe + Farbe für Text-Werkzeuge (`_resolve_fontname`) |
 | **Absatz** (Ausrichtung, Listen, Zeilenabstand) | ❌ | nicht vorhanden |
 | Kopieren / Einfügen von Objekten | ❌ | nicht vorhanden |
 | Format übertragen | ❌ | nicht vorhanden |
@@ -86,9 +94,9 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Notiz/Kommentar hinzufügen | ✅ | `note`-Werkzeug, `add_text_annotation` |
 | Kommentar bearbeiten / Antwort | ◐ | `edit_selected_annotation_comment`, `reply_to_selected_annotation` (kein echter Thread/Resolve-Workflow) |
 | Hervorheben (Highlight) | ✅ | `add_highlight_annotation` |
-| **Durchstreichen (Strikeout)** | ❌ | nicht vorhanden |
-| **Unterstreichen (Underline)** | ❌ | nicht vorhanden |
-| Kommentar-Panel mit Navigation/Resolve | ❌ | keine dedizierte Kommentarliste |
+| **Durchstreichen (Strikeout)** | ✅ | `add_strikeout_annotation` (Werkzeug + Menü) |
+| **Unterstreichen (Underline)** | ✅ | `add_underline_annotation` (Werkzeug + Menü) |
+| Kommentar-Panel mit Navigation/Resolve | ✅ | Sidebar-Karte „Kommentare": Liste, Anspringen, Erledigt-Toggle (`_refresh_comment_list`, `toggle_selected_comment_resolved`) |
 
 ### 3.5 Einfügen
 
@@ -157,11 +165,11 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 
 ## 5. Priorisierte Lückenliste
 
-**P1 – Kern-PDF-Editor (höchster Nutzen, OnlyOffice-Kerngefühl):**
-1. Text-Markup vervollständigen: **Durchstreichen + Unterstreichen** (klein, schnell; PyMuPDF kann das direkt).
-2. **Echter Druckdialog** (`QPrintSupport`/`QPrintDialog`).
-3. **Schriftformatierung** für Text-/FreeText-Objekte (Font-Familie, Fett/Kursiv/Unterstrichen) im Eigenschaften-Panel.
-4. **Kommentar-Panel** mit Liste, Navigation und Resolve-Status.
+**P1 – Kern-PDF-Editor (höchster Nutzen, OnlyOffice-Kerngefühl) — ✅ ABGESCHLOSSEN:**
+1. ✅ Text-Markup vervollständigen: **Durchstreichen + Unterstreichen**.
+2. ✅ **Echter Druckdialog** (`QtPrintSupport`/`QPrintDialog`).
+3. ✅ **Schriftformatierung** für Text-/FreeText-Objekte (Font-Familie, Fett/Kursiv) im Eigenschaften-Panel.
+4. ✅ **Kommentar-Panel** mit Liste, Navigation und Resolve-Status.
 
 **P2 – Einfügen-Objekte:**
 5. Weitere **Formen** (Ellipse/Kreis, Mehrfachpfeile, Callout).
