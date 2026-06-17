@@ -1195,6 +1195,28 @@ class MainWindow(QMainWindow):
         thumb_header_layout.addWidget(self.thumb_title_label)
         thumb_header_layout.addWidget(self.thumb_meta_label)
         thumb_panel_layout.addWidget(thumb_header)
+
+        # ── Lesezeichen / Inhaltsverzeichnis (PDF-Outline) ────────────────
+        self.outline_card = QWidget()
+        self.outline_card.setProperty("role", "sectioncard")
+        outline_layout = QVBoxLayout(self.outline_card)
+        outline_layout.setContentsMargins(10, 10, 10, 10)
+        outline_layout.setSpacing(4)
+        outline_title = QLabel("Lesezeichen")
+        outline_title.setProperty("role", "cardtitle")
+        outline_layout.addWidget(outline_title)
+        self.outline_list = QListWidget()
+        self.outline_list.setMaximumHeight(180)
+        self.outline_list.setAccessibleName("Lesezeichen-Navigation")
+        self.outline_list.setAccessibleDescription("Inhaltsverzeichnis / Lesezeichen des PDFs zum Anspringen")
+        self.outline_list.itemClicked.connect(self._on_outline_item_clicked)
+        outline_layout.addWidget(self.outline_list)
+        self.outline_empty_label = QLabel("Keine Lesezeichen im Dokument.")
+        self.outline_empty_label.setProperty("role", "panelsubtitle")
+        self.outline_empty_label.setWordWrap(True)
+        outline_layout.addWidget(self.outline_empty_label)
+        thumb_panel_layout.addWidget(self.outline_card)
+
         thumb_panel_layout.addWidget(self.thumb_list, 1)
 
         self.preview.setAccessibleName("PDF-Seitenvorschau")
@@ -2092,6 +2114,22 @@ class MainWindow(QMainWindow):
         act_redo.triggered.connect(self.redo_last_change)
         menu_file.addAction(act_redo)
 
+        menu_view = self.menuBar().addMenu("Ansicht")
+        act_fit_width = QAction("An Breite anpassen", self)
+        act_fit_width.setShortcut("Ctrl+Shift+W")
+        act_fit_width.triggered.connect(self.fit_to_width)
+        menu_view.addAction(act_fit_width)
+
+        act_fit_page = QAction("An Seite anpassen", self)
+        act_fit_page.setShortcut("Ctrl+Shift+P")
+        act_fit_page.triggered.connect(self.fit_to_page)
+        menu_view.addAction(act_fit_page)
+
+        act_zoom_reset_menu = QAction("Zoom zurücksetzen (100 %)", self)
+        act_zoom_reset_menu.setShortcut("Ctrl+0")
+        act_zoom_reset_menu.triggered.connect(self.reset_zoom)
+        menu_view.addAction(act_zoom_reset_menu)
+
         menu_ocr = self.menuBar().addMenu("OCR und Text")
         act_extract_current = QAction("Text auf aktueller Seite erkennen", self)
         act_extract_current.setShortcut("Ctrl+E")
@@ -2312,6 +2350,9 @@ class MainWindow(QMainWindow):
             act_print,
             act_undo,
             act_redo,
+            act_fit_width,
+            act_fit_page,
+            act_zoom_reset_menu,
             act_extract_current,
             act_extract,
             act_retry_failed_ocr,
@@ -4331,6 +4372,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         self._update_undo_redo_buttons()
         self._refresh_comment_list()
+        self._refresh_outline()
         self.statusBar().showMessage("PDF geschlossen.")
 
     def closeEvent(self, event) -> None:
@@ -4405,6 +4447,7 @@ class MainWindow(QMainWindow):
         self._update_thumbnail_meta()
         self._update_undo_redo_buttons()
         self._refresh_comment_list()
+        self._refresh_outline()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
@@ -4857,6 +4900,41 @@ class MainWindow(QMainWindow):
         if not self.doc:
             return
         self.zoom_factor = 1.0
+        self.render_current_page()
+
+    def _current_page_view_size(self) -> tuple[float, float] | None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return None
+        page = self.doc[self.current_page]
+        width = float(page.rect.width)
+        height = float(page.rect.height)
+        if self.page_rotations.get(self.current_page, 0) % 360 in (90, 270):
+            width, height = height, width
+        if width <= 0 or height <= 0:
+            return None
+        return width, height
+
+    def fit_to_width(self) -> None:
+        size = self._current_page_view_size()
+        if size is None:
+            return
+        width, _ = size
+        avail = self.preview_scroll.viewport().width() - 28
+        if avail <= 0:
+            return
+        self.zoom_factor = max(0.1, min(6.0, avail / width))
+        self.render_current_page()
+
+    def fit_to_page(self) -> None:
+        size = self._current_page_view_size()
+        if size is None:
+            return
+        width, height = size
+        avail_w = self.preview_scroll.viewport().width() - 28
+        avail_h = self.preview_scroll.viewport().height() - 28
+        if avail_w <= 0 or avail_h <= 0:
+            return
+        self.zoom_factor = max(0.1, min(6.0, min(avail_w / width, avail_h / height)))
         self.render_current_page()
 
     def rotate_left(self) -> None:
@@ -8307,6 +8385,38 @@ class MainWindow(QMainWindow):
                     item.setFont(font)
                     item.setForeground(QColor("#9aa3b2"))
                 self.comment_list.addItem(item)
+
+    def _refresh_outline(self) -> None:
+        if not hasattr(self, "outline_list"):
+            return
+        self.outline_list.clear()
+        toc = []
+        if self.doc:
+            try:
+                toc = self.doc.get_toc() or []
+            except Exception:
+                toc = []
+        has_entries = bool(toc)
+        self.outline_empty_label.setVisible(not has_entries)
+        self.outline_list.setVisible(has_entries)
+        for entry in toc:
+            try:
+                level, title, page = entry[0], entry[1], entry[2]
+            except Exception:
+                continue
+            indent = "    " * max(0, int(level) - 1)
+            item = QListWidgetItem(f"{indent}{title}")
+            item.setData(Qt.ItemDataRole.UserRole, int(page) - 1)
+            self.outline_list.addItem(item)
+
+    def _on_outline_item_clicked(self, item: QListWidgetItem) -> None:
+        page_idx = item.data(Qt.ItemDataRole.UserRole)
+        if page_idx is None or not self.doc:
+            return
+        page_idx = max(0, min(int(page_idx), len(self.doc) - 1))
+        self.current_page = page_idx
+        self.render_current_page()
+        self.statusBar().showMessage(f"Lesezeichen: Seite {page_idx + 1}")
 
     def _on_comment_item_clicked(self, item: QListWidgetItem) -> None:
         data = item.data(Qt.ItemDataRole.UserRole)

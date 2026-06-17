@@ -23,7 +23,12 @@
 > - ✅ Datei-Menü: „Office-Dokument öffnen" + „Herunterladen als Word"
 > - ⚠️ Benötigt installiertes/gebündeltes LibreOffice; lokal zu verifizieren.
 >
-> Als Nächstes: P4 (Outline-/Lesezeichen-Navigation, fortlaufende Ansicht). Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
+> **Umsetzungsfortschritt (P4 abgeschlossen):**
+> - ✅ **Lesezeichen-/Outline-Panel** links (springt zur Seite)
+> - ✅ Zoommodi **„An Breite" / „An Seite"** (Menü „Ansicht")
+> - ❌ Fortlaufende Mehrseitenansicht zurückgestellt (Koordinaten-Umbau)
+>
+> Verbleibender Hauptposten: echtes **Reflow-WYSIWYG** für Textbearbeitung (eigene Layout-Engine, sehr aufwändig).
 
 ---
 
@@ -133,12 +138,12 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | OnlyOffice-Funktion | Status | Ist-Umsetzung |
 |---|---|---|
 | Zoom +/−/zurücksetzen | ✅ | Zoom-Buttons |
-| An Seite/Breite anpassen | ◐ | „Fit"-Button vorhanden, getrennte Modi Seite/Breite zu prüfen |
+| An Seite/Breite anpassen | ✅ | `fit_to_width` / `fit_to_page` (Menü „Ansicht", Ctrl+Shift+W / Ctrl+Shift+P) |
 | Seitenminiaturen | ✅ | `ThumbnailListWidget` (linkes Panel) |
 | Ansicht drehen | ✅ | `rotate_left`/`rotate_right`/Reset |
 | Dunkelmodus | ✅ | `_is_dark_mode` + Dark-Styles |
-| **Mehrseitige / fortlaufende Ansicht** | ❌ | zu prüfen / vermutlich Einzelseite |
-| **Lesezeichen-/Outline-Navigation (TOC)** | ❌ | nicht vorhanden |
+| **Mehrseitige / fortlaufende Ansicht** | ❌ | bewusst zurückgestellt – Annotations-Koordinaten hängen am Einzelseiten-Modell (großer, riskanter Umbau) |
+| **Lesezeichen-/Outline-Navigation (TOC)** | ✅ | `_refresh_outline` + Panel links (`doc.get_toc()`, Klick springt zur Seite) |
 
 ### 3.7 Plugins / OCR
 
@@ -196,9 +201,10 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 
 > ⚠️ **Setup:** Für die Konvertierung muss **LibreOffice** (`soffice`/`libreoffice`) installiert oder im Build gebündelt sein. Optional `pip install pdf2docx` für bessere PDF→DOCX-Textwiedergabe. Konnte in der CI-/Remote-Umgebung nicht end-to-end getestet werden (dortige LibreOffice-Installation defekt) — bitte lokal verifizieren.
 
-**P4 – Ansicht/Navigation:**
-12. **Outline-/Lesezeichen-Navigation** (TOC-Panel aus PDF-Bookmarks).
-13. **Fortlaufende mehrseitige Ansicht**, getrennte Modi „An Seite/An Breite".
+**P4 – Ansicht/Navigation — ✅ überwiegend abgeschlossen:**
+12. ✅ **Outline-/Lesezeichen-Navigation** (Panel links, `_refresh_outline`).
+13. ✅ Getrennte Modi **„An Breite" / „An Seite"** (`fit_to_width`/`fit_to_page`).
+    ❌ **Fortlaufende mehrseitige Ansicht** bewusst zurückgestellt: würde das Annotations-/Klick-Koordinatensystem (heute streng Einzelseite) brechen – separater, größerer Umbau.
 
 **Außer Scope (nicht umsetzen):** KI-Funktionen, Echtzeit-Kollaboration/Versionsverlauf, eingebauter Chat/Telegram.
 
