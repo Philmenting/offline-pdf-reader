@@ -5,6 +5,35 @@
 **Umfang (vom Auftraggeber festgelegt):** PDF-Editor-Funktionen + Konvertierung. **Ausgenommen: KI-Funktionen.**
 **Vorgehen:** OnlyOffice wird *nicht* kopiert (AGPL-v3, inkompatibel mit dem MIT-Projekt und anderer Tech-Stack). Stattdessen dienen sein Look & sein Funktionsumfang als **Vorbild**, das in der bestehenden Python/PySide6-App (`app.py`) nachgebaut wird.
 
+> **Umsetzungsfortschritt (P1 abgeschlossen):**
+> - ✅ Text-Markup **Durchstreichen** + **Unterstreichen** (PyMuPDF `add_strikeout_annot`/`add_underline_annot`)
+> - ✅ **Echter Druckdialog** (`Ctrl+P`, `QtPrintSupport`, Seitenbereich)
+> - ✅ **Schriftformatierung** für Text-Werkzeuge (Familie Helvetica/Times/Courier + Fett/Kursiv)
+> - ✅ **Kommentar-Panel** in der Sidebar (Liste aller Annotationen, Anspringen, Erledigt-Status)
+>
+> **Umsetzungsfortschritt (P2 abgeschlossen):**
+> - ✅ **Ellipse/Kreis** als Form-Werkzeug
+> - ✅ **Hyperlink** einfügen (Bereich + URL)
+> - ✅ **Kopf-/Fußzeile** über Seitenbereich
+> - ✅ **Tabelle** (Raster Zeilen×Spalten)
+>
+> **Umsetzungsfortschritt (P3 abgeschlossen):**
+> - ✅ **Office → PDF** (DOCX/XLSX/PPTX/ODT) via LibreOffice-Headless
+> - ✅ **PDF → DOCX** (pdf2docx bevorzugt, sonst LibreOffice)
+> - ✅ Datei-Menü: „Office-Dokument öffnen" + „Herunterladen als Word"
+> - ⚠️ Benötigt installiertes/gebündeltes LibreOffice; lokal zu verifizieren.
+>
+> **Umsetzungsfortschritt (P4 abgeschlossen):**
+> - ✅ **Lesezeichen-/Outline-Panel** links (springt zur Seite)
+> - ✅ Zoommodi **„An Breite" / „An Seite"** (Menü „Ansicht")
+> - ❌ Fortlaufende Mehrseitenansicht zurückgestellt (Koordinaten-Umbau)
+>
+> **Umsetzungsfortschritt (Texteditieren / „C"):**
+> - ✅ **Blockweises WYSIWYG-Texteditieren** (`edit_text_tool`): vorhandenen Textabschnitt anklicken → vorbefüllt mit erkannter Schrift/Größe/Farbe → editieren → im Block neu gesetzt (Reflow), Auto-Verkleinerung bei Überlauf.
+> - ❌ Dokumentweiter Reflow über Blockgrenzen hinweg bleibt offen (bräuchte eigene Layout-Engine).
+>
+> **Bekannte Grenzen des Block-Editierens:** Der Originaltext wird mit einem weißen Rechteck abgedeckt (wie bei „Text ersetzen") – auf nicht-weißem Hintergrund sichtbar. Eingebettete Originalschriften werden auf Base-14-Fonts abgebildet (kann leicht abweichen).
+
 ---
 
 ## 1. Methodik
@@ -54,7 +83,7 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Metadaten bearbeiten | ✅ | `edit_pdf_metadata` (über OnlyOffice hinaus) |
 | Passwortschutz / Entschlüsseln | ✅ | `export_encrypted_pdf_copy`, `export_decrypted_pdf_copy` |
 | Optimieren / Komprimieren | ✅ | `export_optimized_pdf_copy` (über OnlyOffice hinaus) |
-| **Drucken (echter Druckdialog)** | ❌ | nur `_print.pdf`-Export, kein `QPrintDialog` |
+| **Drucken (echter Druckdialog)** | ✅ | `print_document` (Ctrl+P, `QPrintDialog`/`QPrinter`, Seitenbereich) |
 | **Herunterladen als → Office-Format (Konvertierung)** | ❌ | siehe §4 |
 | Versionsverlauf | 🚫 | Kollaboration/Server |
 
@@ -63,9 +92,10 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | OnlyOffice-Funktion | Status | Ist-Umsetzung |
 |---|---|---|
 | Rückgängig / Wiederholen | ✅ | `undo_last_change`, `redo_last_change` |
-| Text ersetzen (Inhaltsbearbeitung, einfach) | ◐ | `text-replace`-Werkzeug + Inline-Edit von FreeText/Formularfeldern |
-| **Echte WYSIWYG-Textbearbeitung** (Inhalt im Textfluss editieren) | ❌ | nicht vorhanden – größte Lücke |
-| **Schriftformatierung** (Font, Größe, Fett/Kursiv/Unterstrichen, Farbe) | ◐ | nur Schriftgröße + Farbe für Annotationen, keine Font-Familie/Stile |
+| Text ersetzen (Inhaltsbearbeitung, einfach) | ✅ | `text-replace`-Werkzeug + Inline-Edit von FreeText/Formularfeldern |
+| **WYSIWYG-Textbearbeitung im Block** (vorhandenen Text anklicken → editieren → im Block neu setzen) | ✅ | `edit_text_tool` / `_edit_text_block_at_view`: Block-Erkennung via `get_text("dict")`, Schrift/Größe/Farbe erkannt, Reflow im Block; Auto-Verkleinerung bei Überlauf |
+| Reflow über mehrere Blöcke / ganzes Dokument | ❌ | nicht realistisch ohne eigene Layout-Engine (PDF = positionierte Glyphen) |
+| **Schriftformatierung** (Font, Größe, Fett/Kursiv/Unterstrichen, Farbe) | ✅ | Familie (Helvetica/Times/Courier) + Fett/Kursiv + Größe + Farbe für Text-Werkzeuge (`_resolve_fontname`) |
 | **Absatz** (Ausrichtung, Listen, Zeilenabstand) | ❌ | nicht vorhanden |
 | Kopieren / Einfügen von Objekten | ❌ | nicht vorhanden |
 | Format übertragen | ❌ | nicht vorhanden |
@@ -86,9 +116,9 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Notiz/Kommentar hinzufügen | ✅ | `note`-Werkzeug, `add_text_annotation` |
 | Kommentar bearbeiten / Antwort | ◐ | `edit_selected_annotation_comment`, `reply_to_selected_annotation` (kein echter Thread/Resolve-Workflow) |
 | Hervorheben (Highlight) | ✅ | `add_highlight_annotation` |
-| **Durchstreichen (Strikeout)** | ❌ | nicht vorhanden |
-| **Unterstreichen (Underline)** | ❌ | nicht vorhanden |
-| Kommentar-Panel mit Navigation/Resolve | ❌ | keine dedizierte Kommentarliste |
+| **Durchstreichen (Strikeout)** | ✅ | `add_strikeout_annotation` (Werkzeug + Menü) |
+| **Unterstreichen (Underline)** | ✅ | `add_underline_annotation` (Werkzeug + Menü) |
+| Kommentar-Panel mit Navigation/Resolve | ✅ | Sidebar-Karte „Kommentare": Liste, Anspringen, Erledigt-Toggle (`_refresh_comment_list`, `toggle_selected_comment_resolved`) |
 
 ### 3.5 Einfügen
 
@@ -99,13 +129,14 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Form: Rechteck | ✅ | `add_rectangle_annotation` |
 | Form: Linie / Pfeil | ✅ | `add_line_annotation`, `add_arrow_annotation` |
 | Freihand zeichnen | ✅ | `freehand`-Werkzeug |
-| Textfeld | ◐ | über FreeText-Annotation, kein dediziertes „Textfeld"-Objekt |
-| **Tabelle** | ❌ | nicht vorhanden |
-| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ❌ | nur Rechteck/Linie/Pfeil |
-| **Hyperlink** | ❌ | nicht vorhanden |
-| **TextArt / WordArt** | ❌ | nicht vorhanden |
-| **Symbol / Gleichung** | ❌ | nicht vorhanden |
-| Kopf-/Fußzeile | ◐ | Seitenzahlen (`insert_page_numbers`), Wasserzeichen (`add_text_watermark`); keine freie Kopf-/Fußzeile |
+| Textfeld | ✅ | Text-Werkzeug (FreeText-Annotation) deckt das Textfeld ab |
+| **Tabelle** | ✅ | `insert_table` (Raster Zeilen×Spalten auf aktueller Seite) |
+| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ✅ | Rechteck/Ellipse/**Stern**/Linie/Pfeil/Freihand (`add_star_annotation` via `add_polygon_annot`); Callout/Sprechblase noch offen |
+| **Hyperlink** | ✅ | `add_link_annotation` (Bereich ziehen → URL, `insert_link` + sichtbare Linie) |
+| **TextArt / WordArt** | ◐ | `insert_textart`: großer, fetter, farbiger Text als Annäherung (kein Gradient/Warp) |
+| **Symbol / Sonderzeichen** | ✅ | `insert_symbol` (Auswahlliste + freie Eingabe, als Text platziert) |
+| **Gleichung** | ❌ | Formelsatz außerhalb des Scopes |
+| Kopf-/Fußzeile | ✅ | `insert_header_footer` (Kopf/Fuß × links/mittig/rechts, Seitenbereich) |
 | Seitennummern | ✅ | `insert_page_numbers` |
 
 ### 3.6 Ansicht
@@ -113,12 +144,12 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | OnlyOffice-Funktion | Status | Ist-Umsetzung |
 |---|---|---|
 | Zoom +/−/zurücksetzen | ✅ | Zoom-Buttons |
-| An Seite/Breite anpassen | ◐ | „Fit"-Button vorhanden, getrennte Modi Seite/Breite zu prüfen |
+| An Seite/Breite anpassen | ✅ | `fit_to_width` / `fit_to_page` (Menü „Ansicht", Ctrl+Shift+W / Ctrl+Shift+P) |
 | Seitenminiaturen | ✅ | `ThumbnailListWidget` (linkes Panel) |
 | Ansicht drehen | ✅ | `rotate_left`/`rotate_right`/Reset |
 | Dunkelmodus | ✅ | `_is_dark_mode` + Dark-Styles |
-| **Mehrseitige / fortlaufende Ansicht** | ❌ | zu prüfen / vermutlich Einzelseite |
-| **Lesezeichen-/Outline-Navigation (TOC)** | ❌ | nicht vorhanden |
+| **Mehrseitige / fortlaufende Ansicht** | ❌ | bewusst zurückgestellt – Annotations-Koordinaten hängen am Einzelseiten-Modell (großer, riskanter Umbau) |
+| **Lesezeichen-/Outline-Navigation (TOC)** | ✅ | `_refresh_outline` + Panel links (`doc.get_toc()`, Klick springt zur Seite) |
 
 ### 3.7 Plugins / OCR
 
@@ -146,9 +177,9 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | PDF → Bilder | ✅ | `export_pages_as_images` |
 | PDF → TXT/JSON/CSV | ✅ | `export_current_file` (auf OCR-/Textmodell) |
 | PDF → durchsuchbares PDF (OCR-Layer) | ✅ | `export_searchable_pdf_copy` |
-| **PDF → DOCX (editierbar)** | ❌ | schwer; Optionen: `pdf2docx`-Lib |
-| **DOCX → PDF** | ❌ | benötigt LibreOffice-Headless (`soffice`) oder `docx2pdf` |
-| **XLSX/PPTX → PDF** | ❌ | LibreOffice-Headless |
+| **PDF → DOCX (editierbar)** | ✅ | `export_as_office` (Datei → „Herunterladen als Word"); `pdf2docx` bevorzugt, sonst LibreOffice |
+| **DOCX → PDF** | ✅ | `import_office_as_pdf` (Datei → „Office-Dokument öffnen"), LibreOffice-Headless |
+| **XLSX/PPTX → PDF** | ✅ | `import_office_as_pdf` (gleicher Pfad, LibreOffice) |
 | **PDF → TXT (direkt, ohne OCR bei Text-PDF)** | ◐ | native Textextraktion vorhanden, eigener „Export als TXT direkt" prüfen |
 
 **Hinweis Offline-Garantie:** DOCX/XLSX/PPTX↔PDF lässt sich offline am robustesten über ein **gebündeltes LibreOffice-Headless** (`soffice --headless --convert-to`) lösen. Reine Python-Libs (`pdf2docx`, `python-docx`) decken nur Teilfälle ab. Entscheidung nötig (siehe §6).
@@ -157,26 +188,29 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 
 ## 5. Priorisierte Lückenliste
 
-**P1 – Kern-PDF-Editor (höchster Nutzen, OnlyOffice-Kerngefühl):**
-1. Text-Markup vervollständigen: **Durchstreichen + Unterstreichen** (klein, schnell; PyMuPDF kann das direkt).
-2. **Echter Druckdialog** (`QPrintSupport`/`QPrintDialog`).
-3. **Schriftformatierung** für Text-/FreeText-Objekte (Font-Familie, Fett/Kursiv/Unterstrichen) im Eigenschaften-Panel.
-4. **Kommentar-Panel** mit Liste, Navigation und Resolve-Status.
+**P1 – Kern-PDF-Editor (höchster Nutzen, OnlyOffice-Kerngefühl) — ✅ ABGESCHLOSSEN:**
+1. ✅ Text-Markup vervollständigen: **Durchstreichen + Unterstreichen**.
+2. ✅ **Echter Druckdialog** (`QtPrintSupport`/`QPrintDialog`).
+3. ✅ **Schriftformatierung** für Text-/FreeText-Objekte (Font-Familie, Fett/Kursiv) im Eigenschaften-Panel.
+4. ✅ **Kommentar-Panel** mit Liste, Navigation und Resolve-Status.
 
-**P2 – Einfügen-Objekte:**
-5. Weitere **Formen** (Ellipse/Kreis, Mehrfachpfeile, Callout).
-6. **Hyperlink** einfügen (PyMuPDF `insert_link`).
-7. Dediziertes **Textfeld**-Objekt + **Kopf-/Fußzeile**.
-8. **Tabelle** einfügen (einfaches Raster).
+**P2 – Einfügen-Objekte — ✅ weitgehend abgeschlossen:**
+5. ✅ **Ellipse/Kreis** ergänzt (`add_ellipse_annotation`); Sterne/Callouts optional später.
+6. ✅ **Hyperlink** einfügen (`add_link_annotation`, PyMuPDF `insert_link`).
+7. ✅ **Kopf-/Fußzeile** (`insert_header_footer`); Textfeld via Text-Werkzeug.
+8. ✅ **Tabelle** einfügen (`insert_table`, einfaches Raster).
 
-**P3 – Konvertierung (Scope „+ Konvertierung"):**
-9. **DOCX/XLSX/PPTX → PDF** via LibreOffice-Headless (offline-fähig).
-10. **PDF → DOCX** via `pdf2docx`.
-11. „Herunterladen als"-Menü im Datei-Tab, das diese Pfade bündelt.
+**P3 – Konvertierung (Scope „+ Konvertierung") — ✅ abgeschlossen:**
+9. ✅ **DOCX/XLSX/PPTX → PDF** via LibreOffice-Headless (`import_office_as_pdf`).
+10. ✅ **PDF → DOCX** via `pdf2docx` (bevorzugt) bzw. LibreOffice (`export_as_office`).
+11. ✅ Datei-Menü-Einträge „Office-Dokument öffnen (→ PDF)" und „Herunterladen als Word (DOCX)".
 
-**P4 – Ansicht/Navigation:**
-12. **Outline-/Lesezeichen-Navigation** (TOC-Panel aus PDF-Bookmarks).
-13. **Fortlaufende mehrseitige Ansicht**, getrennte Modi „An Seite/An Breite".
+> ⚠️ **Setup:** Für die Konvertierung muss **LibreOffice** (`soffice`/`libreoffice`) installiert oder im Build gebündelt sein. Optional `pip install pdf2docx` für bessere PDF→DOCX-Textwiedergabe. Konnte in der CI-/Remote-Umgebung nicht end-to-end getestet werden (dortige LibreOffice-Installation defekt) — bitte lokal verifizieren.
+
+**P4 – Ansicht/Navigation — ✅ überwiegend abgeschlossen:**
+12. ✅ **Outline-/Lesezeichen-Navigation** (Panel links, `_refresh_outline`).
+13. ✅ Getrennte Modi **„An Breite" / „An Seite"** (`fit_to_width`/`fit_to_page`).
+    ❌ **Fortlaufende mehrseitige Ansicht** bewusst zurückgestellt: würde das Annotations-/Klick-Koordinatensystem (heute streng Einzelseite) brechen – separater, größerer Umbau.
 
 **Außer Scope (nicht umsetzen):** KI-Funktionen, Echtzeit-Kollaboration/Versionsverlauf, eingebauter Chat/Telegram.
 

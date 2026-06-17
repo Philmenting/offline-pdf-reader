@@ -34,6 +34,13 @@ Install Tesseract (required for OCR):
 - macOS (brew): `brew install tesseract`
 - Windows: install Tesseract and ensure `tesseract.exe` is in PATH.
 
+Optional – Office↔PDF conversion (Datei → „Office-Dokument öffnen" / „Herunterladen als Word"):
+- Requires **LibreOffice** (`soffice`/`libreoffice`) installed or bundled.
+  - Ubuntu/Debian: `sudo apt install libreoffice`
+  - macOS (brew): `brew install --cask libreoffice`
+  - Windows: install LibreOffice (the app auto-detects the default install path).
+- For higher-quality PDF→DOCX text flow, optionally `pip install pdf2docx`.
+
 ## Run
 ```bash
 python app.py

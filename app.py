@@ -1,10 +1,13 @@
 import csv
 import io
 import json
+import math
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -21,6 +24,8 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -1191,6 +1196,28 @@ class MainWindow(QMainWindow):
         thumb_header_layout.addWidget(self.thumb_title_label)
         thumb_header_layout.addWidget(self.thumb_meta_label)
         thumb_panel_layout.addWidget(thumb_header)
+
+        # ── Lesezeichen / Inhaltsverzeichnis (PDF-Outline) ────────────────
+        self.outline_card = QWidget()
+        self.outline_card.setProperty("role", "sectioncard")
+        outline_layout = QVBoxLayout(self.outline_card)
+        outline_layout.setContentsMargins(10, 10, 10, 10)
+        outline_layout.setSpacing(4)
+        outline_title = QLabel("Lesezeichen")
+        outline_title.setProperty("role", "cardtitle")
+        outline_layout.addWidget(outline_title)
+        self.outline_list = QListWidget()
+        self.outline_list.setMaximumHeight(180)
+        self.outline_list.setAccessibleName("Lesezeichen-Navigation")
+        self.outline_list.setAccessibleDescription("Inhaltsverzeichnis / Lesezeichen des PDFs zum Anspringen")
+        self.outline_list.itemClicked.connect(self._on_outline_item_clicked)
+        outline_layout.addWidget(self.outline_list)
+        self.outline_empty_label = QLabel("Keine Lesezeichen im Dokument.")
+        self.outline_empty_label.setProperty("role", "panelsubtitle")
+        self.outline_empty_label.setWordWrap(True)
+        outline_layout.addWidget(self.outline_empty_label)
+        thumb_panel_layout.addWidget(self.outline_card)
+
         thumb_panel_layout.addWidget(self.thumb_list, 1)
 
         self.preview.setAccessibleName("PDF-Seitenvorschau")
@@ -1312,6 +1339,27 @@ class MainWindow(QMainWindow):
                 painter.setFont(font)
                 painter.drawRoundedRect(3, 4, 14, 12, 2, 2)
                 painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "Aa")
+            elif kind == "text-edit":
+                painter.drawLine(3, 6, 13, 6)
+                painter.drawLine(3, 10, 11, 10)
+                painter.drawLine(3, 14, 9, 14)
+                # kleiner Stift oben rechts
+                painter.drawLine(13, 13, 17, 9)
+                painter.drawLine(13, 13, 14, 16)
+            elif kind == "ellipse":
+                painter.drawEllipse(3, 5, 14, 10)
+            elif kind == "star":
+                pts = []
+                cx, cy = 10.0, 10.0
+                for i in range(10):
+                    ang = -math.pi / 2 + i * math.pi / 5
+                    r = 8.0 if i % 2 == 0 else 3.2
+                    pts.append(QPointF(cx + r * math.cos(ang), cy + r * math.sin(ang)))
+                painter.drawPolygon(pts)
+            elif kind == "link":
+                painter.drawArc(3, 7, 9, 6, 30 * 16, 180 * 16)
+                painter.drawArc(8, 7, 9, 6, 210 * 16, 180 * 16)
+                painter.drawLine(8, 10, 12, 10)
 
             painter.end()
             return QIcon(pix)
@@ -1426,6 +1474,9 @@ class MainWindow(QMainWindow):
         btn_form_fields  = _tool_btn("Form",              "Formularfelder auf der aktuellen Seite bearbeiten")
         btn_add_text     = _action_btn("Text",            "Text auf PDF hinzufügen")
         btn_add_rect     = _action_btn("Rechteck",        "Rechteck auf PDF hinzufügen")
+        btn_add_ellipse  = _action_btn("Ellipse",         "Ellipse / Kreis auf PDF hinzufügen")
+        btn_add_star     = _action_btn("Stern",           "Stern-Form auf PDF hinzufügen")
+        btn_add_link     = _action_btn("Hyperlink",       "Klickbaren Web-Link auf PDF einfügen")
         btn_add_highlight = _action_btn("Marker",         "Markierung auf PDF hinzufügen")
         btn_add_strikeout = _action_btn("Durchstreichen", "Text durchstreichen")
         btn_add_underline = _action_btn("Unterstreichen", "Text unterstreichen")
@@ -1436,6 +1487,7 @@ class MainWindow(QMainWindow):
         btn_add_note     = _action_btn("Notiz",           "Haftnotiz / Kommentar einfügen")
         btn_add_freehand = _action_btn("Freihand",        "Freihand-Markierung zeichnen")
         btn_replace_text = _action_btn("Text ersetzen",   "Bereich schwärzen und durch neuen Text ersetzen")
+        btn_edit_text    = _action_btn("Text bearbeiten", "Vorhandenen Textabschnitt anklicken und direkt im Block bearbeiten")
         btn_reorder      = _tool_btn("Sortieren",         "Seiten neu anordnen")
         btn_remove_empty = _tool_btn("Leer",              "Leere Seiten entfernen")
         btn_search       = _icon_btn("🔍",                 "Suche starten (Ctrl+F)")
@@ -1468,6 +1520,9 @@ class MainWindow(QMainWindow):
         btn_remove_empty.setIcon(_make_toolbar_icon("remove-empty"))
         btn_add_text.setIcon(_make_annotation_icon("text"))
         btn_add_rect.setIcon(_make_annotation_icon("rect"))
+        btn_add_ellipse.setIcon(_make_annotation_icon("ellipse"))
+        btn_add_star.setIcon(_make_annotation_icon("star"))
+        btn_add_link.setIcon(_make_annotation_icon("link"))
         btn_add_highlight.setIcon(_make_annotation_icon("highlight"))
         btn_add_strikeout.setIcon(_make_annotation_icon("strikeout"))
         btn_add_underline.setIcon(_make_annotation_icon("underline"))
@@ -1478,6 +1533,7 @@ class MainWindow(QMainWindow):
         btn_add_note.setIcon(_make_annotation_icon("note"))
         btn_add_freehand.setIcon(_make_annotation_icon("freehand"))
         btn_replace_text.setIcon(_make_annotation_icon("text-replace"))
+        btn_edit_text.setIcon(_make_annotation_icon("text-edit"))
 
         self.search_counter = QLabel("0 / 0")
         self.search_counter.setAccessibleName("Suchtreffer-Zähler")
@@ -1567,6 +1623,9 @@ class MainWindow(QMainWindow):
         btn_form_fields.setAccessibleName("Formularfelder bearbeiten")
         btn_add_text.setAccessibleName("Text auf PDF hinzufügen")
         btn_add_rect.setAccessibleName("Rechteck auf PDF hinzufügen")
+        btn_add_ellipse.setAccessibleName("Ellipse auf PDF hinzufügen")
+        btn_add_star.setAccessibleName("Stern auf PDF hinzufügen")
+        btn_add_link.setAccessibleName("Hyperlink auf PDF einfügen")
         btn_add_highlight.setAccessibleName("Markierung auf PDF hinzufügen")
         btn_add_strikeout.setAccessibleName("Text im PDF durchstreichen")
         btn_add_underline.setAccessibleName("Text im PDF unterstreichen")
@@ -1577,6 +1636,7 @@ class MainWindow(QMainWindow):
         btn_add_note.setAccessibleName("Notiz auf PDF hinzufügen")
         btn_add_freehand.setAccessibleName("Freihand auf PDF zeichnen")
         btn_replace_text.setAccessibleName("Text im PDF ersetzen")
+        btn_edit_text.setAccessibleName("Vorhandenen Text im PDF bearbeiten")
         btn_reorder.setAccessibleName("Seiten sortieren")
         btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
 
@@ -1593,6 +1653,9 @@ class MainWindow(QMainWindow):
         btn_form_fields.clicked.connect(self.edit_form_fields_on_current_page)
         btn_add_text.clicked.connect(self.add_text_annotation)
         btn_add_rect.clicked.connect(self.add_rectangle_annotation)
+        btn_add_ellipse.clicked.connect(self.add_ellipse_annotation)
+        btn_add_star.clicked.connect(self.add_star_annotation)
+        btn_add_link.clicked.connect(self.add_link_annotation)
         btn_add_highlight.clicked.connect(self.add_highlight_annotation)
         btn_add_strikeout.clicked.connect(self.add_strikeout_annotation)
         btn_add_underline.clicked.connect(self.add_underline_annotation)
@@ -1603,6 +1666,7 @@ class MainWindow(QMainWindow):
         btn_add_note.clicked.connect(self.add_note_annotation)
         btn_add_freehand.clicked.connect(self.add_freehand_annotation)
         btn_replace_text.clicked.connect(self.replace_text_annotation)
+        btn_edit_text.clicked.connect(self.edit_text_tool)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
         btn_search.clicked.connect(self.open_search_and_run)
@@ -1618,6 +1682,9 @@ class MainWindow(QMainWindow):
         self.annotation_tool_buttons: dict[str, QPushButton] = {
             "text": btn_add_text,
             "rect": btn_add_rect,
+            "ellipse": btn_add_ellipse,
+            "star": btn_add_star,
+            "link": btn_add_link,
             "highlight": btn_add_highlight,
             "strikeout": btn_add_strikeout,
             "underline": btn_add_underline,
@@ -1628,6 +1695,7 @@ class MainWindow(QMainWindow):
             "note": btn_add_note,
             "freehand": btn_add_freehand,
             "text-replace": btn_replace_text,
+            "text-edit": btn_edit_text,
         }
 
         self.annotation_panel = QWidget()
@@ -1658,16 +1726,20 @@ class MainWindow(QMainWindow):
         tool_grid.setVerticalSpacing(8)
         tool_grid.addWidget(btn_add_text, 0, 0)
         tool_grid.addWidget(btn_add_rect, 0, 1)
-        tool_grid.addWidget(btn_add_highlight, 1, 0)
-        tool_grid.addWidget(btn_add_strikeout, 1, 1)
-        tool_grid.addWidget(btn_add_underline, 2, 0)
-        tool_grid.addWidget(btn_add_line, 2, 1)
-        tool_grid.addWidget(btn_add_arrow, 3, 0)
-        tool_grid.addWidget(btn_add_image, 3, 1)
-        tool_grid.addWidget(btn_add_redact, 4, 0)
-        tool_grid.addWidget(btn_add_note, 4, 1)
-        tool_grid.addWidget(btn_add_freehand, 5, 0)
-        tool_grid.addWidget(btn_replace_text, 5, 1)
+        tool_grid.addWidget(btn_add_ellipse, 1, 0)
+        tool_grid.addWidget(btn_add_line, 1, 1)
+        tool_grid.addWidget(btn_add_arrow, 2, 0)
+        tool_grid.addWidget(btn_add_freehand, 2, 1)
+        tool_grid.addWidget(btn_add_highlight, 3, 0)
+        tool_grid.addWidget(btn_add_strikeout, 3, 1)
+        tool_grid.addWidget(btn_add_underline, 4, 0)
+        tool_grid.addWidget(btn_add_link, 4, 1)
+        tool_grid.addWidget(btn_add_image, 5, 0)
+        tool_grid.addWidget(btn_add_note, 5, 1)
+        tool_grid.addWidget(btn_add_redact, 6, 0)
+        tool_grid.addWidget(btn_replace_text, 6, 1)
+        tool_grid.addWidget(btn_edit_text, 7, 0)
+        tool_grid.addWidget(btn_add_star, 7, 1)
         tool_card_layout.addLayout(tool_grid)
         annotation_layout.addWidget(tool_card)
 
@@ -1749,6 +1821,24 @@ class MainWindow(QMainWindow):
         size_grid.addWidget(self.annotation_line_width_spin, 3, 1)
         properties_layout.addLayout(size_grid)
 
+        self.annotation_font_family_label = QLabel("Schriftart")
+        self.annotation_font_family_label.setProperty("role", "fieldlabel")
+        properties_layout.addWidget(self.annotation_font_family_label)
+        self.annotation_font_family_combo = QComboBox()
+        # Base-14-Fonts, die PyMuPDF ohne externe Schriftdatei einbetten kann.
+        for label in ("Helvetica", "Times", "Courier"):
+            self.annotation_font_family_combo.addItem(label)
+        properties_layout.addWidget(self.annotation_font_family_combo)
+
+        self.annotation_font_style_row = QHBoxLayout()
+        self.annotation_font_style_row.setSpacing(6)
+        self.annotation_bold_check = QCheckBox("Fett")
+        self.annotation_italic_check = QCheckBox("Kursiv")
+        self.annotation_font_style_row.addWidget(self.annotation_bold_check)
+        self.annotation_font_style_row.addWidget(self.annotation_italic_check)
+        self.annotation_font_style_row.addStretch(1)
+        properties_layout.addLayout(self.annotation_font_style_row)
+
         self.annotation_color_label = QLabel("Farbe")
         self.annotation_color_label.setProperty("role", "fieldlabel")
         properties_layout.addWidget(self.annotation_color_label)
@@ -1805,6 +1895,34 @@ class MainWindow(QMainWindow):
         self.btn_apply_redactions = _action_btn("Schwärzungen final anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
         self.btn_apply_redactions.clicked.connect(self.apply_pending_redactions)
         annotation_layout.addWidget(self.btn_apply_redactions)
+
+        # ── Kommentare / Annotationsübersicht ─────────────────────────────
+        self.comment_card = QWidget()
+        self.comment_card.setProperty("role", "panelcard")
+        comment_layout = QVBoxLayout(self.comment_card)
+        comment_layout.setContentsMargins(12, 12, 12, 12)
+        comment_layout.setSpacing(8)
+        comment_title = QLabel("Kommentare")
+        comment_title.setProperty("role", "cardtitle")
+        comment_layout.addWidget(comment_title)
+        comment_hint = QLabel("Alle Annotationen des Dokuments – anklicken zum Anspringen.")
+        comment_hint.setWordWrap(True)
+        comment_hint.setProperty("role", "panelsubtitle")
+        comment_layout.addWidget(comment_hint)
+        self.comment_list = QListWidget()
+        self.comment_list.setMinimumHeight(120)
+        self.comment_list.itemClicked.connect(self._on_comment_item_clicked)
+        comment_layout.addWidget(self.comment_list)
+        comment_btn_row = QHBoxLayout()
+        comment_btn_row.setSpacing(6)
+        self.btn_toggle_resolved = _action_btn("Erledigt umschalten", "Ausgewählten Kommentar als erledigt markieren / wieder öffnen")
+        self.btn_toggle_resolved.clicked.connect(self.toggle_selected_comment_resolved)
+        self.btn_refresh_comments = _action_btn("Aktualisieren", "Kommentarliste neu aufbauen")
+        self.btn_refresh_comments.clicked.connect(self._refresh_comment_list)
+        comment_btn_row.addWidget(self.btn_toggle_resolved)
+        comment_btn_row.addWidget(self.btn_refresh_comments)
+        comment_layout.addLayout(comment_btn_row)
+        annotation_layout.addWidget(self.comment_card)
 
         # ── Inline-Textbearbeitung ────────────────────────────────────────
         self.inline_edit_card = QWidget()
@@ -1963,6 +2081,10 @@ class MainWindow(QMainWindow):
         act_close_pdf.triggered.connect(self.close_pdf)
         menu_file.addAction(act_close_pdf)
 
+        act_import_office = QAction("Office-Dokument öffnen (→ PDF) …", self)
+        act_import_office.triggered.connect(self.import_office_as_pdf)
+        menu_file.addAction(act_import_office)
+
         menu_file.addSeparator()
 
         act_save = QAction("Speichern", self)
@@ -1974,6 +2096,10 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut("Ctrl+Shift+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
+
+        act_export_docx = QAction("Herunterladen als Word (DOCX) …", self)
+        act_export_docx.triggered.connect(self.export_as_office)
+        menu_file.addAction(act_export_docx)
 
         act_print = QAction("Drucken …", self)
         act_print.setShortcut("Ctrl+P")
@@ -2015,6 +2141,22 @@ class MainWindow(QMainWindow):
         act_redo.setShortcuts(["Ctrl+Y", "Ctrl+Shift+Z"])
         act_redo.triggered.connect(self.redo_last_change)
         menu_file.addAction(act_redo)
+
+        menu_view = self.menuBar().addMenu("Ansicht")
+        act_fit_width = QAction("An Breite anpassen", self)
+        act_fit_width.setShortcut("Ctrl+Shift+W")
+        act_fit_width.triggered.connect(self.fit_to_width)
+        menu_view.addAction(act_fit_width)
+
+        act_fit_page = QAction("An Seite anpassen", self)
+        act_fit_page.setShortcut("Ctrl+Shift+P")
+        act_fit_page.triggered.connect(self.fit_to_page)
+        menu_view.addAction(act_fit_page)
+
+        act_zoom_reset_menu = QAction("Zoom zurücksetzen (100 %)", self)
+        act_zoom_reset_menu.setShortcut("Ctrl+0")
+        act_zoom_reset_menu.triggered.connect(self.reset_zoom)
+        menu_view.addAction(act_zoom_reset_menu)
 
         menu_ocr = self.menuBar().addMenu("OCR und Text")
         act_extract_current = QAction("Text auf aktueller Seite erkennen", self)
@@ -2092,9 +2234,33 @@ class MainWindow(QMainWindow):
         act_add_text.triggered.connect(self.add_text_annotation)
         menu_tools.addAction(act_add_text)
 
+        act_edit_text = QAction("Vorhandenen Text bearbeiten …", self)
+        act_edit_text.triggered.connect(self.edit_text_tool)
+        menu_tools.addAction(act_edit_text)
+
         act_add_rect = QAction("Rechteck hinzufügen …", self)
         act_add_rect.triggered.connect(self.add_rectangle_annotation)
         menu_tools.addAction(act_add_rect)
+
+        act_add_ellipse = QAction("Ellipse / Kreis hinzufügen …", self)
+        act_add_ellipse.triggered.connect(self.add_ellipse_annotation)
+        menu_tools.addAction(act_add_ellipse)
+
+        act_add_star = QAction("Stern hinzufügen …", self)
+        act_add_star.triggered.connect(self.add_star_annotation)
+        menu_tools.addAction(act_add_star)
+
+        act_insert_symbol = QAction("Symbol / Sonderzeichen einfügen …", self)
+        act_insert_symbol.triggered.connect(self.insert_symbol)
+        menu_tools.addAction(act_insert_symbol)
+
+        act_insert_textart = QAction("TextArt (stilisierter Text) einfügen …", self)
+        act_insert_textart.triggered.connect(self.insert_textart)
+        menu_tools.addAction(act_insert_textart)
+
+        act_add_link = QAction("Hyperlink einfügen …", self)
+        act_add_link.triggered.connect(self.add_link_annotation)
+        menu_tools.addAction(act_add_link)
 
         act_add_highlight = QAction("Markierung hinzufügen …", self)
         act_add_highlight.triggered.connect(self.add_highlight_annotation)
@@ -2167,6 +2333,14 @@ class MainWindow(QMainWindow):
         act_add_page_numbers.triggered.connect(self.insert_page_numbers)
         menu_tools.addAction(act_add_page_numbers)
 
+        act_add_header_footer = QAction("Kopf-/Fußzeile einfügen …", self)
+        act_add_header_footer.triggered.connect(self.insert_header_footer)
+        menu_tools.addAction(act_add_header_footer)
+
+        act_insert_table = QAction("Tabelle einfügen …", self)
+        act_insert_table.triggered.connect(self.insert_table)
+        menu_tools.addAction(act_insert_table)
+
         act_add_watermark = QAction("Wasserzeichen einfügen …", self)
         act_add_watermark.triggered.connect(self.add_text_watermark)
         menu_tools.addAction(act_add_watermark)
@@ -2213,11 +2387,16 @@ class MainWindow(QMainWindow):
         all_actions = [
             act_open,
             act_close_pdf,
+            act_import_office,
+            act_export_docx,
             act_save,
             act_save_as,
             act_print,
             act_undo,
             act_redo,
+            act_fit_width,
+            act_fit_page,
+            act_zoom_reset_menu,
             act_extract_current,
             act_extract,
             act_retry_failed_ocr,
@@ -2234,7 +2413,13 @@ class MainWindow(QMainWindow):
             act_reorder,
             act_crop,
             act_add_text,
+            act_edit_text,
             act_add_rect,
+            act_add_ellipse,
+            act_add_star,
+            act_insert_symbol,
+            act_insert_textart,
+            act_add_link,
             act_add_highlight,
             act_add_strikeout,
             act_add_underline,
@@ -2898,6 +3083,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage("Annotation gelöscht")
         except Exception as e:
@@ -2934,6 +3120,7 @@ class MainWindow(QMainWindow):
             annot.update()
             self._set_dirty(True)
             self._update_selected_annotation_ui()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage("Annotation-Kommentar aktualisiert")
         except Exception as e:
@@ -4232,6 +4419,8 @@ class MainWindow(QMainWindow):
         self._update_thumbnail_meta()
         self._set_dirty(False)
         self._update_undo_redo_buttons()
+        self._refresh_comment_list()
+        self._refresh_outline()
         self.statusBar().showMessage("PDF geschlossen.")
 
     def closeEvent(self, event) -> None:
@@ -4305,6 +4494,8 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         self._update_thumbnail_meta()
         self._update_undo_redo_buttons()
+        self._refresh_comment_list()
+        self._refresh_outline()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
 
     def open_pdf(self) -> None:
@@ -4757,6 +4948,41 @@ class MainWindow(QMainWindow):
         if not self.doc:
             return
         self.zoom_factor = 1.0
+        self.render_current_page()
+
+    def _current_page_view_size(self) -> tuple[float, float] | None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return None
+        page = self.doc[self.current_page]
+        width = float(page.rect.width)
+        height = float(page.rect.height)
+        if self.page_rotations.get(self.current_page, 0) % 360 in (90, 270):
+            width, height = height, width
+        if width <= 0 or height <= 0:
+            return None
+        return width, height
+
+    def fit_to_width(self) -> None:
+        size = self._current_page_view_size()
+        if size is None:
+            return
+        width, _ = size
+        avail = self.preview_scroll.viewport().width() - 28
+        if avail <= 0:
+            return
+        self.zoom_factor = max(0.1, min(6.0, avail / width))
+        self.render_current_page()
+
+    def fit_to_page(self) -> None:
+        size = self._current_page_view_size()
+        if size is None:
+            return
+        width, height = size
+        avail_w = self.preview_scroll.viewport().width() - 28
+        avail_h = self.preview_scroll.viewport().height() - 28
+        if avail_w <= 0 or avail_h <= 0:
+            return
+        self.zoom_factor = max(0.1, min(6.0, min(avail_w / width, avail_h / height)))
         self.render_current_page()
 
     def rotate_left(self) -> None:
@@ -5513,6 +5739,188 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
 
+    @staticmethod
+    def _find_soffice() -> str | None:
+        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung)."""
+        for name in ("soffice", "libreoffice"):
+            found = shutil.which(name)
+            if found:
+                return found
+        # Häufige feste Pfade (inkl. gebündelter Installationen).
+        candidates = [
+            "/usr/bin/soffice",
+            "/usr/lib/libreoffice/program/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ]
+        for path in candidates:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _run_soffice_convert(self, soffice: str, src: Path, out_dir: Path, convert_to: str) -> Path:
+        """Konvertiert eine Datei via LibreOffice-Headless und gibt den Zielpfad zurück.
+
+        `convert_to` ist das LibreOffice-Filterziel, z. B. "pdf" oder
+        "docx:MS Word 2007 XML". Wirft bei Fehlschlag eine Exception.
+        """
+        target_ext = convert_to.split(":", 1)[0]
+        # Eigenes, isoliertes Benutzerprofil pro Aufruf: verhindert das
+        # "Profil gesperrt"-Problem, falls auf dem Zielrechner bereits eine
+        # LibreOffice-Instanz läuft.
+        with tempfile.TemporaryDirectory() as profile_dir:
+            profile_uri = Path(profile_dir).as_uri()
+            cmd = [
+                soffice,
+                f"-env:UserInstallation={profile_uri}",
+                "--headless",
+                "--norestore",
+                "--convert-to",
+                convert_to,
+                "--outdir",
+                str(out_dir),
+                str(src),
+            ]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Konvertierung hat das Zeitlimit überschritten (180 s).")
+        out_path = out_dir / f"{src.stem}.{target_ext}"
+        if not out_path.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"LibreOffice hat keine Ausgabedatei erzeugt.\n{detail}")
+        return out_path
+
+    def import_office_as_pdf(self) -> None:
+        """Öffnet ein Office-Dokument (DOCX/XLSX/PPTX/ODT …) als PDF.
+
+        Konvertiert offline via LibreOffice-Headless und lädt das Ergebnis.
+        """
+        soffice = self._find_soffice()
+        if not soffice:
+            QMessageBox.warning(
+                self,
+                "LibreOffice nicht gefunden",
+                "Für die Office-Konvertierung wird LibreOffice (soffice) benötigt.\n"
+                "Bitte LibreOffice installieren oder im Build bündeln.",
+            )
+            return
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Office-Dokument öffnen",
+            "",
+            "Office-Dokumente (*.docx *.doc *.odt *.rtf *.xlsx *.xls *.ods *.pptx *.ppt *.odp);;Alle Dateien (*.*)",
+        )
+        if not file_name:
+            return
+        src = Path(file_name)
+        out_pdf = src.with_suffix(".pdf")
+        try:
+            if out_pdf.exists():
+                answer = QMessageBox.question(
+                    self,
+                    "Datei existiert",
+                    f"{out_pdf.name} existiert bereits. Überschreiben?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self.statusBar().showMessage(f"Konvertiere {src.name} → PDF …")
+            QApplication.processEvents()
+            produced = self._run_soffice_convert(soffice, src, src.parent, "pdf")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konvertierung fehlgeschlagen:\n{e}")
+            return
+        self._open_pdf_path(str(produced))
+        self.statusBar().showMessage(f"Office-Dokument als PDF geöffnet: {produced.name}")
+
+    def export_as_office(self) -> None:
+        """Exportiert das aktuelle PDF als bearbeitbares Word-Dokument (DOCX).
+
+        Bevorzugt `pdf2docx` (bessere Textwiedergabe), sonst LibreOffice.
+        """
+        if not self.doc or len(self.doc) == 0:
+            QMessageBox.information(self, "Hinweis", "Kein PDF geladen.")
+            return
+        default_name = (self.pdf_path.with_suffix(".docx").name if self.pdf_path else "dokument.docx")
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Als Word-Dokument exportieren",
+            default_name,
+            "Word-Dokument (*.docx)",
+        )
+        if not out_path:
+            return
+        out_path = str(Path(out_path).with_suffix(".docx"))
+
+        # Aktuellen (ggf. geänderten) Stand in eine temporäre PDF schreiben.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_pdf = Path(tmp) / "source.pdf"
+            try:
+                work = fitz.open()
+                try:
+                    work.insert_pdf(self.doc)
+                    for idx, rot in self.page_rotations.items():
+                        if 0 <= idx < len(work) and rot % 360 != 0:
+                            work[idx].set_rotation(rot % 360)
+                    work.save(str(tmp_pdf))
+                finally:
+                    work.close()
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"Zwischen-PDF konnte nicht erstellt werden:\n{e}")
+                return
+
+            self.statusBar().showMessage("Exportiere nach DOCX …")
+            QApplication.processEvents()
+
+            # 1) pdf2docx (falls verfügbar) – beste Textwiedergabe.
+            try:
+                from pdf2docx import Converter  # type: ignore[import-not-found]
+
+                cv = Converter(str(tmp_pdf))
+                try:
+                    cv.convert(out_path)
+                finally:
+                    cv.close()
+                self.statusBar().showMessage(f"Als DOCX exportiert (pdf2docx): {Path(out_path).name}")
+                QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
+                return
+            except ImportError:
+                pass
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Hinweis",
+                    f"pdf2docx-Konvertierung fehlgeschlagen, versuche LibreOffice …\n{e}",
+                )
+
+            # 2) Fallback: LibreOffice-Headless.
+            soffice = self._find_soffice()
+            if not soffice:
+                QMessageBox.warning(
+                    self,
+                    "Konvertierung nicht möglich",
+                    "Weder pdf2docx noch LibreOffice verfügbar.\n"
+                    "Bitte `pip install pdf2docx` ausführen oder LibreOffice installieren.",
+                )
+                return
+            try:
+                produced = self._run_soffice_convert(
+                    soffice, tmp_pdf, Path(tmp), "docx:MS Word 2007 XML"
+                )
+                shutil.move(str(produced), out_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"DOCX-Export fehlgeschlagen:\n{e}")
+                return
+        self.statusBar().showMessage(f"Als DOCX exportiert (LibreOffice): {Path(out_path).name}")
+        QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
+
     def print_document(self) -> None:
         """Druckt das aktuelle PDF über den System-Druckdialog.
 
@@ -6204,6 +6612,99 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Seitennummern auf {len(page_indices)} Seite(n) eingefügt")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Seitennummern konnten nicht eingefügt werden:\n{e}")
+
+    def insert_header_footer(self) -> None:
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        text, ok = QInputDialog.getText(self, "Kopf-/Fußzeile", "Text:")
+        if not ok or not text.strip():
+            return
+        text = text.strip()
+        position, ok = QInputDialog.getItem(
+            self,
+            "Position",
+            "Wo soll der Text erscheinen?",
+            [
+                "Kopfzeile links", "Kopfzeile mittig", "Kopfzeile rechts",
+                "Fußzeile links", "Fußzeile mittig", "Fußzeile rechts",
+            ],
+            1,
+            False,
+        )
+        if not ok:
+            return
+        page_spec, ok = QInputDialog.getText(
+            self,
+            "Seitenbereich",
+            "Auf welchen Seiten? (z.B. all, 1-3, current)",
+            text="all",
+        )
+        if not ok or not page_spec.strip():
+            return
+        page_indices = self._parse_page_spec(page_spec, len(self.doc))
+        if not page_indices:
+            QMessageBox.warning(self, "Ungültig", "Kein gültiger Seitenbereich erkannt.")
+            return
+        font_size = 10
+        color = (80 / 255.0, 80 / 255.0, 80 / 255.0)
+        is_header = position.startswith("Kopfzeile")
+        align = 0 if position.endswith("links") else (1 if position.endswith("mittig") else 2)
+        try:
+            self._push_undo_state()
+            for idx in page_indices:
+                page = self.doc[idx]
+                rect = page.rect
+                margin = 18
+                box_height = font_size + 8
+                if is_header:
+                    box = fitz.Rect(margin, margin, rect.width - margin, margin + box_height)
+                else:
+                    box = fitz.Rect(margin, rect.height - box_height - margin, rect.width - margin, rect.height - margin)
+                rc = page.insert_textbox(box, text, fontsize=font_size, color=color, align=align)
+                if rc < 0:
+                    raise ValueError(f"Text passt auf Seite {idx + 1} nicht in den Zielbereich.")
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"{'Kopfzeile' if is_header else 'Fußzeile'} auf {len(page_indices)} Seite(n) eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Kopf-/Fußzeile konnte nicht eingefügt werden:\n{e}")
+
+    def insert_table(self) -> None:
+        page = self._require_current_pdf_page()
+        if page is None:
+            return
+        rows, ok = QInputDialog.getInt(self, "Tabelle einfügen", "Anzahl Zeilen:", 3, 1, 100, 1)
+        if not ok:
+            return
+        cols, ok = QInputDialog.getInt(self, "Tabelle einfügen", "Anzahl Spalten:", 3, 1, 50, 1)
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            rect = page.rect
+            # Zentrierter Bereich: 80 % Breite, ab 25 % Höhe, max. 50 % Höhe.
+            left = rect.width * 0.10
+            right = rect.width * 0.90
+            top = rect.height * 0.25
+            row_height = min(28.0, (rect.height * 0.5) / rows)
+            bottom = top + row_height * rows
+            col_width = (right - left) / cols
+            line_color = (0.2, 0.2, 0.2)
+            line_width = 1.0
+            for r in range(rows + 1):
+                y = top + r * row_height
+                page.draw_line(fitz.Point(left, y), fitz.Point(right, y), color=line_color, width=line_width)
+            for c in range(cols + 1):
+                x = left + c * col_width
+                page.draw_line(fitz.Point(x, top), fitz.Point(x, bottom), color=line_color, width=line_width)
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self.statusBar().showMessage(f"Tabelle {rows}×{cols} auf Seite {self.current_page + 1} eingefügt")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Tabelle konnte nicht eingefügt werden:\n{e}")
 
     def add_text_watermark(self) -> None:
         if not self.doc:
@@ -6978,6 +7479,73 @@ class MainWindow(QMainWindow):
     def add_rectangle_annotation(self) -> None:
         self.select_annotation_tool("rect", activate=True)
 
+    def add_ellipse_annotation(self) -> None:
+        self.select_annotation_tool("ellipse", activate=True)
+
+    def add_star_annotation(self) -> None:
+        self.select_annotation_tool("star", activate=True)
+
+    def insert_symbol(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        symbols = [
+            "©", "®", "™", "§", "¶", "†", "‡", "•", "–", "—",
+            "€", "£", "¥", "°", "±", "×", "÷",
+            "→", "←", "↑", "↓", "⇒", "⇐",
+            "✓", "✗", "★", "☆", "☑", "☐", "●",
+        ]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Symbol einfügen",
+            "Symbol wählen (oder eigenes eingeben):",
+            symbols,
+            0,
+            True,
+        )
+        if not ok or not choice:
+            return
+        self.annotation_tool_kind = "text"
+        self._set_annotation_defaults("text")
+        self._sync_annotation_tool_buttons()
+        self._begin_pending_annotation(
+            {"kind": "text", "text": choice, "font_size": 24, "fontname": "helv", "color": (0.0, 0.0, 0.0)},
+            f"Symbol '{choice}' – ziehe in der Vorschau den Platzierungsbereich auf.",
+        )
+
+    def insert_textart(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        text, ok = QInputDialog.getText(self, "TextArt einfügen", "Text:")
+        if not ok or not text.strip():
+            return
+        text = text.strip()
+        styles = {
+            "Rot, fett": ((0.86, 0.08, 0.24), "hebo"),
+            "Blau, fett": ((0.0, 0.40, 0.80), "hebo"),
+            "Grün, fett": ((0.0, 0.55, 0.30), "hebo"),
+            "Violett, fett": ((0.50, 0.10, 0.60), "hebo"),
+            "Schwarz, fett": ((0.0, 0.0, 0.0), "hebo"),
+        }
+        style_choice, ok = QInputDialog.getItem(
+            self, "TextArt-Stil", "Farbe / Stil:", list(styles.keys()), 0, False
+        )
+        if not ok:
+            return
+        size, ok = QInputDialog.getInt(self, "Schriftgröße", "Größe in pt:", 40, 12, 200, 2)
+        if not ok:
+            return
+        color, fontcode = styles[style_choice]
+        self.annotation_tool_kind = "text"
+        self._set_annotation_defaults("text")
+        self._sync_annotation_tool_buttons()
+        self._begin_pending_annotation(
+            {"kind": "text", "text": text, "font_size": size, "fontname": fontcode, "color": color},
+            "TextArt – ziehe in der Vorschau den Platzierungsbereich auf.",
+        )
+
+    def add_link_annotation(self) -> None:
+        self.select_annotation_tool("link", activate=True)
+
     def add_highlight_annotation(self) -> None:
         self.select_annotation_tool("highlight", activate=True)
 
@@ -7007,6 +7575,9 @@ class MainWindow(QMainWindow):
 
     def replace_text_annotation(self) -> None:
         self.select_annotation_tool("text-replace", activate=True)
+
+    def edit_text_tool(self) -> None:
+        self.select_annotation_tool("text-edit", activate=True)
 
     def pick_annotation_image(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
@@ -7518,10 +8089,26 @@ class MainWindow(QMainWindow):
         values = [max(0, min(255, round(channel * 255))) for channel in color]
         return f"#{values[0]:02x}{values[1]:02x}{values[2]:02x}"
 
+    def _resolve_fontname(self) -> str:
+        """Bildet die gewählte Schriftart + Fett/Kursiv auf einen
+        PyMuPDF-Base-14-Fontcode ab (ohne externe Schriftdatei einbettbar)."""
+        family = self.annotation_font_family_combo.currentText()
+        bold = self.annotation_bold_check.isChecked()
+        italic = self.annotation_italic_check.isChecked()
+        table = {
+            "Helvetica": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
+            "Times": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
+            "Courier": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
+        }
+        return table.get(family, table["Helvetica"])[(bold, italic)]
+
     def _set_annotation_defaults(self, kind: str) -> None:
         defaults = {
             "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "ellipse": {"hint": "Ellipse ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "star": {"hint": "Stern aufziehen", "width": 25.0, "height": 25.0, "font": 12, "line": 2.0, "color": (1.0, 180 / 255.0, 0.0)},
+            "link": {"hint": "Linkbereich ziehen", "width": 40.0, "height": 10.0, "font": 12, "line": 1.0, "color": (0.0, 90 / 255.0, 200 / 255.0)},
             "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
             "strikeout": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "underline": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
@@ -7532,6 +8119,7 @@ class MainWindow(QMainWindow):
             "note": {"hint": "Notiz platzieren", "text": "", "width": 30.0, "height": 14.0, "font": 12, "line": 2.0, "color": (255 / 255.0, 235 / 255.0, 59 / 255.0)},
             "freehand": {"hint": "Freihand zeichnen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.5, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "text-replace": {"hint": "Bereich wählen und Text ersetzen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (17 / 255.0, 24 / 255.0, 39 / 255.0)},
+            "text-edit": {"hint": "Auf Textabschnitt klicken", "width": 35.0, "height": 12.0, "font": 12, "line": 1.0, "color": (0.0, 0.0, 0.0)},
         }
         cfg = defaults.get(kind, defaults["text"])
         self.annotation_form_hint.setText(cfg["hint"])
@@ -7546,12 +8134,17 @@ class MainWindow(QMainWindow):
 
     def _update_annotation_form_visibility(self, kind: str) -> None:
         is_text = kind in {"note", "text-replace"}
-        uses_size = kind in {"rect", "highlight", "strikeout", "underline"}
-        uses_line = kind in {"rect", "line", "arrow", "freehand"}
-        uses_color = kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
+        uses_size = kind in {"rect", "ellipse", "star", "link", "highlight", "strikeout", "underline"}
+        uses_line = kind in {"rect", "ellipse", "star", "line", "arrow", "freehand"}
+        uses_color = kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
+        uses_font = kind in {"text", "text-replace"}
         self.annotation_text_label.setVisible(is_text)
         self.annotation_text_input.setVisible(is_text)
+        self.annotation_font_family_label.setVisible(uses_font)
+        self.annotation_font_family_combo.setVisible(uses_font)
+        self.annotation_bold_check.setVisible(uses_font)
+        self.annotation_italic_check.setVisible(uses_font)
         self.annotation_image_label.setVisible(uses_image)
         self.annotation_image_path_label.setVisible(uses_image)
         self.btn_annotation_pick_image.setVisible(uses_image)
@@ -7559,8 +8152,8 @@ class MainWindow(QMainWindow):
         self.annotation_width_spin.setVisible(uses_size)
         self.annotation_height_label.setVisible(uses_size)
         self.annotation_height_spin.setVisible(uses_size)
-        self.annotation_font_label.setVisible(is_text)
-        self.annotation_font_size_spin.setVisible(is_text)
+        self.annotation_font_label.setVisible(is_text or uses_font)
+        self.annotation_font_size_spin.setVisible(is_text or uses_font)
         self.annotation_line_width_label.setVisible(uses_line)
         self.annotation_line_width_spin.setVisible(uses_line)
         self.annotation_color_label.setVisible(uses_color)
@@ -7620,6 +8213,7 @@ class MainWindow(QMainWindow):
                     "kind": "text",
                     "text": "",
                     "font_size": self.annotation_font_size_spin.value(),
+                    "fontname": self._resolve_fontname(),
                     "color": color,
                 },
                 "Textmodus aktiv – ziehe in der Vorschau ein Textfeld auf.",
@@ -7652,22 +8246,55 @@ class MainWindow(QMainWindow):
                     "kind": "text-replace",
                     "text": text,
                     "font_size": self.annotation_font_size_spin.value(),
+                    "fontname": self._resolve_fontname(),
                     "color": color,
                 },
                 "Text-Ersetzen aktiv – ziehe den Bereich auf, der neu gesetzt werden soll.",
             )
             return
 
-        if kind == "rect":
+        if kind in {"rect", "ellipse", "star"}:
+            hints = {
+                "rect": "Rechteckmodus aktiv – in der Vorschau klicken und ziehen.",
+                "ellipse": "Ellipsenmodus aktiv – in der Vorschau klicken und ziehen.",
+                "star": "Sternmodus aktiv – in der Vorschau klicken und ziehen.",
+            }
             self._begin_pending_annotation(
                 {
-                    "kind": "rect",
+                    "kind": kind,
                     "width_pct": self.annotation_width_spin.value(),
                     "height_pct": self.annotation_height_spin.value(),
                     "color": color,
                     "line_width": self.annotation_line_width_spin.value(),
                 },
-                "Rechteckmodus aktiv – in der Vorschau klicken und ziehen.",
+                hints[kind],
+            )
+            return
+
+        if kind == "text-edit":
+            self._begin_pending_annotation(
+                {"kind": "text-edit"},
+                "Text-Bearbeiten aktiv – klicke auf einen vorhandenen Textabschnitt. Mit 'Modus verlassen' beenden.",
+            )
+            return
+
+        if kind == "link":
+            url, ok = QInputDialog.getText(
+                self,
+                "Hyperlink einfügen",
+                "Ziel-URL (z. B. https://example.com):",
+                text="https://",
+            )
+            if not ok or not url.strip() or url.strip() == "https://":
+                return
+            self._begin_pending_annotation(
+                {
+                    "kind": "link",
+                    "uri": url.strip(),
+                    "color": color,
+                    "line_width": self.annotation_line_width_spin.value(),
+                },
+                "Linkmodus aktiv – ziehe den klickbaren Bereich auf.",
             )
             return
 
@@ -7819,6 +8446,143 @@ class MainWindow(QMainWindow):
                 self.inline_edit_card.setVisible(True)
             else:
                 self.inline_edit_card.setVisible(False)
+
+    RESOLVE_TAG = "erledigt"
+
+    _ANNOT_TYPE_LABELS = {
+        "FreeText": "Text",
+        "Text": "Notiz",
+        "Highlight": "Markierung",
+        "StrikeOut": "Durchstreichung",
+        "Underline": "Unterstreichung",
+        "Square": "Rechteck",
+        "Line": "Linie/Pfeil",
+        "Ink": "Freihand",
+        "Redact": "Schwärzung",
+    }
+
+    def _is_annot_resolved(self, annot) -> bool:
+        try:
+            return str((annot.info or {}).get("subject", "")).strip().lower() == self.RESOLVE_TAG
+        except Exception:
+            return False
+
+    def _set_annot_resolved(self, annot, resolved: bool) -> None:
+        subject = self.RESOLVE_TAG if resolved else ""
+        try:
+            annot.set_info(subject=subject)
+        except Exception:
+            try:
+                annot.set_info(info={"subject": subject})
+            except Exception:
+                pass
+        try:
+            annot.update()
+        except Exception:
+            pass
+
+    def _refresh_comment_list(self) -> None:
+        if not hasattr(self, "comment_list"):
+            return
+        self.comment_list.clear()
+        if not self.doc:
+            return
+        for pidx in range(len(self.doc)):
+            try:
+                annots = list(self.doc[pidx].annots() or [])
+            except Exception:
+                continue
+            for annot in annots:
+                subtype = annot.type[1] if isinstance(annot.type, tuple) and len(annot.type) > 1 else "Annotation"
+                label_type = self._ANNOT_TYPE_LABELS.get(subtype, subtype)
+                try:
+                    content = str((annot.info or {}).get("content", "")).strip()
+                except Exception:
+                    content = ""
+                snippet = f": {content[:40]}" if content else ""
+                resolved = self._is_annot_resolved(annot)
+                prefix = "✓ " if resolved else ""
+                item = QListWidgetItem(f"{prefix}S{pidx + 1} · {label_type}{snippet}")
+                item.setData(Qt.ItemDataRole.UserRole, (pidx, getattr(annot, "xref", None)))
+                if resolved:
+                    font = item.font()
+                    font.setStrikeOut(True)
+                    item.setFont(font)
+                    item.setForeground(QColor("#9aa3b2"))
+                self.comment_list.addItem(item)
+
+    def _refresh_outline(self) -> None:
+        if not hasattr(self, "outline_list"):
+            return
+        self.outline_list.clear()
+        toc = []
+        if self.doc:
+            try:
+                toc = self.doc.get_toc() or []
+            except Exception:
+                toc = []
+        has_entries = bool(toc)
+        self.outline_empty_label.setVisible(not has_entries)
+        self.outline_list.setVisible(has_entries)
+        for entry in toc:
+            try:
+                level, title, page = entry[0], entry[1], entry[2]
+            except Exception:
+                continue
+            indent = "    " * max(0, int(level) - 1)
+            item = QListWidgetItem(f"{indent}{title}")
+            item.setData(Qt.ItemDataRole.UserRole, int(page) - 1)
+            self.outline_list.addItem(item)
+
+    def _on_outline_item_clicked(self, item: QListWidgetItem) -> None:
+        page_idx = item.data(Qt.ItemDataRole.UserRole)
+        if page_idx is None or not self.doc:
+            return
+        page_idx = max(0, min(int(page_idx), len(self.doc) - 1))
+        self.current_page = page_idx
+        self.render_current_page()
+        self.statusBar().showMessage(f"Lesezeichen: Seite {page_idx + 1}")
+
+    def _on_comment_item_clicked(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        pidx, xref = data
+        if not self.doc or not (0 <= pidx < len(self.doc)):
+            return
+        self.current_page = pidx
+        self.selected_widget_xref = None
+        self.selected_annotation_xref = xref
+        self.render_current_page()
+        self._update_selected_annotation_ui()
+        self.statusBar().showMessage(f"Kommentar auf Seite {pidx + 1} ausgewählt")
+
+    def toggle_selected_comment_resolved(self) -> None:
+        item = self.comment_list.currentItem() if hasattr(self, "comment_list") else None
+        if item is None:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Kommentar in der Liste auswählen.")
+            return
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        pidx, xref = data
+        if not self.doc or not (0 <= pidx < len(self.doc)) or xref is None:
+            return
+        target = None
+        for annot in self.doc[pidx].annots() or []:
+            if getattr(annot, "xref", None) == xref:
+                target = annot
+                break
+        if target is None:
+            self._refresh_comment_list()
+            return
+        self._push_undo_state()
+        new_state = not self._is_annot_resolved(target)
+        self._set_annot_resolved(target, new_state)
+        self._set_dirty(True)
+        self._refresh_comment_list()
+        self.render_current_page()
+        self.statusBar().showMessage("Kommentar als erledigt markiert" if new_state else "Kommentar wieder geöffnet")
 
     def _view_to_page_point(self, x: float, y: float) -> fitz.Point | None:
         if not self.doc or not (0 <= self.current_page < len(self.doc)):
@@ -7989,12 +8753,130 @@ class MainWindow(QMainWindow):
         elif kind == "text-replace":
             self._set_annotation_hint("Loslassen zum Platzieren – das Ersatz-Textfeld wird über den Bereich gelegt.", active=True)
             self.render_current_page()
-        elif kind in {"text", "rect", "highlight", "strikeout", "underline"}:
+        elif kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline"}:
             hint = "Loslassen zum Platzieren – danach gibst du den Text ein." if kind == "text" else "Loslassen zum Platzieren – Ziehen definiert Größe und Position."
             self._set_annotation_hint(hint, active=True)
             self.render_current_page()
         elif kind in {"line", "arrow"}:
             self.render_current_page()
+
+    def _detected_fontcode(self, font_name: str, flags: int) -> str:
+        """Bildet eine erkannte Schrift (Name + Span-Flags) auf einen
+        PyMuPDF-Base-14-Fontcode ab, der ohne Schriftdatei einbettbar ist."""
+        name = (font_name or "").lower()
+        bold = bool(flags & 16) or any(t in name for t in ("bold", "black", "heavy", "semibold"))
+        italic = bool(flags & 2) or "italic" in name or "oblique" in name
+        mono = bool(flags & 8) or "courier" in name or "mono" in name or "consol" in name
+        serif = bool(flags & 4) or any(t in name for t in ("times", "serif", "georgia", "roman", "minion", "garamond"))
+        if mono:
+            fam = {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"}
+        elif serif:
+            fam = {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"}
+        else:
+            fam = {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"}
+        return fam[(bold, italic)]
+
+    def _find_text_block_at(self, page, point: fitz.Point) -> dict | None:
+        """Findet den kleinsten Textblock, der den Klickpunkt enthält, und
+        rekonstruiert Text, dominante Schriftgröße, Farbe und Font."""
+        try:
+            data = page.get_text("dict")
+        except Exception:
+            return None
+        best: dict | None = None
+        best_area: float | None = None
+        for block in data.get("blocks", []):
+            if block.get("type", 1) != 0:  # nur Textblöcke
+                continue
+            bbox = block.get("bbox")
+            if not bbox:
+                continue
+            rect = fitz.Rect(bbox)
+            if not rect.contains(point):
+                continue
+            area = rect.width * rect.height
+            if best_area is not None and area >= best_area:
+                continue
+            lines_text: list[str] = []
+            sizes: list[float] = []
+            colors: list[int] = []
+            fonts: list[str] = []
+            flags_list: list[int] = []
+            for line in block.get("lines", []):
+                spans = line.get("spans", [])
+                lines_text.append("".join(s.get("text", "") for s in spans))
+                for s in spans:
+                    sizes.append(s.get("size", 11))
+                    colors.append(s.get("color", 0))
+                    fonts.append(s.get("font", ""))
+                    flags_list.append(s.get("flags", 0))
+            text = "\n".join(lines_text).strip("\n")
+            if not text.strip():
+                continue
+            size = float(sizes[0]) if sizes else 11.0
+            color_int = colors[0] if colors else 0
+            color = (
+                ((color_int >> 16) & 255) / 255.0,
+                ((color_int >> 8) & 255) / 255.0,
+                (color_int & 255) / 255.0,
+            )
+            fontcode = self._detected_fontcode(fonts[0] if fonts else "", flags_list[0] if flags_list else 0)
+            best = {"bbox": bbox, "text": text, "size": size, "color": color, "fontcode": fontcode}
+            best_area = area
+        return best
+
+    def _edit_text_block_at_view(self, x: float, y: float) -> None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return
+        page = self.doc[self.current_page]
+        point = self._view_to_page_point(x, y)
+        if point is None:
+            return
+        block = self._find_text_block_at(page, point)
+        if block is None:
+            self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
+            return
+        new_text, ok = QInputDialog.getMultiLineText(
+            self,
+            "Text bearbeiten",
+            "Textabschnitt bearbeiten (wird im Block neu gesetzt):",
+            block["text"],
+        )
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            rect = fitz.Rect(block["bbox"])
+            pad = 1.0
+            cover = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
+            # Originaltext mit weißem Rechteck abdecken (wie bei „Text ersetzen").
+            page.draw_rect(cover, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+            rc = -1.0
+            attempt_size = block["size"]
+            while attempt_size >= 5.0:
+                rc = page.insert_textbox(
+                    rect,
+                    new_text,
+                    fontsize=attempt_size,
+                    fontname=block["fontcode"],
+                    color=block["color"],
+                    align=0,
+                )
+                if rc >= 0:
+                    break
+                attempt_size -= 0.5
+            if rc < 0:
+                raise ValueError(
+                    "Der bearbeitete Text passt nicht in den Block. "
+                    "Bitte den Text kürzen."
+                )
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            shrunk = " (Schrift verkleinert)" if attempt_size < block["size"] else ""
+            self.statusBar().showMessage(f"Textblock bearbeitet{shrunk}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Text konnte nicht bearbeitet werden:\n{e}")
 
     def _handle_preview_click(self, x: float, y: float) -> None:
         if not self.doc:
@@ -8027,7 +8909,10 @@ class MainWindow(QMainWindow):
 
         anchor_x, anchor_y = norm
         kind = self.pending_annotation.get("kind")
-        if kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+        if kind == "text-edit":
+            self._edit_text_block_at_view(x, y)
+            return
+        if kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
             return
@@ -8063,6 +8948,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage(message)
         except Exception as e:
@@ -8146,6 +9032,7 @@ class MainWindow(QMainWindow):
                     rect,
                     text,
                     fontsize=self.pending_annotation["font_size"],
+                    fontname=self.pending_annotation.get("fontname", "helv"),
                     text_color=self.pending_annotation["color"],
                     fill_color=(1, 1, 1),
                     border_color=self.pending_annotation["color"],
@@ -8163,6 +9050,42 @@ class MainWindow(QMainWindow):
                 annot.set_border(width=self.pending_annotation["line_width"])
                 annot.update()
                 message = "Rechteck platziert"
+            elif kind == "ellipse":
+                annot = page.add_circle_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Ellipse platziert"
+            elif kind == "star":
+                cx = (rect.x0 + rect.x1) / 2.0
+                cy = (rect.y0 + rect.y1) / 2.0
+                rx = (rect.x1 - rect.x0) / 2.0
+                ry = (rect.y1 - rect.y0) / 2.0
+                star_points = []
+                for i in range(10):
+                    ang = -math.pi / 2 + i * math.pi / 5
+                    factor = 1.0 if i % 2 == 0 else 0.4
+                    star_points.append(fitz.Point(cx + rx * factor * math.cos(ang), cy + ry * factor * math.sin(ang)))
+                annot = page.add_polygon_annot(star_points)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Stern platziert"
+            elif kind == "link":
+                uri = self.pending_annotation.get("uri")
+                if not uri:
+                    raise ValueError("Keine Ziel-URL angegeben.")
+                page.insert_link({"kind": fitz.LINK_URI, "from": rect, "uri": uri})
+                # Sichtbare blaue Unterstreichung als Hinweis auf den Link.
+                color = self.pending_annotation["color"]
+                page.draw_line(
+                    fitz.Point(rect.x0, rect.y1),
+                    fitz.Point(rect.x1, rect.y1),
+                    color=color,
+                    width=max(0.5, float(self.pending_annotation.get("line_width", 1.0))),
+                )
+                annot = None
+                message = f"Hyperlink eingefügt: {uri}"
             elif kind == "highlight":
                 annot = page.add_highlight_annot(rect)
                 annot.set_colors(stroke=self.pending_annotation["color"])
@@ -8214,6 +9137,7 @@ class MainWindow(QMainWindow):
                     rect,
                     self.pending_annotation["text"],
                     fontsize=self.pending_annotation["font_size"],
+                    fontname=self.pending_annotation.get("fontname", "helv"),
                     color=self.pending_annotation["color"],
                     align=0,
                 )
@@ -8229,6 +9153,7 @@ class MainWindow(QMainWindow):
             self._update_selected_annotation_ui()
             self._set_dirty(True)
             self._refresh_thumbnails()
+            self._refresh_comment_list()
             self.render_current_page()
             self.statusBar().showMessage(message)
         except Exception as e:
