@@ -8776,6 +8776,49 @@ class MainWindow(QMainWindow):
             fam = {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"}
         return fam[(bold, italic)]
 
+    def _estimate_background_color(self, page, rect) -> tuple[float, float, float]:
+        """Schätzt die Hintergrundfarbe eines Bereichs, indem die Eckpixel eines
+        gerenderten Ausschnitts abgetastet werden (hellste Ecke = Hintergrund)."""
+        try:
+            pix = page.get_pixmap(clip=fitz.Rect(rect), alpha=False)
+            if pix.width and pix.height:
+                corners = [(0, 0), (pix.width - 1, 0), (0, pix.height - 1), (pix.width - 1, pix.height - 1)]
+                cols = [pix.pixel(x, y) for x, y in corners]
+                best = max(cols, key=lambda c: sum(c))
+                return (best[0] / 255.0, best[1] / 255.0, best[2] / 255.0)
+        except Exception:
+            pass
+        return (1.0, 1.0, 1.0)
+
+    def _remove_content_in_rect(self, page, rect) -> tuple[float, float, float] | None:
+        """Entfernt Text/Inhalt im Rechteck **endgültig** per Redaction (statt ihn
+        nur zu übermalen) und füllt mit der erkannten Hintergrundfarbe.
+
+        Gibt die Füllfarbe zurück oder ``None``, wenn der Nutzer abbricht. Da
+        ``apply_redactions`` alle offenen Schwärzungen der Seite finalisiert,
+        wird bei vorhandenen Schwärzungen zuvor rückgefragt.
+        """
+        bg = self._estimate_background_color(page, rect)
+        existing = 0
+        try:
+            existing = sum(1 for _ in (page.annots(types=[fitz.PDF_ANNOT_REDACT]) or []))
+        except Exception:
+            existing = 0
+        if existing:
+            answer = QMessageBox.question(
+                self,
+                "Schwärzungen vorhanden",
+                "Auf dieser Seite sind noch nicht angewandte Schwärzungen vorhanden. "
+                "Beim endgültigen Entfernen des Texts werden diese ebenfalls final "
+                "angewandt. Fortfahren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+        page.add_redact_annot(fitz.Rect(rect), fill=bg)
+        page.apply_redactions()
+        return bg
+
     def _find_text_block_at(self, page, point: fitz.Point) -> dict | None:
         """Findet den kleinsten Textblock, der den Klickpunkt enthält, und
         rekonstruiert Text, dominante Schriftgröße, Farbe und Font."""
@@ -8849,8 +8892,9 @@ class MainWindow(QMainWindow):
             rect = fitz.Rect(block["bbox"])
             pad = 1.0
             cover = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
-            # Originaltext mit weißem Rechteck abdecken (wie bei „Text ersetzen").
-            page.draw_rect(cover, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+            # Originaltext endgültig entfernen (Redaction) statt nur zu übermalen.
+            if self._remove_content_in_rect(page, cover) is None:
+                return
             rc = -1.0
             attempt_size = block["size"]
             while attempt_size >= 5.0:
@@ -9130,9 +9174,10 @@ class MainWindow(QMainWindow):
                 annot.update()
                 message = "Schwärzung platziert"
             elif kind == "text-replace":
-                # Paint a white rectangle directly into the page content stream
-                # to cover the original text, then insert the replacement text.
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+                # Originaltext endgültig entfernen (Redaction) statt nur zu
+                # übermalen, dann Ersatztext in den freigeräumten Bereich setzen.
+                if self._remove_content_in_rect(page, rect) is None:
+                    return
                 rc = page.insert_textbox(
                     rect,
                     self.pending_annotation["text"],
