@@ -17,6 +17,7 @@ from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image, ImageFilter, ImageOps
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -1267,6 +1268,20 @@ class MainWindow(QMainWindow):
             elif kind == "highlight":
                 painter.fillRect(3, 10, 14, 5, QColor("#ffeb3b"))
                 painter.drawLine(4, 9, 16, 9)
+            elif kind == "strikeout":
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(11)
+                painter.setFont(font)
+                painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "S")
+                painter.drawLine(3, 10, 17, 10)
+            elif kind == "underline":
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(10)
+                painter.setFont(font)
+                painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter, "U")
+                painter.drawLine(4, 17, 16, 17)
             elif kind == "line":
                 painter.drawLine(4, 15, 16, 5)
             elif kind == "arrow":
@@ -1412,6 +1427,8 @@ class MainWindow(QMainWindow):
         btn_add_text     = _action_btn("Text",            "Text auf PDF hinzufügen")
         btn_add_rect     = _action_btn("Rechteck",        "Rechteck auf PDF hinzufügen")
         btn_add_highlight = _action_btn("Marker",         "Markierung auf PDF hinzufügen")
+        btn_add_strikeout = _action_btn("Durchstreichen", "Text durchstreichen")
+        btn_add_underline = _action_btn("Unterstreichen", "Text unterstreichen")
         btn_add_line     = _action_btn("Linie",           "Linie auf PDF hinzufügen")
         btn_add_arrow    = _action_btn("Pfeil",           "Pfeil auf PDF hinzufügen")
         btn_add_image    = _action_btn("Bild",            "Bild, Signatur oder Stempel einfügen")
@@ -1452,6 +1469,8 @@ class MainWindow(QMainWindow):
         btn_add_text.setIcon(_make_annotation_icon("text"))
         btn_add_rect.setIcon(_make_annotation_icon("rect"))
         btn_add_highlight.setIcon(_make_annotation_icon("highlight"))
+        btn_add_strikeout.setIcon(_make_annotation_icon("strikeout"))
+        btn_add_underline.setIcon(_make_annotation_icon("underline"))
         btn_add_line.setIcon(_make_annotation_icon("line"))
         btn_add_arrow.setIcon(_make_annotation_icon("arrow"))
         btn_add_image.setIcon(_make_annotation_icon("image"))
@@ -1549,6 +1568,8 @@ class MainWindow(QMainWindow):
         btn_add_text.setAccessibleName("Text auf PDF hinzufügen")
         btn_add_rect.setAccessibleName("Rechteck auf PDF hinzufügen")
         btn_add_highlight.setAccessibleName("Markierung auf PDF hinzufügen")
+        btn_add_strikeout.setAccessibleName("Text im PDF durchstreichen")
+        btn_add_underline.setAccessibleName("Text im PDF unterstreichen")
         btn_add_line.setAccessibleName("Linie auf PDF hinzufügen")
         btn_add_arrow.setAccessibleName("Pfeil auf PDF hinzufügen")
         btn_add_image.setAccessibleName("Bild auf PDF hinzufügen")
@@ -1573,6 +1594,8 @@ class MainWindow(QMainWindow):
         btn_add_text.clicked.connect(self.add_text_annotation)
         btn_add_rect.clicked.connect(self.add_rectangle_annotation)
         btn_add_highlight.clicked.connect(self.add_highlight_annotation)
+        btn_add_strikeout.clicked.connect(self.add_strikeout_annotation)
+        btn_add_underline.clicked.connect(self.add_underline_annotation)
         btn_add_line.clicked.connect(self.add_line_annotation)
         btn_add_arrow.clicked.connect(self.add_arrow_annotation)
         btn_add_image.clicked.connect(self.add_image_annotation)
@@ -1596,6 +1619,8 @@ class MainWindow(QMainWindow):
             "text": btn_add_text,
             "rect": btn_add_rect,
             "highlight": btn_add_highlight,
+            "strikeout": btn_add_strikeout,
+            "underline": btn_add_underline,
             "line": btn_add_line,
             "arrow": btn_add_arrow,
             "image": btn_add_image,
@@ -1634,13 +1659,15 @@ class MainWindow(QMainWindow):
         tool_grid.addWidget(btn_add_text, 0, 0)
         tool_grid.addWidget(btn_add_rect, 0, 1)
         tool_grid.addWidget(btn_add_highlight, 1, 0)
-        tool_grid.addWidget(btn_add_line, 1, 1)
-        tool_grid.addWidget(btn_add_arrow, 2, 0)
-        tool_grid.addWidget(btn_add_image, 2, 1)
-        tool_grid.addWidget(btn_add_redact, 3, 0)
-        tool_grid.addWidget(btn_add_note, 3, 1)
-        tool_grid.addWidget(btn_add_freehand, 4, 0)
-        tool_grid.addWidget(btn_replace_text, 4, 1)
+        tool_grid.addWidget(btn_add_strikeout, 1, 1)
+        tool_grid.addWidget(btn_add_underline, 2, 0)
+        tool_grid.addWidget(btn_add_line, 2, 1)
+        tool_grid.addWidget(btn_add_arrow, 3, 0)
+        tool_grid.addWidget(btn_add_image, 3, 1)
+        tool_grid.addWidget(btn_add_redact, 4, 0)
+        tool_grid.addWidget(btn_add_note, 4, 1)
+        tool_grid.addWidget(btn_add_freehand, 5, 0)
+        tool_grid.addWidget(btn_replace_text, 5, 1)
         tool_card_layout.addLayout(tool_grid)
         annotation_layout.addWidget(tool_card)
 
@@ -1948,6 +1975,11 @@ class MainWindow(QMainWindow):
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
 
+        act_print = QAction("Drucken …", self)
+        act_print.setShortcut("Ctrl+P")
+        act_print.triggered.connect(self.print_document)
+        menu_file.addAction(act_print)
+
         act_edit_metadata = QAction("Metadaten bearbeiten …", self)
         act_edit_metadata.triggered.connect(self.edit_pdf_metadata)
         menu_file.addAction(act_edit_metadata)
@@ -2068,6 +2100,14 @@ class MainWindow(QMainWindow):
         act_add_highlight.triggered.connect(self.add_highlight_annotation)
         menu_tools.addAction(act_add_highlight)
 
+        act_add_strikeout = QAction("Text durchstreichen …", self)
+        act_add_strikeout.triggered.connect(self.add_strikeout_annotation)
+        menu_tools.addAction(act_add_strikeout)
+
+        act_add_underline = QAction("Text unterstreichen …", self)
+        act_add_underline.triggered.connect(self.add_underline_annotation)
+        menu_tools.addAction(act_add_underline)
+
         act_add_line = QAction("Linie hinzufügen …", self)
         act_add_line.triggered.connect(self.add_line_annotation)
         menu_tools.addAction(act_add_line)
@@ -2175,6 +2215,7 @@ class MainWindow(QMainWindow):
             act_close_pdf,
             act_save,
             act_save_as,
+            act_print,
             act_undo,
             act_redo,
             act_extract_current,
@@ -2195,6 +2236,8 @@ class MainWindow(QMainWindow):
             act_add_text,
             act_add_rect,
             act_add_highlight,
+            act_add_strikeout,
+            act_add_underline,
             act_add_line,
             act_add_arrow,
             act_merge,
@@ -5470,6 +5513,71 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
 
+    def print_document(self) -> None:
+        """Druckt das aktuelle PDF über den System-Druckdialog.
+
+        Jede (ggf. rotierte) Seite wird zur Druckauflösung gerendert und
+        seitenfüllend auf das Druckmedium gezeichnet. Der gewählte
+        Seitenbereich des Dialogs wird berücksichtigt.
+        """
+        if not self.doc or len(self.doc) == 0:
+            QMessageBox.information(self, "Hinweis", "Kein PDF geladen.")
+            return
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setDocName(self.pdf_path.name if self.pdf_path else "Dokument")
+        printer.setFromTo(1, len(self.doc))
+
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle("PDF drucken")
+        if dialog.exec() != QPrintDialog.DialogCode.Accepted:
+            return
+
+        from_page = printer.fromPage()
+        to_page = printer.toPage()
+        if from_page == 0 and to_page == 0:
+            page_indices = list(range(len(self.doc)))
+        else:
+            page_indices = list(range(from_page - 1, to_page))
+
+        painter = QPainter()
+        if not painter.begin(printer):
+            QMessageBox.critical(self, "Fehler", "Der Drucker konnte nicht initialisiert werden.")
+            return
+
+        try:
+            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+            dpi = max(printer.resolution(), 72)
+            zoom = dpi / 72.0
+            first = True
+            for idx in page_indices:
+                if not (0 <= idx < len(self.doc)):
+                    continue
+                if not first:
+                    printer.newPage()
+                first = False
+                page = self.doc[idx]
+                rotation = self.page_rotations.get(idx, 0)
+                matrix = fitz.Matrix(zoom, zoom).prerotate(rotation)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                scaled = img.scaled(
+                    int(page_rect.width()),
+                    int(page_rect.height()),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                x = page_rect.x() + (page_rect.width() - scaled.width()) / 2
+                y = page_rect.y() + (page_rect.height() - scaled.height()) / 2
+                painter.drawImage(QPointF(x, y), scaled)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Drucken fehlgeschlagen:\n{e}")
+            return
+        finally:
+            painter.end()
+
+        self.statusBar().showMessage(f"Druckauftrag gesendet: {len(page_indices)} Seite(n)")
+
     def save_in_place(self) -> None:
         """Speichert das aktuelle PDF direkt an seinem Speicherort.
 
@@ -6873,6 +6981,12 @@ class MainWindow(QMainWindow):
     def add_highlight_annotation(self) -> None:
         self.select_annotation_tool("highlight", activate=True)
 
+    def add_strikeout_annotation(self) -> None:
+        self.select_annotation_tool("strikeout", activate=True)
+
+    def add_underline_annotation(self) -> None:
+        self.select_annotation_tool("underline", activate=True)
+
     def add_line_annotation(self) -> None:
         self.select_annotation_tool("line", activate=True)
 
@@ -7409,6 +7523,8 @@ class MainWindow(QMainWindow):
             "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
             "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
+            "strikeout": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
+            "underline": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
             "line": {"hint": "Linie ziehen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
             "arrow": {"hint": "Pfeil ziehen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.5, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "image": {"hint": "Bild platzieren", "width": 35.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
@@ -7430,9 +7546,9 @@ class MainWindow(QMainWindow):
 
     def _update_annotation_form_visibility(self, kind: str) -> None:
         is_text = kind in {"note", "text-replace"}
-        uses_size = kind in {"rect", "highlight"}
+        uses_size = kind in {"rect", "highlight", "strikeout", "underline"}
         uses_line = kind in {"rect", "line", "arrow", "freehand"}
-        uses_color = kind in {"text", "rect", "highlight", "line", "arrow", "freehand", "text-replace"}
+        uses_color = kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
         self.annotation_text_label.setVisible(is_text)
         self.annotation_text_input.setVisible(is_text)
@@ -7555,15 +7671,20 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if kind == "highlight":
+        if kind in {"highlight", "strikeout", "underline"}:
+            hints = {
+                "highlight": "Markierungsmodus aktiv – in der Vorschau klicken und ziehen.",
+                "strikeout": "Durchstreichen aktiv – über den zu streichenden Text ziehen.",
+                "underline": "Unterstreichen aktiv – über den zu unterstreichenden Text ziehen.",
+            }
             self._begin_pending_annotation(
                 {
-                    "kind": "highlight",
+                    "kind": kind,
                     "width_pct": self.annotation_width_spin.value(),
                     "height_pct": self.annotation_height_spin.value(),
                     "color": color,
                 },
-                "Markierungsmodus aktiv – in der Vorschau klicken und ziehen.",
+                hints[kind],
             )
             return
 
@@ -7868,7 +7989,7 @@ class MainWindow(QMainWindow):
         elif kind == "text-replace":
             self._set_annotation_hint("Loslassen zum Platzieren – das Ersatz-Textfeld wird über den Bereich gelegt.", active=True)
             self.render_current_page()
-        elif kind in {"text", "rect", "highlight"}:
+        elif kind in {"text", "rect", "highlight", "strikeout", "underline"}:
             hint = "Loslassen zum Platzieren – danach gibst du den Text ein." if kind == "text" else "Loslassen zum Platzieren – Ziehen definiert Größe und Position."
             self._set_annotation_hint(hint, active=True)
             self.render_current_page()
@@ -7906,7 +8027,7 @@ class MainWindow(QMainWindow):
 
         anchor_x, anchor_y = norm
         kind = self.pending_annotation.get("kind")
-        if kind in {"text", "rect", "highlight", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+        if kind in {"text", "rect", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
             return
@@ -8047,6 +8168,16 @@ class MainWindow(QMainWindow):
                 annot.set_colors(stroke=self.pending_annotation["color"])
                 annot.update()
                 message = "Markierung platziert"
+            elif kind == "strikeout":
+                annot = page.add_strikeout_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.update()
+                message = "Text durchgestrichen"
+            elif kind == "underline":
+                annot = page.add_underline_annot(rect)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.update()
+                message = "Text unterstrichen"
             elif kind in {"line", "arrow"}:
                 start_point = self._view_to_page_point(
                     (start_x / 100.0) * self.preview.pixmap().width(),
