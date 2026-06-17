@@ -224,6 +224,25 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 
 ---
 
+## 6b. Härtung & Fundament (Folgeausbau)
+
+Nach P1–P4 umgesetzt:
+
+| Bereich | Status | Umsetzung |
+|---|---|---|
+| Echte Text-Entfernung statt Übermalen | ✅ | `_remove_content_in_rect` (Redaction + erkannte Hintergrundfarbe) für „Text ersetzen"/„Text bearbeiten" |
+| Hintergrundfarb-Erkennung | ✅ | `_estimate_background_color` |
+| Render-Caching | ✅ | Basis-Pixmap-Cache nach (Seite, Zoom, Rotation, Revision); Invalidierung in `_set_dirty`/Laden/Schließen |
+| Autosave / Crash-Recovery | ✅ | 60-s-`QTimer`, Recovery-Kopie in `~/.offline-pdf-reader/recovery`, Start-Check + Restore-Angebot |
+| Reine Logik ausgelagert + Tests | ✅ | `pdf_text_utils.py` + `tests/` (pytest, ohne PySide6 lauffähig) |
+| Annotationen verschieben (direkte Manipulation) | ✅ (vorhanden) | `_move_selected_annotation` + Drag-Handler |
+
+**Noch offen / bewusst nicht „blind" umgesetzt** (große GUI-/Architektur- bzw. Build-Pakete, in dieser Umgebung nicht lauffähig testbar):
+- **Vollständige Modularisierung** von `app.py` (über die ausgelagerten reinen Helfer hinaus) — riskanter Großumbau, braucht lauffähige Umgebung.
+- **Getabbte Ribbon-Leiste** und **fortlaufende Mehrseiten-Scrollansicht** — große UI-Umbauten (Letzteres bricht das Einzelseiten-Koordinatenmodell).
+- **Annotationen per Maus skalieren / Mehrfachauswahl / Copy-Paste** — Erweiterung der vorhandenen Verschiebe-Logik.
+- **Digitale Signatur mit Zertifikat** (pyHanko) und **Offline-Bundling** von LibreOffice/Tesseract in den Build.
+
 ## 7. Fazit
 
 Die App deckt den OnlyOffice-PDF-Editor bereits **erstaunlich weit** ab — Anzeigen, Annotieren, Schwärzen, Seitenverwaltung, Formularfelder, Export und OCR sind vorhanden, teils über OnlyOffice hinaus. Die echten Lücken sind überschaubar und liegen in vier Bereichen: **(a) Text-Markup/-Formatierung & Druck, (b) reichere Einfügen-Objekte, (c) Office-Konvertierung, (d) Outline-Navigation.** Empfohlene Reihenfolge: P1 → P2 → P3 → P4, parallel dazu der optionale Ribbon-Umbau für das OnlyOffice-Erscheinungsbild.
