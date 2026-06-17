@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -1347,6 +1348,14 @@ class MainWindow(QMainWindow):
                 painter.drawLine(13, 13, 14, 16)
             elif kind == "ellipse":
                 painter.drawEllipse(3, 5, 14, 10)
+            elif kind == "star":
+                pts = []
+                cx, cy = 10.0, 10.0
+                for i in range(10):
+                    ang = -math.pi / 2 + i * math.pi / 5
+                    r = 8.0 if i % 2 == 0 else 3.2
+                    pts.append(QPointF(cx + r * math.cos(ang), cy + r * math.sin(ang)))
+                painter.drawPolygon(pts)
             elif kind == "link":
                 painter.drawArc(3, 7, 9, 6, 30 * 16, 180 * 16)
                 painter.drawArc(8, 7, 9, 6, 210 * 16, 180 * 16)
@@ -1466,6 +1475,7 @@ class MainWindow(QMainWindow):
         btn_add_text     = _action_btn("Text",            "Text auf PDF hinzufügen")
         btn_add_rect     = _action_btn("Rechteck",        "Rechteck auf PDF hinzufügen")
         btn_add_ellipse  = _action_btn("Ellipse",         "Ellipse / Kreis auf PDF hinzufügen")
+        btn_add_star     = _action_btn("Stern",           "Stern-Form auf PDF hinzufügen")
         btn_add_link     = _action_btn("Hyperlink",       "Klickbaren Web-Link auf PDF einfügen")
         btn_add_highlight = _action_btn("Marker",         "Markierung auf PDF hinzufügen")
         btn_add_strikeout = _action_btn("Durchstreichen", "Text durchstreichen")
@@ -1511,6 +1521,7 @@ class MainWindow(QMainWindow):
         btn_add_text.setIcon(_make_annotation_icon("text"))
         btn_add_rect.setIcon(_make_annotation_icon("rect"))
         btn_add_ellipse.setIcon(_make_annotation_icon("ellipse"))
+        btn_add_star.setIcon(_make_annotation_icon("star"))
         btn_add_link.setIcon(_make_annotation_icon("link"))
         btn_add_highlight.setIcon(_make_annotation_icon("highlight"))
         btn_add_strikeout.setIcon(_make_annotation_icon("strikeout"))
@@ -1613,6 +1624,7 @@ class MainWindow(QMainWindow):
         btn_add_text.setAccessibleName("Text auf PDF hinzufügen")
         btn_add_rect.setAccessibleName("Rechteck auf PDF hinzufügen")
         btn_add_ellipse.setAccessibleName("Ellipse auf PDF hinzufügen")
+        btn_add_star.setAccessibleName("Stern auf PDF hinzufügen")
         btn_add_link.setAccessibleName("Hyperlink auf PDF einfügen")
         btn_add_highlight.setAccessibleName("Markierung auf PDF hinzufügen")
         btn_add_strikeout.setAccessibleName("Text im PDF durchstreichen")
@@ -1642,6 +1654,7 @@ class MainWindow(QMainWindow):
         btn_add_text.clicked.connect(self.add_text_annotation)
         btn_add_rect.clicked.connect(self.add_rectangle_annotation)
         btn_add_ellipse.clicked.connect(self.add_ellipse_annotation)
+        btn_add_star.clicked.connect(self.add_star_annotation)
         btn_add_link.clicked.connect(self.add_link_annotation)
         btn_add_highlight.clicked.connect(self.add_highlight_annotation)
         btn_add_strikeout.clicked.connect(self.add_strikeout_annotation)
@@ -1670,6 +1683,7 @@ class MainWindow(QMainWindow):
             "text": btn_add_text,
             "rect": btn_add_rect,
             "ellipse": btn_add_ellipse,
+            "star": btn_add_star,
             "link": btn_add_link,
             "highlight": btn_add_highlight,
             "strikeout": btn_add_strikeout,
@@ -1725,6 +1739,7 @@ class MainWindow(QMainWindow):
         tool_grid.addWidget(btn_add_redact, 6, 0)
         tool_grid.addWidget(btn_replace_text, 6, 1)
         tool_grid.addWidget(btn_edit_text, 7, 0)
+        tool_grid.addWidget(btn_add_star, 7, 1)
         tool_card_layout.addLayout(tool_grid)
         annotation_layout.addWidget(tool_card)
 
@@ -2231,6 +2246,18 @@ class MainWindow(QMainWindow):
         act_add_ellipse.triggered.connect(self.add_ellipse_annotation)
         menu_tools.addAction(act_add_ellipse)
 
+        act_add_star = QAction("Stern hinzufügen …", self)
+        act_add_star.triggered.connect(self.add_star_annotation)
+        menu_tools.addAction(act_add_star)
+
+        act_insert_symbol = QAction("Symbol / Sonderzeichen einfügen …", self)
+        act_insert_symbol.triggered.connect(self.insert_symbol)
+        menu_tools.addAction(act_insert_symbol)
+
+        act_insert_textart = QAction("TextArt (stilisierter Text) einfügen …", self)
+        act_insert_textart.triggered.connect(self.insert_textart)
+        menu_tools.addAction(act_insert_textart)
+
         act_add_link = QAction("Hyperlink einfügen …", self)
         act_add_link.triggered.connect(self.add_link_annotation)
         menu_tools.addAction(act_add_link)
@@ -2389,6 +2416,9 @@ class MainWindow(QMainWindow):
             act_edit_text,
             act_add_rect,
             act_add_ellipse,
+            act_add_star,
+            act_insert_symbol,
+            act_insert_textart,
             act_add_link,
             act_add_highlight,
             act_add_strikeout,
@@ -7452,6 +7482,67 @@ class MainWindow(QMainWindow):
     def add_ellipse_annotation(self) -> None:
         self.select_annotation_tool("ellipse", activate=True)
 
+    def add_star_annotation(self) -> None:
+        self.select_annotation_tool("star", activate=True)
+
+    def insert_symbol(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        symbols = [
+            "©", "®", "™", "§", "¶", "†", "‡", "•", "–", "—",
+            "€", "£", "¥", "°", "±", "×", "÷",
+            "→", "←", "↑", "↓", "⇒", "⇐",
+            "✓", "✗", "★", "☆", "☑", "☐", "●",
+        ]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Symbol einfügen",
+            "Symbol wählen (oder eigenes eingeben):",
+            symbols,
+            0,
+            True,
+        )
+        if not ok or not choice:
+            return
+        self.annotation_tool_kind = "text"
+        self._set_annotation_defaults("text")
+        self._sync_annotation_tool_buttons()
+        self._begin_pending_annotation(
+            {"kind": "text", "text": choice, "font_size": 24, "fontname": "helv", "color": (0.0, 0.0, 0.0)},
+            f"Symbol '{choice}' – ziehe in der Vorschau den Platzierungsbereich auf.",
+        )
+
+    def insert_textart(self) -> None:
+        if self._require_current_pdf_page() is None:
+            return
+        text, ok = QInputDialog.getText(self, "TextArt einfügen", "Text:")
+        if not ok or not text.strip():
+            return
+        text = text.strip()
+        styles = {
+            "Rot, fett": ((0.86, 0.08, 0.24), "hebo"),
+            "Blau, fett": ((0.0, 0.40, 0.80), "hebo"),
+            "Grün, fett": ((0.0, 0.55, 0.30), "hebo"),
+            "Violett, fett": ((0.50, 0.10, 0.60), "hebo"),
+            "Schwarz, fett": ((0.0, 0.0, 0.0), "hebo"),
+        }
+        style_choice, ok = QInputDialog.getItem(
+            self, "TextArt-Stil", "Farbe / Stil:", list(styles.keys()), 0, False
+        )
+        if not ok:
+            return
+        size, ok = QInputDialog.getInt(self, "Schriftgröße", "Größe in pt:", 40, 12, 200, 2)
+        if not ok:
+            return
+        color, fontcode = styles[style_choice]
+        self.annotation_tool_kind = "text"
+        self._set_annotation_defaults("text")
+        self._sync_annotation_tool_buttons()
+        self._begin_pending_annotation(
+            {"kind": "text", "text": text, "font_size": size, "fontname": fontcode, "color": color},
+            "TextArt – ziehe in der Vorschau den Platzierungsbereich auf.",
+        )
+
     def add_link_annotation(self) -> None:
         self.select_annotation_tool("link", activate=True)
 
@@ -8016,6 +8107,7 @@ class MainWindow(QMainWindow):
             "text": {"hint": "Textfeld aufziehen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "rect": {"hint": "Rechteck ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
             "ellipse": {"hint": "Ellipse ziehen", "width": 40.0, "height": 20.0, "font": 12, "line": 2.0, "color": (0.0, 120 / 255.0, 215 / 255.0)},
+            "star": {"hint": "Stern aufziehen", "width": 25.0, "height": 25.0, "font": 12, "line": 2.0, "color": (1.0, 180 / 255.0, 0.0)},
             "link": {"hint": "Linkbereich ziehen", "width": 40.0, "height": 10.0, "font": 12, "line": 1.0, "color": (0.0, 90 / 255.0, 200 / 255.0)},
             "highlight": {"hint": "Marker ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (1.0, 235 / 255.0, 59 / 255.0)},
             "strikeout": {"hint": "Über den Text ziehen", "width": 45.0, "height": 8.0, "font": 12, "line": 2.0, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
@@ -8042,9 +8134,9 @@ class MainWindow(QMainWindow):
 
     def _update_annotation_form_visibility(self, kind: str) -> None:
         is_text = kind in {"note", "text-replace"}
-        uses_size = kind in {"rect", "ellipse", "link", "highlight", "strikeout", "underline"}
-        uses_line = kind in {"rect", "ellipse", "line", "arrow", "freehand"}
-        uses_color = kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
+        uses_size = kind in {"rect", "ellipse", "star", "link", "highlight", "strikeout", "underline"}
+        uses_line = kind in {"rect", "ellipse", "star", "line", "arrow", "freehand"}
+        uses_color = kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline", "line", "arrow", "freehand", "text-replace"}
         uses_image = kind == "image"
         uses_font = kind in {"text", "text-replace"}
         self.annotation_text_label.setVisible(is_text)
@@ -8161,7 +8253,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if kind in {"rect", "ellipse"}:
+        if kind in {"rect", "ellipse", "star"}:
+            hints = {
+                "rect": "Rechteckmodus aktiv – in der Vorschau klicken und ziehen.",
+                "ellipse": "Ellipsenmodus aktiv – in der Vorschau klicken und ziehen.",
+                "star": "Sternmodus aktiv – in der Vorschau klicken und ziehen.",
+            }
             self._begin_pending_annotation(
                 {
                     "kind": kind,
@@ -8170,8 +8267,7 @@ class MainWindow(QMainWindow):
                     "color": color,
                     "line_width": self.annotation_line_width_spin.value(),
                 },
-                "Rechteckmodus aktiv – in der Vorschau klicken und ziehen." if kind == "rect"
-                else "Ellipsenmodus aktiv – in der Vorschau klicken und ziehen.",
+                hints[kind],
             )
             return
 
@@ -8657,7 +8753,7 @@ class MainWindow(QMainWindow):
         elif kind == "text-replace":
             self._set_annotation_hint("Loslassen zum Platzieren – das Ersatz-Textfeld wird über den Bereich gelegt.", active=True)
             self.render_current_page()
-        elif kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline"}:
+        elif kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline"}:
             hint = "Loslassen zum Platzieren – danach gibst du den Text ein." if kind == "text" else "Loslassen zum Platzieren – Ziehen definiert Größe und Position."
             self._set_annotation_hint(hint, active=True)
             self.render_current_page()
@@ -8816,7 +8912,7 @@ class MainWindow(QMainWindow):
         if kind == "text-edit":
             self._edit_text_block_at_view(x, y)
             return
-        if kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
+        if kind in {"text", "rect", "ellipse", "star", "link", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
             return
@@ -8960,6 +9056,21 @@ class MainWindow(QMainWindow):
                 annot.set_border(width=self.pending_annotation["line_width"])
                 annot.update()
                 message = "Ellipse platziert"
+            elif kind == "star":
+                cx = (rect.x0 + rect.x1) / 2.0
+                cy = (rect.y0 + rect.y1) / 2.0
+                rx = (rect.x1 - rect.x0) / 2.0
+                ry = (rect.y1 - rect.y0) / 2.0
+                star_points = []
+                for i in range(10):
+                    ang = -math.pi / 2 + i * math.pi / 5
+                    factor = 1.0 if i % 2 == 0 else 0.4
+                    star_points.append(fitz.Point(cx + rx * factor * math.cos(ang), cy + ry * factor * math.sin(ang)))
+                annot = page.add_polygon_annot(star_points)
+                annot.set_colors(stroke=self.pending_annotation["color"])
+                annot.set_border(width=self.pending_annotation["line_width"])
+                annot.update()
+                message = "Stern platziert"
             elif kind == "link":
                 uri = self.pending_annotation.get("uri")
                 if not uri:

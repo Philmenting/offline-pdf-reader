@@ -131,10 +131,11 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Freihand zeichnen | ✅ | `freehand`-Werkzeug |
 | Textfeld | ✅ | Text-Werkzeug (FreeText-Annotation) deckt das Textfeld ab |
 | **Tabelle** | ✅ | `insert_table` (Raster Zeilen×Spalten auf aktueller Seite) |
-| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ◐ | Rechteck/Ellipse/Linie/Pfeil/Freihand (`add_ellipse_annotation`); Sterne/Callouts noch offen |
+| **Weitere Formen** (Ellipse, Pfeile, Sterne, Callouts …) | ✅ | Rechteck/Ellipse/**Stern**/Linie/Pfeil/Freihand (`add_star_annotation` via `add_polygon_annot`); Callout/Sprechblase noch offen |
 | **Hyperlink** | ✅ | `add_link_annotation` (Bereich ziehen → URL, `insert_link` + sichtbare Linie) |
-| **TextArt / WordArt** | ❌ | nicht vorhanden |
-| **Symbol / Gleichung** | ❌ | nicht vorhanden |
+| **TextArt / WordArt** | ◐ | `insert_textart`: großer, fetter, farbiger Text als Annäherung (kein Gradient/Warp) |
+| **Symbol / Sonderzeichen** | ✅ | `insert_symbol` (Auswahlliste + freie Eingabe, als Text platziert) |
+| **Gleichung** | ❌ | Formelsatz außerhalb des Scopes |
 | Kopf-/Fußzeile | ✅ | `insert_header_footer` (Kopf/Fuß × links/mittig/rechts, Seitenbereich) |
 | Seitennummern | ✅ | `insert_page_numbers` |
 
