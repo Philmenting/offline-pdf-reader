@@ -28,7 +28,11 @@
 > - ✅ Zoommodi **„An Breite" / „An Seite"** (Menü „Ansicht")
 > - ❌ Fortlaufende Mehrseitenansicht zurückgestellt (Koordinaten-Umbau)
 >
-> Verbleibender Hauptposten: echtes **Reflow-WYSIWYG** für Textbearbeitung (eigene Layout-Engine, sehr aufwändig).
+> **Umsetzungsfortschritt (Texteditieren / „C"):**
+> - ✅ **Blockweises WYSIWYG-Texteditieren** (`edit_text_tool`): vorhandenen Textabschnitt anklicken → vorbefüllt mit erkannter Schrift/Größe/Farbe → editieren → im Block neu gesetzt (Reflow), Auto-Verkleinerung bei Überlauf.
+> - ❌ Dokumentweiter Reflow über Blockgrenzen hinweg bleibt offen (bräuchte eigene Layout-Engine).
+>
+> **Bekannte Grenzen des Block-Editierens:** Der Originaltext wird mit einem weißen Rechteck abgedeckt (wie bei „Text ersetzen") – auf nicht-weißem Hintergrund sichtbar. Eingebettete Originalschriften werden auf Base-14-Fonts abgebildet (kann leicht abweichen).
 
 ---
 
@@ -88,8 +92,9 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | OnlyOffice-Funktion | Status | Ist-Umsetzung |
 |---|---|---|
 | Rückgängig / Wiederholen | ✅ | `undo_last_change`, `redo_last_change` |
-| Text ersetzen (Inhaltsbearbeitung, einfach) | ◐ | `text-replace`-Werkzeug + Inline-Edit von FreeText/Formularfeldern |
-| **Echte WYSIWYG-Textbearbeitung** (Inhalt im Textfluss editieren) | ❌ | nicht vorhanden – größte Lücke |
+| Text ersetzen (Inhaltsbearbeitung, einfach) | ✅ | `text-replace`-Werkzeug + Inline-Edit von FreeText/Formularfeldern |
+| **WYSIWYG-Textbearbeitung im Block** (vorhandenen Text anklicken → editieren → im Block neu setzen) | ✅ | `edit_text_tool` / `_edit_text_block_at_view`: Block-Erkennung via `get_text("dict")`, Schrift/Größe/Farbe erkannt, Reflow im Block; Auto-Verkleinerung bei Überlauf |
+| Reflow über mehrere Blöcke / ganzes Dokument | ❌ | nicht realistisch ohne eigene Layout-Engine (PDF = positionierte Glyphen) |
 | **Schriftformatierung** (Font, Größe, Fett/Kursiv/Unterstrichen, Farbe) | ✅ | Familie (Helvetica/Times/Courier) + Fett/Kursiv + Größe + Farbe für Text-Werkzeuge (`_resolve_fontname`) |
 | **Absatz** (Ausrichtung, Listen, Zeilenabstand) | ❌ | nicht vorhanden |
 | Kopieren / Einfügen von Objekten | ❌ | nicht vorhanden |

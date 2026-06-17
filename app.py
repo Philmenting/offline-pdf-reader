@@ -1338,6 +1338,13 @@ class MainWindow(QMainWindow):
                 painter.setFont(font)
                 painter.drawRoundedRect(3, 4, 14, 12, 2, 2)
                 painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "Aa")
+            elif kind == "text-edit":
+                painter.drawLine(3, 6, 13, 6)
+                painter.drawLine(3, 10, 11, 10)
+                painter.drawLine(3, 14, 9, 14)
+                # kleiner Stift oben rechts
+                painter.drawLine(13, 13, 17, 9)
+                painter.drawLine(13, 13, 14, 16)
             elif kind == "ellipse":
                 painter.drawEllipse(3, 5, 14, 10)
             elif kind == "link":
@@ -1470,6 +1477,7 @@ class MainWindow(QMainWindow):
         btn_add_note     = _action_btn("Notiz",           "Haftnotiz / Kommentar einfügen")
         btn_add_freehand = _action_btn("Freihand",        "Freihand-Markierung zeichnen")
         btn_replace_text = _action_btn("Text ersetzen",   "Bereich schwärzen und durch neuen Text ersetzen")
+        btn_edit_text    = _action_btn("Text bearbeiten", "Vorhandenen Textabschnitt anklicken und direkt im Block bearbeiten")
         btn_reorder      = _tool_btn("Sortieren",         "Seiten neu anordnen")
         btn_remove_empty = _tool_btn("Leer",              "Leere Seiten entfernen")
         btn_search       = _icon_btn("🔍",                 "Suche starten (Ctrl+F)")
@@ -1514,6 +1522,7 @@ class MainWindow(QMainWindow):
         btn_add_note.setIcon(_make_annotation_icon("note"))
         btn_add_freehand.setIcon(_make_annotation_icon("freehand"))
         btn_replace_text.setIcon(_make_annotation_icon("text-replace"))
+        btn_edit_text.setIcon(_make_annotation_icon("text-edit"))
 
         self.search_counter = QLabel("0 / 0")
         self.search_counter.setAccessibleName("Suchtreffer-Zähler")
@@ -1615,6 +1624,7 @@ class MainWindow(QMainWindow):
         btn_add_note.setAccessibleName("Notiz auf PDF hinzufügen")
         btn_add_freehand.setAccessibleName("Freihand auf PDF zeichnen")
         btn_replace_text.setAccessibleName("Text im PDF ersetzen")
+        btn_edit_text.setAccessibleName("Vorhandenen Text im PDF bearbeiten")
         btn_reorder.setAccessibleName("Seiten sortieren")
         btn_remove_empty.setAccessibleName("Leere Seiten entfernen")
 
@@ -1643,6 +1653,7 @@ class MainWindow(QMainWindow):
         btn_add_note.clicked.connect(self.add_note_annotation)
         btn_add_freehand.clicked.connect(self.add_freehand_annotation)
         btn_replace_text.clicked.connect(self.replace_text_annotation)
+        btn_edit_text.clicked.connect(self.edit_text_tool)
         btn_reorder.clicked.connect(self.reorder_pages_to_new_pdf)
         btn_remove_empty.clicked.connect(self.remove_empty_pages_to_new_pdf)
         btn_search.clicked.connect(self.open_search_and_run)
@@ -1670,6 +1681,7 @@ class MainWindow(QMainWindow):
             "note": btn_add_note,
             "freehand": btn_add_freehand,
             "text-replace": btn_replace_text,
+            "text-edit": btn_edit_text,
         }
 
         self.annotation_panel = QWidget()
@@ -1712,6 +1724,7 @@ class MainWindow(QMainWindow):
         tool_grid.addWidget(btn_add_note, 5, 1)
         tool_grid.addWidget(btn_add_redact, 6, 0)
         tool_grid.addWidget(btn_replace_text, 6, 1)
+        tool_grid.addWidget(btn_edit_text, 7, 0)
         tool_card_layout.addLayout(tool_grid)
         annotation_layout.addWidget(tool_card)
 
@@ -2206,6 +2219,10 @@ class MainWindow(QMainWindow):
         act_add_text.triggered.connect(self.add_text_annotation)
         menu_tools.addAction(act_add_text)
 
+        act_edit_text = QAction("Vorhandenen Text bearbeiten …", self)
+        act_edit_text.triggered.connect(self.edit_text_tool)
+        menu_tools.addAction(act_edit_text)
+
         act_add_rect = QAction("Rechteck hinzufügen …", self)
         act_add_rect.triggered.connect(self.add_rectangle_annotation)
         menu_tools.addAction(act_add_rect)
@@ -2369,6 +2386,7 @@ class MainWindow(QMainWindow):
             act_reorder,
             act_crop,
             act_add_text,
+            act_edit_text,
             act_add_rect,
             act_add_ellipse,
             act_add_link,
@@ -7467,6 +7485,9 @@ class MainWindow(QMainWindow):
     def replace_text_annotation(self) -> None:
         self.select_annotation_tool("text-replace", activate=True)
 
+    def edit_text_tool(self) -> None:
+        self.select_annotation_tool("text-edit", activate=True)
+
     def pick_annotation_image(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
             self,
@@ -8006,6 +8027,7 @@ class MainWindow(QMainWindow):
             "note": {"hint": "Notiz platzieren", "text": "", "width": 30.0, "height": 14.0, "font": 12, "line": 2.0, "color": (255 / 255.0, 235 / 255.0, 59 / 255.0)},
             "freehand": {"hint": "Freihand zeichnen", "width": 35.0, "height": 12.0, "font": 12, "line": 2.5, "color": (220 / 255.0, 20 / 255.0, 60 / 255.0)},
             "text-replace": {"hint": "Bereich wählen und Text ersetzen", "text": "", "width": 35.0, "height": 12.0, "font": 12, "line": 2.0, "color": (17 / 255.0, 24 / 255.0, 39 / 255.0)},
+            "text-edit": {"hint": "Auf Textabschnitt klicken", "width": 35.0, "height": 12.0, "font": 12, "line": 1.0, "color": (0.0, 0.0, 0.0)},
         }
         cfg = defaults.get(kind, defaults["text"])
         self.annotation_form_hint.setText(cfg["hint"])
@@ -8150,6 +8172,13 @@ class MainWindow(QMainWindow):
                 },
                 "Rechteckmodus aktiv – in der Vorschau klicken und ziehen." if kind == "rect"
                 else "Ellipsenmodus aktiv – in der Vorschau klicken und ziehen.",
+            )
+            return
+
+        if kind == "text-edit":
+            self._begin_pending_annotation(
+                {"kind": "text-edit"},
+                "Text-Bearbeiten aktiv – klicke auf einen vorhandenen Textabschnitt. Mit 'Modus verlassen' beenden.",
             )
             return
 
@@ -8635,6 +8664,124 @@ class MainWindow(QMainWindow):
         elif kind in {"line", "arrow"}:
             self.render_current_page()
 
+    def _detected_fontcode(self, font_name: str, flags: int) -> str:
+        """Bildet eine erkannte Schrift (Name + Span-Flags) auf einen
+        PyMuPDF-Base-14-Fontcode ab, der ohne Schriftdatei einbettbar ist."""
+        name = (font_name or "").lower()
+        bold = bool(flags & 16) or any(t in name for t in ("bold", "black", "heavy", "semibold"))
+        italic = bool(flags & 2) or "italic" in name or "oblique" in name
+        mono = bool(flags & 8) or "courier" in name or "mono" in name or "consol" in name
+        serif = bool(flags & 4) or any(t in name for t in ("times", "serif", "georgia", "roman", "minion", "garamond"))
+        if mono:
+            fam = {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"}
+        elif serif:
+            fam = {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"}
+        else:
+            fam = {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"}
+        return fam[(bold, italic)]
+
+    def _find_text_block_at(self, page, point: fitz.Point) -> dict | None:
+        """Findet den kleinsten Textblock, der den Klickpunkt enthält, und
+        rekonstruiert Text, dominante Schriftgröße, Farbe und Font."""
+        try:
+            data = page.get_text("dict")
+        except Exception:
+            return None
+        best: dict | None = None
+        best_area: float | None = None
+        for block in data.get("blocks", []):
+            if block.get("type", 1) != 0:  # nur Textblöcke
+                continue
+            bbox = block.get("bbox")
+            if not bbox:
+                continue
+            rect = fitz.Rect(bbox)
+            if not rect.contains(point):
+                continue
+            area = rect.width * rect.height
+            if best_area is not None and area >= best_area:
+                continue
+            lines_text: list[str] = []
+            sizes: list[float] = []
+            colors: list[int] = []
+            fonts: list[str] = []
+            flags_list: list[int] = []
+            for line in block.get("lines", []):
+                spans = line.get("spans", [])
+                lines_text.append("".join(s.get("text", "") for s in spans))
+                for s in spans:
+                    sizes.append(s.get("size", 11))
+                    colors.append(s.get("color", 0))
+                    fonts.append(s.get("font", ""))
+                    flags_list.append(s.get("flags", 0))
+            text = "\n".join(lines_text).strip("\n")
+            if not text.strip():
+                continue
+            size = float(sizes[0]) if sizes else 11.0
+            color_int = colors[0] if colors else 0
+            color = (
+                ((color_int >> 16) & 255) / 255.0,
+                ((color_int >> 8) & 255) / 255.0,
+                (color_int & 255) / 255.0,
+            )
+            fontcode = self._detected_fontcode(fonts[0] if fonts else "", flags_list[0] if flags_list else 0)
+            best = {"bbox": bbox, "text": text, "size": size, "color": color, "fontcode": fontcode}
+            best_area = area
+        return best
+
+    def _edit_text_block_at_view(self, x: float, y: float) -> None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return
+        page = self.doc[self.current_page]
+        point = self._view_to_page_point(x, y)
+        if point is None:
+            return
+        block = self._find_text_block_at(page, point)
+        if block is None:
+            self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
+            return
+        new_text, ok = QInputDialog.getMultiLineText(
+            self,
+            "Text bearbeiten",
+            "Textabschnitt bearbeiten (wird im Block neu gesetzt):",
+            block["text"],
+        )
+        if not ok:
+            return
+        try:
+            self._push_undo_state()
+            rect = fitz.Rect(block["bbox"])
+            pad = 1.0
+            cover = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
+            # Originaltext mit weißem Rechteck abdecken (wie bei „Text ersetzen").
+            page.draw_rect(cover, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+            rc = -1.0
+            attempt_size = block["size"]
+            while attempt_size >= 5.0:
+                rc = page.insert_textbox(
+                    rect,
+                    new_text,
+                    fontsize=attempt_size,
+                    fontname=block["fontcode"],
+                    color=block["color"],
+                    align=0,
+                )
+                if rc >= 0:
+                    break
+                attempt_size -= 0.5
+            if rc < 0:
+                raise ValueError(
+                    "Der bearbeitete Text passt nicht in den Block. "
+                    "Bitte den Text kürzen."
+                )
+            self._set_dirty(True)
+            self._refresh_thumbnails()
+            self.render_current_page()
+            shrunk = " (Schrift verkleinert)" if attempt_size < block["size"] else ""
+            self.statusBar().showMessage(f"Textblock bearbeitet{shrunk}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Text konnte nicht bearbeitet werden:\n{e}")
+
     def _handle_preview_click(self, x: float, y: float) -> None:
         if not self.doc:
             return
@@ -8666,6 +8813,9 @@ class MainWindow(QMainWindow):
 
         anchor_x, anchor_y = norm
         kind = self.pending_annotation.get("kind")
+        if kind == "text-edit":
+            self._edit_text_block_at_view(x, y)
+            return
         if kind in {"text", "rect", "ellipse", "link", "highlight", "strikeout", "underline", "line", "arrow", "crop", "image", "redact", "freehand", "text-replace"}:
             self._set_annotation_hint("Für dieses Werkzeug bitte mit der Maus ziehen.", active=True)
             self.statusBar().showMessage("Für dieses Werkzeug bitte klicken und ziehen.")
