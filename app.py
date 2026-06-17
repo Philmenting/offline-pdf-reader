@@ -56,6 +56,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
 )
 
+from pdf_text_utils import base14_fontcode, detected_fontcode, star_points
+
 try:
     import cv2  # type: ignore[import-not-found]
 except Exception:
@@ -8196,15 +8198,11 @@ class MainWindow(QMainWindow):
     def _resolve_fontname(self) -> str:
         """Bildet die gewählte Schriftart + Fett/Kursiv auf einen
         PyMuPDF-Base-14-Fontcode ab (ohne externe Schriftdatei einbettbar)."""
-        family = self.annotation_font_family_combo.currentText()
-        bold = self.annotation_bold_check.isChecked()
-        italic = self.annotation_italic_check.isChecked()
-        table = {
-            "Helvetica": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
-            "Times": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
-            "Courier": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
-        }
-        return table.get(family, table["Helvetica"])[(bold, italic)]
+        return base14_fontcode(
+            self.annotation_font_family_combo.currentText(),
+            self.annotation_bold_check.isChecked(),
+            self.annotation_italic_check.isChecked(),
+        )
 
     def _set_annotation_defaults(self, kind: str) -> None:
         defaults = {
@@ -8867,18 +8865,7 @@ class MainWindow(QMainWindow):
     def _detected_fontcode(self, font_name: str, flags: int) -> str:
         """Bildet eine erkannte Schrift (Name + Span-Flags) auf einen
         PyMuPDF-Base-14-Fontcode ab, der ohne Schriftdatei einbettbar ist."""
-        name = (font_name or "").lower()
-        bold = bool(flags & 16) or any(t in name for t in ("bold", "black", "heavy", "semibold"))
-        italic = bool(flags & 2) or "italic" in name or "oblique" in name
-        mono = bool(flags & 8) or "courier" in name or "mono" in name or "consol" in name
-        serif = bool(flags & 4) or any(t in name for t in ("times", "serif", "georgia", "roman", "minion", "garamond"))
-        if mono:
-            fam = {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"}
-        elif serif:
-            fam = {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"}
-        else:
-            fam = {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"}
-        return fam[(bold, italic)]
+        return detected_fontcode(font_name, flags)
 
     def _estimate_background_color(self, page, rect) -> tuple[float, float, float]:
         """Schätzt die Hintergrundfarbe eines Bereichs, indem die Eckpixel eines
@@ -9205,16 +9192,8 @@ class MainWindow(QMainWindow):
                 annot.update()
                 message = "Ellipse platziert"
             elif kind == "star":
-                cx = (rect.x0 + rect.x1) / 2.0
-                cy = (rect.y0 + rect.y1) / 2.0
-                rx = (rect.x1 - rect.x0) / 2.0
-                ry = (rect.y1 - rect.y0) / 2.0
-                star_points = []
-                for i in range(10):
-                    ang = -math.pi / 2 + i * math.pi / 5
-                    factor = 1.0 if i % 2 == 0 else 0.4
-                    star_points.append(fitz.Point(cx + rx * factor * math.cos(ang), cy + ry * factor * math.sin(ang)))
-                annot = page.add_polygon_annot(star_points)
+                pts = [fitz.Point(px, py) for px, py in star_points(rect.x0, rect.y0, rect.x1, rect.y1)]
+                annot = page.add_polygon_annot(pts)
                 annot.set_colors(stroke=self.pending_annotation["color"])
                 annot.set_border(width=self.pending_annotation["line_width"])
                 annot.update()

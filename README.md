@@ -87,6 +87,13 @@ Hinweis: Tesseract wird im Windows-Build mitgebündelt. Fehlende Sprachdaten (`d
 
 Für echte Run-Dokumentation: siehe `WINDOWS_SMOKETEST.md` (ausfüllbares Report-Template).
 
+## Tests
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+Reine Logik-Tests (`tests/test_pdf_text_utils.py`) laufen ohne PySide6/PyMuPDF.
+
 ## Lightweight validation
 ```bash
 ./scripts/run_local_checks.sh
