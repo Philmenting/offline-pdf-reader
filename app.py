@@ -4,7 +4,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -2029,6 +2031,10 @@ class MainWindow(QMainWindow):
         act_close_pdf.triggered.connect(self.close_pdf)
         menu_file.addAction(act_close_pdf)
 
+        act_import_office = QAction("Office-Dokument öffnen (→ PDF) …", self)
+        act_import_office.triggered.connect(self.import_office_as_pdf)
+        menu_file.addAction(act_import_office)
+
         menu_file.addSeparator()
 
         act_save = QAction("Speichern", self)
@@ -2040,6 +2046,10 @@ class MainWindow(QMainWindow):
         act_save_as.setShortcut("Ctrl+Shift+S")
         act_save_as.triggered.connect(self.save_as_suggested)
         menu_file.addAction(act_save_as)
+
+        act_export_docx = QAction("Herunterladen als Word (DOCX) …", self)
+        act_export_docx.triggered.connect(self.export_as_office)
+        menu_file.addAction(act_export_docx)
 
         act_print = QAction("Drucken …", self)
         act_print.setShortcut("Ctrl+P")
@@ -2295,6 +2305,8 @@ class MainWindow(QMainWindow):
         all_actions = [
             act_open,
             act_close_pdf,
+            act_import_office,
+            act_export_docx,
             act_save,
             act_save_as,
             act_print,
@@ -5600,6 +5612,188 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.information(self, "Fertig", f"Durchsuchbare PDF erstellt:\n{out_path}")
+
+    @staticmethod
+    def _find_soffice() -> str | None:
+        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung)."""
+        for name in ("soffice", "libreoffice"):
+            found = shutil.which(name)
+            if found:
+                return found
+        # Häufige feste Pfade (inkl. gebündelter Installationen).
+        candidates = [
+            "/usr/bin/soffice",
+            "/usr/lib/libreoffice/program/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ]
+        for path in candidates:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _run_soffice_convert(self, soffice: str, src: Path, out_dir: Path, convert_to: str) -> Path:
+        """Konvertiert eine Datei via LibreOffice-Headless und gibt den Zielpfad zurück.
+
+        `convert_to` ist das LibreOffice-Filterziel, z. B. "pdf" oder
+        "docx:MS Word 2007 XML". Wirft bei Fehlschlag eine Exception.
+        """
+        target_ext = convert_to.split(":", 1)[0]
+        # Eigenes, isoliertes Benutzerprofil pro Aufruf: verhindert das
+        # "Profil gesperrt"-Problem, falls auf dem Zielrechner bereits eine
+        # LibreOffice-Instanz läuft.
+        with tempfile.TemporaryDirectory() as profile_dir:
+            profile_uri = Path(profile_dir).as_uri()
+            cmd = [
+                soffice,
+                f"-env:UserInstallation={profile_uri}",
+                "--headless",
+                "--norestore",
+                "--convert-to",
+                convert_to,
+                "--outdir",
+                str(out_dir),
+                str(src),
+            ]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Konvertierung hat das Zeitlimit überschritten (180 s).")
+        out_path = out_dir / f"{src.stem}.{target_ext}"
+        if not out_path.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"LibreOffice hat keine Ausgabedatei erzeugt.\n{detail}")
+        return out_path
+
+    def import_office_as_pdf(self) -> None:
+        """Öffnet ein Office-Dokument (DOCX/XLSX/PPTX/ODT …) als PDF.
+
+        Konvertiert offline via LibreOffice-Headless und lädt das Ergebnis.
+        """
+        soffice = self._find_soffice()
+        if not soffice:
+            QMessageBox.warning(
+                self,
+                "LibreOffice nicht gefunden",
+                "Für die Office-Konvertierung wird LibreOffice (soffice) benötigt.\n"
+                "Bitte LibreOffice installieren oder im Build bündeln.",
+            )
+            return
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Office-Dokument öffnen",
+            "",
+            "Office-Dokumente (*.docx *.doc *.odt *.rtf *.xlsx *.xls *.ods *.pptx *.ppt *.odp);;Alle Dateien (*.*)",
+        )
+        if not file_name:
+            return
+        src = Path(file_name)
+        out_pdf = src.with_suffix(".pdf")
+        try:
+            if out_pdf.exists():
+                answer = QMessageBox.question(
+                    self,
+                    "Datei existiert",
+                    f"{out_pdf.name} existiert bereits. Überschreiben?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self.statusBar().showMessage(f"Konvertiere {src.name} → PDF …")
+            QApplication.processEvents()
+            produced = self._run_soffice_convert(soffice, src, src.parent, "pdf")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konvertierung fehlgeschlagen:\n{e}")
+            return
+        self._open_pdf_path(str(produced))
+        self.statusBar().showMessage(f"Office-Dokument als PDF geöffnet: {produced.name}")
+
+    def export_as_office(self) -> None:
+        """Exportiert das aktuelle PDF als bearbeitbares Word-Dokument (DOCX).
+
+        Bevorzugt `pdf2docx` (bessere Textwiedergabe), sonst LibreOffice.
+        """
+        if not self.doc or len(self.doc) == 0:
+            QMessageBox.information(self, "Hinweis", "Kein PDF geladen.")
+            return
+        default_name = (self.pdf_path.with_suffix(".docx").name if self.pdf_path else "dokument.docx")
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Als Word-Dokument exportieren",
+            default_name,
+            "Word-Dokument (*.docx)",
+        )
+        if not out_path:
+            return
+        out_path = str(Path(out_path).with_suffix(".docx"))
+
+        # Aktuellen (ggf. geänderten) Stand in eine temporäre PDF schreiben.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_pdf = Path(tmp) / "source.pdf"
+            try:
+                work = fitz.open()
+                try:
+                    work.insert_pdf(self.doc)
+                    for idx, rot in self.page_rotations.items():
+                        if 0 <= idx < len(work) and rot % 360 != 0:
+                            work[idx].set_rotation(rot % 360)
+                    work.save(str(tmp_pdf))
+                finally:
+                    work.close()
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"Zwischen-PDF konnte nicht erstellt werden:\n{e}")
+                return
+
+            self.statusBar().showMessage("Exportiere nach DOCX …")
+            QApplication.processEvents()
+
+            # 1) pdf2docx (falls verfügbar) – beste Textwiedergabe.
+            try:
+                from pdf2docx import Converter  # type: ignore[import-not-found]
+
+                cv = Converter(str(tmp_pdf))
+                try:
+                    cv.convert(out_path)
+                finally:
+                    cv.close()
+                self.statusBar().showMessage(f"Als DOCX exportiert (pdf2docx): {Path(out_path).name}")
+                QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
+                return
+            except ImportError:
+                pass
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Hinweis",
+                    f"pdf2docx-Konvertierung fehlgeschlagen, versuche LibreOffice …\n{e}",
+                )
+
+            # 2) Fallback: LibreOffice-Headless.
+            soffice = self._find_soffice()
+            if not soffice:
+                QMessageBox.warning(
+                    self,
+                    "Konvertierung nicht möglich",
+                    "Weder pdf2docx noch LibreOffice verfügbar.\n"
+                    "Bitte `pip install pdf2docx` ausführen oder LibreOffice installieren.",
+                )
+                return
+            try:
+                produced = self._run_soffice_convert(
+                    soffice, tmp_pdf, Path(tmp), "docx:MS Word 2007 XML"
+                )
+                shutil.move(str(produced), out_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", f"DOCX-Export fehlgeschlagen:\n{e}")
+                return
+        self.statusBar().showMessage(f"Als DOCX exportiert (LibreOffice): {Path(out_path).name}")
+        QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
 
     def print_document(self) -> None:
         """Druckt das aktuelle PDF über den System-Druckdialog.

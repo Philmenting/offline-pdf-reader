@@ -17,7 +17,13 @@
 > - ✅ **Kopf-/Fußzeile** über Seitenbereich
 > - ✅ **Tabelle** (Raster Zeilen×Spalten)
 >
-> Als Nächstes: P3 (Konvertierung) via LibreOffice-Headless. Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
+> **Umsetzungsfortschritt (P3 abgeschlossen):**
+> - ✅ **Office → PDF** (DOCX/XLSX/PPTX/ODT) via LibreOffice-Headless
+> - ✅ **PDF → DOCX** (pdf2docx bevorzugt, sonst LibreOffice)
+> - ✅ Datei-Menü: „Office-Dokument öffnen" + „Herunterladen als Word"
+> - ⚠️ Benötigt installiertes/gebündeltes LibreOffice; lokal zu verifizieren.
+>
+> Als Nächstes: P4 (Outline-/Lesezeichen-Navigation, fortlaufende Ansicht). Textbearbeitung-Tiefe: echtes Reflow-WYSIWYG (großer Posten, später).
 
 ---
 
@@ -160,9 +166,9 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | PDF → Bilder | ✅ | `export_pages_as_images` |
 | PDF → TXT/JSON/CSV | ✅ | `export_current_file` (auf OCR-/Textmodell) |
 | PDF → durchsuchbares PDF (OCR-Layer) | ✅ | `export_searchable_pdf_copy` |
-| **PDF → DOCX (editierbar)** | ❌ | schwer; Optionen: `pdf2docx`-Lib |
-| **DOCX → PDF** | ❌ | benötigt LibreOffice-Headless (`soffice`) oder `docx2pdf` |
-| **XLSX/PPTX → PDF** | ❌ | LibreOffice-Headless |
+| **PDF → DOCX (editierbar)** | ✅ | `export_as_office` (Datei → „Herunterladen als Word"); `pdf2docx` bevorzugt, sonst LibreOffice |
+| **DOCX → PDF** | ✅ | `import_office_as_pdf` (Datei → „Office-Dokument öffnen"), LibreOffice-Headless |
+| **XLSX/PPTX → PDF** | ✅ | `import_office_as_pdf` (gleicher Pfad, LibreOffice) |
 | **PDF → TXT (direkt, ohne OCR bei Text-PDF)** | ◐ | native Textextraktion vorhanden, eigener „Export als TXT direkt" prüfen |
 
 **Hinweis Offline-Garantie:** DOCX/XLSX/PPTX↔PDF lässt sich offline am robustesten über ein **gebündeltes LibreOffice-Headless** (`soffice --headless --convert-to`) lösen. Reine Python-Libs (`pdf2docx`, `python-docx`) decken nur Teilfälle ab. Entscheidung nötig (siehe §6).
@@ -183,10 +189,12 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 7. ✅ **Kopf-/Fußzeile** (`insert_header_footer`); Textfeld via Text-Werkzeug.
 8. ✅ **Tabelle** einfügen (`insert_table`, einfaches Raster).
 
-**P3 – Konvertierung (Scope „+ Konvertierung"):**
-9. **DOCX/XLSX/PPTX → PDF** via LibreOffice-Headless (offline-fähig).
-10. **PDF → DOCX** via `pdf2docx`.
-11. „Herunterladen als"-Menü im Datei-Tab, das diese Pfade bündelt.
+**P3 – Konvertierung (Scope „+ Konvertierung") — ✅ abgeschlossen:**
+9. ✅ **DOCX/XLSX/PPTX → PDF** via LibreOffice-Headless (`import_office_as_pdf`).
+10. ✅ **PDF → DOCX** via `pdf2docx` (bevorzugt) bzw. LibreOffice (`export_as_office`).
+11. ✅ Datei-Menü-Einträge „Office-Dokument öffnen (→ PDF)" und „Herunterladen als Word (DOCX)".
+
+> ⚠️ **Setup:** Für die Konvertierung muss **LibreOffice** (`soffice`/`libreoffice`) installiert oder im Build gebündelt sein. Optional `pip install pdf2docx` für bessere PDF→DOCX-Textwiedergabe. Konnte in der CI-/Remote-Umgebung nicht end-to-end getestet werden (dortige LibreOffice-Installation defekt) — bitte lokal verifizieren.
 
 **P4 – Ansicht/Navigation:**
 12. **Outline-/Lesezeichen-Navigation** (TOC-Panel aus PDF-Bookmarks).
