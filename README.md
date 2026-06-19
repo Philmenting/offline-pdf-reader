@@ -34,11 +34,12 @@ Install Tesseract (required for OCR):
 - macOS (brew): `brew install tesseract`
 - Windows: install Tesseract and ensure `tesseract.exe` is in PATH.
 
-Optional – Office↔PDF conversion (Datei → „Office-Dokument öffnen" / „Herunterladen als Word"):
-- Requires **LibreOffice** (`soffice`/`libreoffice`) installed or bundled.
+Office↔PDF conversion (Datei → „Office-Dokument öffnen" / „Herunterladen als Word"):
+- The **portable Windows build bundles LibreOffice** → conversion works out of the box, no separate install (the app auto-detects the bundled `libreoffice/program/soffice.exe` next to the executable). The portable ZIP is correspondingly larger.
+- When running from source, the app falls back to a system LibreOffice if present:
   - Ubuntu/Debian: `sudo apt install libreoffice`
   - macOS (brew): `brew install --cask libreoffice`
-  - Windows: install LibreOffice (the app auto-detects the default install path).
+  - Windows: install LibreOffice (auto-detected at the default path).
 - For higher-quality PDF→DOCX text flow, optionally `pip install pdf2docx`.
 
 ## Run
@@ -86,6 +87,13 @@ Hinweis: Tesseract wird im Windows-Build mitgebündelt. Fehlende Sprachdaten (`d
 5. **Export**: TXT/JSON/CSV jeweils einmal erzeugen (Einzeldatei oder Ordner-Aggregat).
 
 Für echte Run-Dokumentation: siehe `WINDOWS_SMOKETEST.md` (ausfüllbares Report-Template).
+
+## Tests
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+Reine Logik-Tests (`tests/test_pdf_text_utils.py`) laufen ohne PySide6/PyMuPDF.
 
 ## Lightweight validation
 ```bash

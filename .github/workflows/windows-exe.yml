@@ -67,10 +67,28 @@ jobs:
             Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/deu.traineddata" -OutFile "$tessdataDir/deu.traineddata"
           }
 
-      - name: Build EXE (PyInstaller onedir + bundled Tesseract)
+      - name: Install LibreOffice (bundle for portable Office<->PDF conversion)
+        shell: powershell
+        run: |
+          choco install libreoffice-fresh --no-progress -y
+          $sofficePath = "C:\Program Files\LibreOffice\program\soffice.exe"
+          if (!(Test-Path $sofficePath)) {
+            throw "LibreOffice installation failed"
+          }
+
+      - name: Prepare bundled LibreOffice runtime
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "bundle/libreoffice" | Out-Null
+          Copy-Item "C:\Program Files\LibreOffice\*" "bundle/libreoffice" -Recurse -Force
+
+      - name: Build EXE (PyInstaller onedir + bundled Tesseract + LibreOffice)
         shell: bash
         run: |
-          pyinstaller --noconfirm --windowed --onedir --name offline-pdf-reader --add-data "bundle/tesseract;tesseract" app.py
+          pyinstaller --noconfirm --windowed --onedir --name offline-pdf-reader \
+            --add-data "bundle/tesseract;tesseract" \
+            --add-data "bundle/libreoffice;libreoffice" \
+            app.py
 
       - name: Package portable build as ZIP
         shell: powershell

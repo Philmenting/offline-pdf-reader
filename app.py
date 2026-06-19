@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import json
 import math
@@ -18,7 +19,7 @@ import fitz  # PyMuPDF
 import pytesseract
 from pytesseract import Output, TesseractError, TesseractNotFoundError
 from PIL import Image, ImageFilter, ImageOps
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStyle,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -54,6 +56,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
 )
+
+from pdf_text_utils import base14_fontcode, detected_fontcode, star_points
 
 try:
     import cv2  # type: ignore[import-not-found]
@@ -1032,6 +1036,21 @@ class ThumbnailListWidget(QListWidget):
         self.pagesReordered.emit()
 
 
+class ContinuousPageLabel(QLabel):
+    """Klickbares Seiten-Label für die fortlaufende Leseansicht."""
+
+    clicked = Signal(int)
+
+    def __init__(self, page_index: int, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._page_index = page_index
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        self.clicked.emit(self._page_index)
+        super().mousePressEvent(event)
+
+
 class PreviewLabel(QLabel):
     clicked = Signal(float, float)
     dragStarted = Signal(float, float)
@@ -1141,6 +1160,7 @@ class MainWindow(QMainWindow):
         self.selected_annotation_xref: int | None = None
         self.selected_widget_xref: int | None = None
         self.annotation_drag_state: dict | None = None
+        self._editing_text_block: dict | None = None
         self.annotation_image_path: Path | None = None
         self.annotation_image_preview: QPixmap | None = None
 
@@ -1159,6 +1179,7 @@ class MainWindow(QMainWindow):
         self.ocr_cache_order: list[str] = []
         self.ocr_cache_max_entries = 80
         self.doc_revision = 0
+        self._page_render_cache: dict[tuple, QPixmap] = {}
         self.last_ocr_failed_pages: list[int] = []
         self.last_recognized_page_texts: dict[int, str] = {}
         self._installed_ocr_langs_cache: set[str] | None = None
@@ -1957,7 +1978,8 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────────────
         toolbar_widget = QWidget()
         toolbar_widget.setProperty("role", "toolbar")
-        toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar_widget.setMinimumHeight(104)
 
         def _ribbon_group(title: str, widgets: list[QWidget]) -> QWidget:
             group = QWidget()
@@ -1976,15 +1998,63 @@ class MainWindow(QMainWindow):
             group_layout.addLayout(row)
             return group
 
-        toolbar_top = QHBoxLayout(toolbar_widget)
-        toolbar_top.setContentsMargins(10, 8, 10, 8)
-        toolbar_top.setSpacing(8)
-        toolbar_top.addWidget(_ribbon_group("Datei", [btn_open, btn_save, btn_saveas]))
-        toolbar_top.addWidget(_ribbon_group("Seiten", [btn_first, btn_prev, btn_next, btn_last, btn_goto, btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]))
-        toolbar_top.addWidget(_ribbon_group("Ansicht", [btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_search]))
-        toolbar_top.addWidget(_ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]))
-        toolbar_top.addWidget(_ribbon_group("PDF", [btn_split, btn_crop, btn_form_fields, btn_merge]))
-        toolbar_top.addStretch(1)
+        def _ribbon_tab(groups: list[QWidget]) -> QWidget:
+            page = QWidget()
+            page.setProperty("role", "ribbontab")
+            page_layout = QHBoxLayout(page)
+            page_layout.setContentsMargins(10, 6, 10, 6)
+            page_layout.setSpacing(8)
+            for group in groups:
+                page_layout.addWidget(group)
+            page_layout.addStretch(1)
+            return page
+
+        # Getabbte Ribbon-Leiste (OnlyOffice-artig) statt einzeiliger Toolbar.
+        self.ribbon_tabs = QTabWidget()
+        self.ribbon_tabs.setProperty("role", "ribbon")
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([_ribbon_group("Datei", [btn_open, btn_save, btn_saveas])]),
+            "Datei",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Navigation", [btn_first, btn_prev, btn_next, btn_last, btn_goto]),
+                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo]),
+                _ribbon_group("Suche", [btn_search]),
+            ]),
+            "Start",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset]),
+                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+            ]),
+            "Ansicht",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Seiten", [btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]),
+            ]),
+            "Seiten",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+            ]),
+            "OCR",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Werkzeuge", [btn_split, btn_crop, btn_form_fields, btn_merge]),
+            ]),
+            "Werkzeuge",
+        )
+        self.ribbon_tabs.setCurrentIndex(1)  # "Start" als Standard
+
+        toolbar_outer = QVBoxLayout(toolbar_widget)
+        toolbar_outer.setContentsMargins(0, 0, 0, 0)
+        toolbar_outer.setSpacing(0)
+        toolbar_outer.addWidget(self.ribbon_tabs)
 
         # ── Dateiname-Zeile ──────────────────────────────────────────────────
         name_widget = QWidget()
@@ -2048,7 +2118,9 @@ class MainWindow(QMainWindow):
         toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        toolbar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar_scroll.setMinimumHeight(112)
+        toolbar_scroll.setMaximumHeight(140)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2110,6 +2182,10 @@ class MainWindow(QMainWindow):
         act_edit_metadata.triggered.connect(self.edit_pdf_metadata)
         menu_file.addAction(act_edit_metadata)
 
+        act_scrub_metadata = QAction("Metadaten & versteckte Daten bereinigen …", self)
+        act_scrub_metadata.triggered.connect(self.scrub_metadata)
+        menu_file.addAction(act_scrub_metadata)
+
         act_encrypt_pdf = QAction("PDF mit Passwort schützen …", self)
         act_encrypt_pdf.triggered.connect(self.export_encrypted_pdf_copy)
         menu_file.addAction(act_encrypt_pdf)
@@ -2157,6 +2233,10 @@ class MainWindow(QMainWindow):
         act_zoom_reset_menu.setShortcut("Ctrl+0")
         act_zoom_reset_menu.triggered.connect(self.reset_zoom)
         menu_view.addAction(act_zoom_reset_menu)
+
+        act_continuous_view = QAction("Fortlaufende Ansicht (alle Seiten) …", self)
+        act_continuous_view.triggered.connect(self.show_continuous_view)
+        menu_view.addAction(act_continuous_view)
 
         menu_ocr = self.menuBar().addMenu("OCR und Text")
         act_extract_current = QAction("Text auf aktueller Seite erkennen", self)
@@ -2447,6 +2527,17 @@ class MainWindow(QMainWindow):
         self._update_ocr_mode_label()
         self._apply_styles()
 
+        # ── Autosave / Crash-Recovery ─────────────────────────────────────
+        self._recovery_dir = Path.home() / ".offline-pdf-reader" / "recovery"
+        try:
+            self._recovery_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._recovery_dir = Path(tempfile.gettempdir())
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(60_000)  # alle 60 s
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start()
+
     def _configure_tesseract_runtime(self) -> None:
         if os.name != "nt":
             return
@@ -2688,6 +2779,8 @@ class MainWindow(QMainWindow):
         if dirty:
             self.doc_revision += 1
             self._clear_ocr_cache()
+            if hasattr(self, "_page_render_cache"):
+                self._page_render_cache.clear()
         self.is_dirty = dirty
         self.setWindowTitle(self._compose_window_title())
 
@@ -3132,6 +3225,11 @@ class MainWindow(QMainWindow):
         page = self.doc[self.current_page]
         new_text = self.inline_text_edit.toPlainText()
 
+        # Direktes Bearbeiten eines vorhandenen Textblocks hat Vorrang.
+        if self._editing_text_block is not None:
+            self._apply_text_block_edit(new_text)
+            return
+
         if self.selected_widget_xref is not None:
             for w in page.widgets() or []:
                 if w.xref == self.selected_widget_xref:
@@ -3267,6 +3365,39 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("PDF-Metadaten aktualisiert")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht aktualisiert werden:\n{e}")
+
+    def scrub_metadata(self) -> None:
+        """Entfernt Dokument-Metadaten und versteckte Daten (Datenschutz).
+
+        Leert die Standard-Metadaten (Autor/Titel/…) und das XML-Metadaten-
+        Paket. Relevant für internen Gebrauch, bevor Dateien weitergegeben
+        werden.
+        """
+        if not self.doc:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Metadaten bereinigen",
+            "Alle Dokument-Metadaten (Autor, Titel, Betreff, Schlüsselwörter, "
+            "Erstell-/Änderungsprogramm) und das XML-Metadatenpaket entfernen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._push_undo_state()
+            cleared = {key: "" for key in (self.doc.metadata or {}).keys()}
+            self.doc.set_metadata(cleared)
+            try:
+                self.doc.del_xml_metadata()
+            except Exception:
+                pass
+            self._set_dirty(True)
+            self.statusBar().showMessage("Metadaten bereinigt – zum Speichern nicht vergessen.")
+            QMessageBox.information(self, "Fertig", "Metadaten und XML-Paket wurden entfernt.")
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Metadaten konnten nicht bereinigt werden:\n{e}")
 
     def open_search(self) -> None:
         self.search_bar_widget.setVisible(True)
@@ -4402,6 +4533,7 @@ class MainWindow(QMainWindow):
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.doc_revision = 0
+        self._page_render_cache.clear()
         self._clear_ocr_cache()
         self.last_ocr_failed_pages = []
         self.last_recognized_page_texts = {}
@@ -4478,6 +4610,7 @@ class MainWindow(QMainWindow):
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.doc_revision = 0
+        self._page_render_cache.clear()
         self._clear_ocr_cache()
         self.last_ocr_failed_pages = []
         self.last_recognized_page_texts = {}
@@ -4497,6 +4630,7 @@ class MainWindow(QMainWindow):
         self._refresh_comment_list()
         self._refresh_outline()
         self.statusBar().showMessage(f"Geladen: {self.pdf_path.name} ({len(self.doc)} Seiten)")
+        self._maybe_offer_recovery()
 
     def open_pdf(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(self, "PDF auswählen", "", "PDF-Dateien (*.pdf)")
@@ -4592,11 +4726,22 @@ class MainWindow(QMainWindow):
 
         page = self.doc[self.current_page]
         rotation = self.page_rotations.get(self.current_page, 0)
-        matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor).prerotate(rotation)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        fmt = QImage.Format.Format_RGB888
-        img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
-        qpix = QPixmap.fromImage(img)
+        # Basis-Render (teures get_pixmap) cachen; bei jeder Änderung wird der
+        # Cache in _set_dirty geleert, daher ist der Schlüssel kollisionsfrei.
+        cache_key = (self.current_page, round(self.zoom_factor, 4), rotation % 360, self.doc_revision)
+        cached_base = self._page_render_cache.get(cache_key)
+        if cached_base is not None:
+            qpix = cached_base.copy()
+        else:
+            matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor).prerotate(rotation)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            fmt = QImage.Format.Format_RGB888
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
+            base = QPixmap.fromImage(img)
+            if len(self._page_render_cache) > 12:
+                self._page_render_cache.clear()
+            self._page_render_cache[cache_key] = base
+            qpix = base.copy()
 
         if 0 <= self.current_search_hit < len(self.search_hits):
             hit = self.search_hits[self.current_search_hit]
@@ -4972,6 +5117,81 @@ class MainWindow(QMainWindow):
             return
         self.zoom_factor = max(0.1, min(6.0, avail / width))
         self.render_current_page()
+
+    def show_continuous_view(self) -> None:
+        """Öffnet eine fortlaufende, scrollbare Leseansicht aller Seiten.
+
+        Bewusst getrennt von der Editier-Vorschau: rein lesend; ein Klick auf
+        eine Seite springt in der Hauptansicht dorthin. So bleibt das
+        Einzelseiten-Koordinatenmodell der Bearbeitung unangetastet.
+        """
+        if not self.doc or len(self.doc) == 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        total = len(self.doc)
+        if total > 400:
+            answer = QMessageBox.question(
+                self,
+                "Großes Dokument",
+                f"Das Dokument hat {total} Seiten. Die fortlaufende Ansicht rendert "
+                "alle Seiten und kann etwas dauern. Fortfahren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Fortlaufende Ansicht")
+        dialog.resize(820, 900)
+        outer = QVBoxLayout(dialog)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        container = QWidget()
+        col = QVBoxLayout(container)
+        col.setContentsMargins(16, 16, 16, 16)
+        col.setSpacing(16)
+
+        progress = QProgressDialog("Seiten werden gerendert …", "Abbrechen", 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        try:
+            for idx in range(total):
+                progress.setValue(idx)
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    break
+                page = self.doc[idx]
+                rotation = self.page_rotations.get(idx, 0)
+                # Moderate Auflösung (Breite ~760 px) für vertretbaren Speicher.
+                base_width = float(page.rect.width) or 1.0
+                if self.page_rotations.get(idx, 0) % 360 in (90, 270):
+                    base_width = float(page.rect.height) or 1.0
+                scale = max(0.2, min(2.0, 760.0 / base_width))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale).prerotate(rotation), alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                label = ContinuousPageLabel(idx)
+                label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+                label.setPixmap(QPixmap.fromImage(img))
+                label.setToolTip(f"Seite {idx + 1} – klicken zum Anspringen")
+                label.clicked.connect(self._jump_to_page_from_continuous)
+                col.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
+        finally:
+            progress.setValue(total)
+
+        col.addStretch(1)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+        self._continuous_dialog = dialog  # Referenz halten
+        dialog.show()
+
+    def _jump_to_page_from_continuous(self, page_index: int) -> None:
+        if not self.doc or not (0 <= page_index < len(self.doc)):
+            return
+        self.current_page = page_index
+        self.render_current_page()
+        self.statusBar().showMessage(f"Zu Seite {page_index + 1} gesprungen")
 
     def fit_to_page(self) -> None:
         size = self._current_page_view_size()
@@ -5741,12 +5961,39 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _find_soffice() -> str | None:
-        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung)."""
+        """Sucht das LibreOffice-Headless-Binary (offline-Konvertierung).
+
+        Reihenfolge: **mitgebündeltes** LibreOffice neben der Anwendung
+        (für eine eigenständige Installation auf dem Arbeitsrechner) →
+        PATH → bekannte System-Installationspfade.
+        """
+        # 1) Mitgebündelt: relativ zur EXE bzw. zum PyInstaller-Bundle.
+        bundle_roots: list[Path] = []
+        try:
+            bundle_roots.append(Path(sys.executable).resolve().parent)
+        except Exception:
+            pass
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundle_roots.append(Path(meipass))
+        bundle_roots.append(Path(__file__).resolve().parent)
+        bundle_rel = [
+            Path("libreoffice") / "program" / ("soffice.exe" if os.name == "nt" else "soffice"),
+            Path("libreoffice") / "program" / "soffice.bin",
+        ]
+        for root in bundle_roots:
+            for rel in bundle_rel:
+                candidate = root / rel
+                if candidate.exists():
+                    return str(candidate)
+
+        # 2) PATH.
         for name in ("soffice", "libreoffice"):
             found = shutil.which(name)
             if found:
                 return found
-        # Häufige feste Pfade (inkl. gebündelter Installationen).
+
+        # 3) Bekannte System-Installationspfade.
         candidates = [
             "/usr/bin/soffice",
             "/usr/lib/libreoffice/program/soffice",
@@ -5921,6 +6168,79 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Als DOCX exportiert (LibreOffice): {Path(out_path).name}")
         QMessageBox.information(self, "Fertig", f"Word-Dokument erstellt:\n{out_path}")
 
+    def _recovery_path_for(self, source: Path) -> Path:
+        digest = hashlib.sha1(str(source.resolve()).encode("utf-8", "replace")).hexdigest()[:16]
+        return self._recovery_dir / f"{digest}.recovery.pdf"
+
+    def _autosave_tick(self) -> None:
+        """Schreibt periodisch eine Wiederherstellungskopie, solange es
+        ungespeicherte Änderungen gibt."""
+        if not self.doc or not self.pdf_path or not self.is_dirty:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            work = fitz.open()
+            try:
+                work.insert_pdf(self.doc)
+                for idx, rot in self.page_rotations.items():
+                    if 0 <= idx < len(work) and rot % 360 != 0:
+                        work[idx].set_rotation(rot % 360)
+                work.save(str(recovery))
+            finally:
+                work.close()
+            self.statusBar().showMessage("Automatische Sicherung erstellt", 2000)
+        except Exception:
+            # Autosave darf den Nutzer nie stören.
+            pass
+
+    def _clear_recovery(self) -> None:
+        if not self.pdf_path:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            if recovery.exists():
+                recovery.unlink()
+        except Exception:
+            pass
+
+    def _maybe_offer_recovery(self) -> None:
+        """Prüft beim Laden, ob eine neuere Wiederherstellungskopie existiert,
+        und bietet an, deren Stand zu übernehmen."""
+        if not self.pdf_path:
+            return
+        try:
+            recovery = self._recovery_path_for(self.pdf_path)
+            if not recovery.exists():
+                return
+            if recovery.stat().st_mtime <= self.pdf_path.stat().st_mtime:
+                self._clear_recovery()
+                return
+        except Exception:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Wiederherstellung gefunden",
+            "Für diese Datei existiert eine neuere automatische Sicherung "
+            "(z. B. nach einem Absturz). Möchtest du deren Stand laden?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            recovered = fitz.open(str(recovery))
+            self.doc = recovered
+            self.page_rotations.clear()
+            self.doc_revision = 0
+            self._page_render_cache.clear()
+            self._refresh_thumbnails()
+            self.render_current_page()
+            self._set_dirty(True)
+            self._refresh_comment_list()
+            self._refresh_outline()
+            self.statusBar().showMessage("Automatische Sicherung geladen – bitte prüfen und speichern.")
+        except Exception as e:
+            QMessageBox.warning(self, "Hinweis", f"Wiederherstellung konnte nicht geladen werden:\n{e}")
+
     def print_document(self) -> None:
         """Druckt das aktuelle PDF über den System-Druckdialog.
 
@@ -6024,6 +6344,7 @@ class MainWindow(QMainWindow):
             self._refresh_thumbnails()
             self.render_current_page()
             self._set_dirty(False)
+            self._clear_recovery()
             self.statusBar().showMessage(f"Gespeichert: {source_path.name}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht speichern:\n{e}")
@@ -6075,6 +6396,7 @@ class MainWindow(QMainWindow):
             self._refresh_thumbnails()
             self.render_current_page()
             self._set_dirty(False)
+            self._clear_recovery()
             QMessageBox.information(self, "Gespeichert", f"Datei gespeichert:\n{out_path}")
             self.statusBar().showMessage(f"Gespeichert: {Path(out_path).name}")
         except Exception as e:
@@ -8092,15 +8414,11 @@ class MainWindow(QMainWindow):
     def _resolve_fontname(self) -> str:
         """Bildet die gewählte Schriftart + Fett/Kursiv auf einen
         PyMuPDF-Base-14-Fontcode ab (ohne externe Schriftdatei einbettbar)."""
-        family = self.annotation_font_family_combo.currentText()
-        bold = self.annotation_bold_check.isChecked()
-        italic = self.annotation_italic_check.isChecked()
-        table = {
-            "Helvetica": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
-            "Times": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
-            "Courier": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
-        }
-        return table.get(family, table["Helvetica"])[(bold, italic)]
+        return base14_fontcode(
+            self.annotation_font_family_combo.currentText(),
+            self.annotation_bold_check.isChecked(),
+            self.annotation_italic_check.isChecked(),
+        )
 
     def _set_annotation_defaults(self, kind: str) -> None:
         defaults = {
@@ -8703,6 +9021,10 @@ class MainWindow(QMainWindow):
         self.preview_drag_points = []
         self.preview.setCursor(Qt.CursorShape.ArrowCursor)
         self._set_annotation_hint("Bereit", active=False)
+        # Laufende direkte Textblock-Bearbeitung verwerfen.
+        if self._editing_text_block is not None:
+            self._editing_text_block = None
+            self.inline_edit_card.setVisible(False)
 
     def _handle_preview_drag_start(self, x: float, y: float) -> None:
         if not self.pending_annotation:
@@ -8763,18 +9085,50 @@ class MainWindow(QMainWindow):
     def _detected_fontcode(self, font_name: str, flags: int) -> str:
         """Bildet eine erkannte Schrift (Name + Span-Flags) auf einen
         PyMuPDF-Base-14-Fontcode ab, der ohne Schriftdatei einbettbar ist."""
-        name = (font_name or "").lower()
-        bold = bool(flags & 16) or any(t in name for t in ("bold", "black", "heavy", "semibold"))
-        italic = bool(flags & 2) or "italic" in name or "oblique" in name
-        mono = bool(flags & 8) or "courier" in name or "mono" in name or "consol" in name
-        serif = bool(flags & 4) or any(t in name for t in ("times", "serif", "georgia", "roman", "minion", "garamond"))
-        if mono:
-            fam = {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"}
-        elif serif:
-            fam = {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"}
-        else:
-            fam = {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"}
-        return fam[(bold, italic)]
+        return detected_fontcode(font_name, flags)
+
+    def _estimate_background_color(self, page, rect) -> tuple[float, float, float]:
+        """Schätzt die Hintergrundfarbe eines Bereichs, indem die Eckpixel eines
+        gerenderten Ausschnitts abgetastet werden (hellste Ecke = Hintergrund)."""
+        try:
+            pix = page.get_pixmap(clip=fitz.Rect(rect), alpha=False)
+            if pix.width and pix.height:
+                corners = [(0, 0), (pix.width - 1, 0), (0, pix.height - 1), (pix.width - 1, pix.height - 1)]
+                cols = [pix.pixel(x, y) for x, y in corners]
+                best = max(cols, key=lambda c: sum(c))
+                return (best[0] / 255.0, best[1] / 255.0, best[2] / 255.0)
+        except Exception:
+            pass
+        return (1.0, 1.0, 1.0)
+
+    def _remove_content_in_rect(self, page, rect) -> tuple[float, float, float] | None:
+        """Entfernt Text/Inhalt im Rechteck **endgültig** per Redaction (statt ihn
+        nur zu übermalen) und füllt mit der erkannten Hintergrundfarbe.
+
+        Gibt die Füllfarbe zurück oder ``None``, wenn der Nutzer abbricht. Da
+        ``apply_redactions`` alle offenen Schwärzungen der Seite finalisiert,
+        wird bei vorhandenen Schwärzungen zuvor rückgefragt.
+        """
+        bg = self._estimate_background_color(page, rect)
+        existing = 0
+        try:
+            existing = sum(1 for _ in (page.annots(types=[fitz.PDF_ANNOT_REDACT]) or []))
+        except Exception:
+            existing = 0
+        if existing:
+            answer = QMessageBox.question(
+                self,
+                "Schwärzungen vorhanden",
+                "Auf dieser Seite sind noch nicht angewandte Schwärzungen vorhanden. "
+                "Beim endgültigen Entfernen des Texts werden diese ebenfalls final "
+                "angewandt. Fortfahren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+        page.add_redact_annot(fitz.Rect(rect), fill=bg)
+        page.apply_redactions()
+        return bg
 
     def _find_text_block_at(self, page, point: fitz.Point) -> dict | None:
         """Findet den kleinsten Textblock, der den Klickpunkt enthält, und
@@ -8836,21 +9190,37 @@ class MainWindow(QMainWindow):
         if block is None:
             self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
             return
-        new_text, ok = QInputDialog.getMultiLineText(
-            self,
-            "Text bearbeiten",
-            "Textabschnitt bearbeiten (wird im Block neu gesetzt):",
-            block["text"],
+        # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
+        # einen Modal-Dialog zu öffnen.
+        block["page"] = self.current_page
+        self._editing_text_block = block
+        self.selected_annotation_xref = None
+        self.selected_widget_xref = None
+        self.inline_text_edit.setPlainText(block["text"])
+        self.inline_edit_card.setVisible(True)
+        self.inline_text_edit.setFocus()
+        self.inline_text_edit.selectAll()
+        self.statusBar().showMessage(
+            "Textabschnitt geladen – im Feld unten ändern (löschen/neu schreiben) und 'Änderung speichern'."
         )
-        if not ok:
+
+    def _apply_text_block_edit(self, new_text: str) -> None:
+        block = self._editing_text_block
+        if not block or not self.doc:
             return
+        pidx = block.get("page", self.current_page)
+        if not (0 <= pidx < len(self.doc)):
+            self._editing_text_block = None
+            return
+        page = self.doc[pidx]
         try:
             self._push_undo_state()
             rect = fitz.Rect(block["bbox"])
             pad = 1.0
             cover = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
-            # Originaltext mit weißem Rechteck abdecken (wie bei „Text ersetzen").
-            page.draw_rect(cover, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+            # Originaltext endgültig entfernen (Redaction) statt nur zu übermalen.
+            if self._remove_content_in_rect(page, cover) is None:
+                return
             rc = -1.0
             attempt_size = block["size"]
             while attempt_size >= 5.0:
@@ -8877,6 +9247,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Textblock bearbeitet{shrunk}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Text konnte nicht bearbeitet werden:\n{e}")
+        finally:
+            self._editing_text_block = None
+            self.inline_edit_card.setVisible(False)
 
     def _handle_preview_click(self, x: float, y: float) -> None:
         if not self.doc:
@@ -9057,16 +9430,8 @@ class MainWindow(QMainWindow):
                 annot.update()
                 message = "Ellipse platziert"
             elif kind == "star":
-                cx = (rect.x0 + rect.x1) / 2.0
-                cy = (rect.y0 + rect.y1) / 2.0
-                rx = (rect.x1 - rect.x0) / 2.0
-                ry = (rect.y1 - rect.y0) / 2.0
-                star_points = []
-                for i in range(10):
-                    ang = -math.pi / 2 + i * math.pi / 5
-                    factor = 1.0 if i % 2 == 0 else 0.4
-                    star_points.append(fitz.Point(cx + rx * factor * math.cos(ang), cy + ry * factor * math.sin(ang)))
-                annot = page.add_polygon_annot(star_points)
+                pts = [fitz.Point(px, py) for px, py in star_points(rect.x0, rect.y0, rect.x1, rect.y1)]
+                annot = page.add_polygon_annot(pts)
                 annot.set_colors(stroke=self.pending_annotation["color"])
                 annot.set_border(width=self.pending_annotation["line_width"])
                 annot.update()
@@ -9130,9 +9495,10 @@ class MainWindow(QMainWindow):
                 annot.update()
                 message = "Schwärzung platziert"
             elif kind == "text-replace":
-                # Paint a white rectangle directly into the page content stream
-                # to cover the original text, then insert the replacement text.
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+                # Originaltext endgültig entfernen (Redaction) statt nur zu
+                # übermalen, dann Ersatztext in den freigeräumten Bereich setzen.
+                if self._remove_content_in_rect(page, rect) is None:
+                    return
                 rc = page.insert_textbox(
                     rect,
                     self.pending_annotation["text"],
