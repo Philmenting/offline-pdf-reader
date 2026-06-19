@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHeaderView,
     QInputDialog,
@@ -1117,6 +1118,12 @@ class MainWindow(QMainWindow):
         self.preview.setMinimumSize(400, 460)
         self.preview.setCursor(Qt.CursorShape.ArrowCursor)
         self.preview.setProperty("role", "pagepreview")
+        # Schwebende Seite: dezenter Schlagschatten wie in modernen PDF-Editoren.
+        _page_shadow = QGraphicsDropShadowEffect(self)
+        _page_shadow.setBlurRadius(24)
+        _page_shadow.setColor(QColor(0, 0, 0, 60))
+        _page_shadow.setOffset(0, 3)
+        self.preview.setGraphicsEffect(_page_shadow)
 
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidget(self.preview)
@@ -3927,6 +3934,38 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid #e4e7ef;
             }
 
+            /* ── Getabbte Ribbon-Leiste (OnlyOffice-Stil) ─────────────── */
+            QTabWidget[role="ribbon"]::pane {
+                border: none;
+                background: transparent;
+            }
+            QTabWidget[role="ribbon"] > QTabBar {
+                qproperty-drawBase: 0;
+            }
+            QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
+                background: #ffffff;
+                border-bottom: 1px solid #e4e7ef;
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: #5f6c8c;
+                padding: 8px 18px;
+                margin: 0;
+                border: none;
+                border-bottom: 2px solid transparent;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QTabBar::tab:hover {
+                color: #1e2432;
+                background: #eef1f8;
+            }
+            QTabBar::tab:selected {
+                color: #b5413b;
+                border-bottom: 2px solid #b5413b;
+                background: #ffffff;
+            }
+
             /* ── Namens-Zeile ─────────────────────────────────────────── */
             QWidget[role="namebar"] {
                 background: #f5f7fc;
@@ -3958,9 +3997,9 @@ class MainWindow(QMainWindow):
                 border-radius: 12px;
             }
             QWidget[role="previewcard"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fdfefe, stop:1 #f6f8fc);
-                border-left: 1px solid #edf1f8;
-                border-right: 1px solid #edf1f8;
+                background: #e9ebf0;
+                border-left: 1px solid #e1e4ec;
+                border-right: 1px solid #e1e4ec;
             }
             QWidget[role="ribbongroup"] {
                 background: rgba(255, 255, 255, 0.9);
@@ -4240,9 +4279,9 @@ class MainWindow(QMainWindow):
                 border: none;
             }
             QScrollArea[role="previewarea"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #edf1fb, stop:1 #e7ebf6);
-                border-left: 1px solid #edf1f8;
-                border-right: 1px solid #edf1f8;
+                background: #e9ebf0;
+                border-left: 1px solid #e1e4ec;
+                border-right: 1px solid #e1e4ec;
             }
             QScrollBar:vertical {
                 background: #f0f2f7;
@@ -9408,9 +9447,15 @@ class MainWindow(QMainWindow):
                     fontname=self.pending_annotation.get("fontname", "helv"),
                     text_color=self.pending_annotation["color"],
                     fill_color=(1, 1, 1),
-                    border_color=self.pending_annotation["color"],
                     align=0,
                 )
+                # Rahmenfarbe/-stärke nachträglich setzen: border_color als
+                # Konstruktor-Argument verlangt rich_text=True (PyMuPDF-Fehler
+                # "cannot set border_color if rich_text is False").
+                try:
+                    annot.set_colors(stroke=self.pending_annotation["color"])
+                except Exception:
+                    pass
                 try:
                     annot.set_border(width=1)
                 except Exception:
