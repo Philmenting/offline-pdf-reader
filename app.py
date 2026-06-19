@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStyle,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -1962,7 +1963,8 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────────────
         toolbar_widget = QWidget()
         toolbar_widget.setProperty("role", "toolbar")
-        toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar_widget.setMinimumHeight(104)
 
         def _ribbon_group(title: str, widgets: list[QWidget]) -> QWidget:
             group = QWidget()
@@ -1981,15 +1983,63 @@ class MainWindow(QMainWindow):
             group_layout.addLayout(row)
             return group
 
-        toolbar_top = QHBoxLayout(toolbar_widget)
-        toolbar_top.setContentsMargins(10, 8, 10, 8)
-        toolbar_top.setSpacing(8)
-        toolbar_top.addWidget(_ribbon_group("Datei", [btn_open, btn_save, btn_saveas]))
-        toolbar_top.addWidget(_ribbon_group("Seiten", [btn_first, btn_prev, btn_next, btn_last, btn_goto, btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]))
-        toolbar_top.addWidget(_ribbon_group("Ansicht", [btn_zoom_out, btn_zoom_in, btn_zoom_reset, btn_rotate_left, btn_rotate_right, btn_rotate_reset, self.btn_undo, self.btn_redo, btn_search]))
-        toolbar_top.addWidget(_ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]))
-        toolbar_top.addWidget(_ribbon_group("PDF", [btn_split, btn_crop, btn_form_fields, btn_merge]))
-        toolbar_top.addStretch(1)
+        def _ribbon_tab(groups: list[QWidget]) -> QWidget:
+            page = QWidget()
+            page.setProperty("role", "ribbontab")
+            page_layout = QHBoxLayout(page)
+            page_layout.setContentsMargins(10, 6, 10, 6)
+            page_layout.setSpacing(8)
+            for group in groups:
+                page_layout.addWidget(group)
+            page_layout.addStretch(1)
+            return page
+
+        # Getabbte Ribbon-Leiste (OnlyOffice-artig) statt einzeiliger Toolbar.
+        self.ribbon_tabs = QTabWidget()
+        self.ribbon_tabs.setProperty("role", "ribbon")
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([_ribbon_group("Datei", [btn_open, btn_save, btn_saveas])]),
+            "Datei",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Navigation", [btn_first, btn_prev, btn_next, btn_last, btn_goto]),
+                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo]),
+                _ribbon_group("Suche", [btn_search]),
+            ]),
+            "Start",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset]),
+                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+            ]),
+            "Ansicht",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Seiten", [btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]),
+            ]),
+            "Seiten",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+            ]),
+            "OCR",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Werkzeuge", [btn_split, btn_crop, btn_form_fields, btn_merge]),
+            ]),
+            "Werkzeuge",
+        )
+        self.ribbon_tabs.setCurrentIndex(1)  # "Start" als Standard
+
+        toolbar_outer = QVBoxLayout(toolbar_widget)
+        toolbar_outer.setContentsMargins(0, 0, 0, 0)
+        toolbar_outer.setSpacing(0)
+        toolbar_outer.addWidget(self.ribbon_tabs)
 
         # ── Dateiname-Zeile ──────────────────────────────────────────────────
         name_widget = QWidget()
@@ -2053,7 +2103,9 @@ class MainWindow(QMainWindow):
         toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        toolbar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar_scroll.setMinimumHeight(112)
+        toolbar_scroll.setMaximumHeight(140)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
