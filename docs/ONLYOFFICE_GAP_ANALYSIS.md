@@ -148,7 +148,7 @@ OnlyOffice gliedert den PDF-Editor in diese Tabs (ohne KI):
 | Seitenminiaturen | ✅ | `ThumbnailListWidget` (linkes Panel) |
 | Ansicht drehen | ✅ | `rotate_left`/`rotate_right`/Reset |
 | Dunkelmodus | ✅ | `_is_dark_mode` + Dark-Styles |
-| **Mehrseitige / fortlaufende Ansicht** | ❌ | bewusst zurückgestellt – Annotations-Koordinaten hängen am Einzelseiten-Modell (großer, riskanter Umbau) |
+| **Mehrseitige / fortlaufende Ansicht** | ◐ | `show_continuous_view`: separates scrollbares Lese-Fenster (alle Seiten, Klick springt zur Seite). Bewusst getrennt von der Editier-Vorschau, damit das Einzelseiten-Koordinatenmodell unangetastet bleibt; fortlaufendes Editieren direkt im Canvas weiterhin offen |
 | **Lesezeichen-/Outline-Navigation (TOC)** | ✅ | `_refresh_outline` + Panel links (`doc.get_toc()`, Klick springt zur Seite) |
 
 ### 3.7 Plugins / OCR
@@ -237,9 +237,14 @@ Nach P1–P4 umgesetzt:
 | Reine Logik ausgelagert + Tests | ✅ | `pdf_text_utils.py` + `tests/` (pytest, ohne PySide6 lauffähig) |
 | Annotationen verschieben (direkte Manipulation) | ✅ (vorhanden) | `_move_selected_annotation` + Drag-Handler |
 
+Weiter umgesetzt:
+- ✅ **Getabbte Ribbon-Leiste** (`QTabWidget`: Datei/Start/Ansicht/Seiten/OCR/Werkzeuge) — vorhandene Buttons unverändert, nur gruppiert.
+- ✅ **Fortlaufende Leseansicht** (`show_continuous_view`) als separates, scrollbares Fenster mit Klick-zu-Seite.
+- ✅ **Direktes Texteditieren** im Sidebar-Feld (löschen/neu schreiben) statt Modal-Dialog.
+
 **Noch offen / bewusst nicht „blind" umgesetzt** (große GUI-/Architektur- bzw. Build-Pakete, in dieser Umgebung nicht lauffähig testbar):
 - **Vollständige Modularisierung** von `app.py` (über die ausgelagerten reinen Helfer hinaus) — riskanter Großumbau, braucht lauffähige Umgebung.
-- **Getabbte Ribbon-Leiste** und **fortlaufende Mehrseiten-Scrollansicht** — große UI-Umbauten (Letzteres bricht das Einzelseiten-Koordinatenmodell).
+- **Fortlaufendes Editieren direkt im Canvas** (statt separatem Lese-Fenster) — bricht das Einzelseiten-Koordinatenmodell.
 - **Annotationen per Maus skalieren / Mehrfachauswahl / Copy-Paste** — Erweiterung der vorhandenen Verschiebe-Logik.
 - **Digitale Signatur mit Zertifikat** (pyHanko) — noch offen.
 

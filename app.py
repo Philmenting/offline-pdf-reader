@@ -1036,6 +1036,21 @@ class ThumbnailListWidget(QListWidget):
         self.pagesReordered.emit()
 
 
+class ContinuousPageLabel(QLabel):
+    """Klickbares Seiten-Label für die fortlaufende Leseansicht."""
+
+    clicked = Signal(int)
+
+    def __init__(self, page_index: int, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._page_index = page_index
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        self.clicked.emit(self._page_index)
+        super().mousePressEvent(event)
+
+
 class PreviewLabel(QLabel):
     clicked = Signal(float, float)
     dragStarted = Signal(float, float)
@@ -2218,6 +2233,10 @@ class MainWindow(QMainWindow):
         act_zoom_reset_menu.setShortcut("Ctrl+0")
         act_zoom_reset_menu.triggered.connect(self.reset_zoom)
         menu_view.addAction(act_zoom_reset_menu)
+
+        act_continuous_view = QAction("Fortlaufende Ansicht (alle Seiten) …", self)
+        act_continuous_view.triggered.connect(self.show_continuous_view)
+        menu_view.addAction(act_continuous_view)
 
         menu_ocr = self.menuBar().addMenu("OCR und Text")
         act_extract_current = QAction("Text auf aktueller Seite erkennen", self)
@@ -5098,6 +5117,81 @@ class MainWindow(QMainWindow):
             return
         self.zoom_factor = max(0.1, min(6.0, avail / width))
         self.render_current_page()
+
+    def show_continuous_view(self) -> None:
+        """Öffnet eine fortlaufende, scrollbare Leseansicht aller Seiten.
+
+        Bewusst getrennt von der Editier-Vorschau: rein lesend; ein Klick auf
+        eine Seite springt in der Hauptansicht dorthin. So bleibt das
+        Einzelseiten-Koordinatenmodell der Bearbeitung unangetastet.
+        """
+        if not self.doc or len(self.doc) == 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein PDF öffnen.")
+            return
+        total = len(self.doc)
+        if total > 400:
+            answer = QMessageBox.question(
+                self,
+                "Großes Dokument",
+                f"Das Dokument hat {total} Seiten. Die fortlaufende Ansicht rendert "
+                "alle Seiten und kann etwas dauern. Fortfahren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Fortlaufende Ansicht")
+        dialog.resize(820, 900)
+        outer = QVBoxLayout(dialog)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        container = QWidget()
+        col = QVBoxLayout(container)
+        col.setContentsMargins(16, 16, 16, 16)
+        col.setSpacing(16)
+
+        progress = QProgressDialog("Seiten werden gerendert …", "Abbrechen", 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        try:
+            for idx in range(total):
+                progress.setValue(idx)
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    break
+                page = self.doc[idx]
+                rotation = self.page_rotations.get(idx, 0)
+                # Moderate Auflösung (Breite ~760 px) für vertretbaren Speicher.
+                base_width = float(page.rect.width) or 1.0
+                if self.page_rotations.get(idx, 0) % 360 in (90, 270):
+                    base_width = float(page.rect.height) or 1.0
+                scale = max(0.2, min(2.0, 760.0 / base_width))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale).prerotate(rotation), alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                label = ContinuousPageLabel(idx)
+                label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+                label.setPixmap(QPixmap.fromImage(img))
+                label.setToolTip(f"Seite {idx + 1} – klicken zum Anspringen")
+                label.clicked.connect(self._jump_to_page_from_continuous)
+                col.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
+        finally:
+            progress.setValue(total)
+
+        col.addStretch(1)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+        self._continuous_dialog = dialog  # Referenz halten
+        dialog.show()
+
+    def _jump_to_page_from_continuous(self, page_index: int) -> None:
+        if not self.doc or not (0 <= page_index < len(self.doc)):
+            return
+        self.current_page = page_index
+        self.render_current_page()
+        self.statusBar().showMessage(f"Zu Seite {page_index + 1} gesprungen")
 
     def fit_to_page(self) -> None:
         size = self._current_page_view_size()
