@@ -2016,45 +2016,70 @@ class MainWindow(QMainWindow):
             page_layout.addStretch(1)
             return page
 
-        # Getabbte Ribbon-Leiste (OnlyOffice-artig) statt einzeiliger Toolbar.
+        def _rb(label: str, slot, tooltip: str = "") -> QPushButton:
+            """Erzeugt einen Ribbon-Button und verbindet ihn mit einer Methode."""
+            button = _action_btn(label, tooltip or label)
+            button.clicked.connect(slot)
+            return button
+
+        # Getabbte Ribbon-Leiste (OnlyOffice-artig). Sie ersetzt die klassische
+        # Menüleiste vollständig – jede wichtige Funktion ist hier erreichbar.
+        # (Annotations-/Markup-Werkzeuge liegen weiterhin in der rechten Sidebar.)
         self.ribbon_tabs = QTabWidget()
         self.ribbon_tabs.setProperty("role", "ribbon")
         self.ribbon_tabs.addTab(
-            _ribbon_tab([_ribbon_group("Datei", [btn_open, btn_save, btn_saveas])]),
+            _ribbon_tab([
+                _ribbon_group("Öffnen", [btn_open, _rb("Office öffnen", self.import_office_as_pdf, "Word/Excel/PowerPoint als PDF öffnen")]),
+                _ribbon_group("Speichern", [btn_save, btn_saveas, _rb("Als Word", self.export_as_office, "Als DOCX exportieren"), _rb("Drucken", self.print_document, "Drucken (Ctrl+P)")]),
+                _ribbon_group("Dokument", [_rb("Infos", self.show_document_info), _rb("Metadaten", self.edit_pdf_metadata), _rb("Bereinigen", self.scrub_metadata, "Metadaten & versteckte Daten entfernen")]),
+                _ribbon_group("Schutz", [_rb("Verschlüsseln", self.export_encrypted_pdf_copy), _rb("Optimieren", self.export_optimized_pdf_copy)]),
+            ]),
             "Datei",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
                 _ribbon_group("Navigation", [btn_first, btn_prev, btn_next, btn_last, btn_goto]),
-                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo]),
+                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo, _rb("Text bearbeiten", self.edit_text_tool, "Vorhandenen Text anklicken und direkt bearbeiten")]),
                 _ribbon_group("Suche", [btn_search]),
             ]),
             "Start",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset]),
-                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+                _ribbon_group("Seite", [btn_blank_page, _rb("Seitenzahlen", self.insert_page_numbers), _rb("Kopf-/Fußzeile", self.insert_header_footer), _rb("Wasserzeichen", self.add_text_watermark)]),
+                _ribbon_group("Objekte", [_rb("Tabelle", self.insert_table), _rb("Bilder→PDF", self.images_to_pdf), btn_form_fields]),
             ]),
-            "Ansicht",
+            "Einfügen",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Seiten", [btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]),
+                _ribbon_group("Anordnen", [btn_duplicate, btn_reorder, btn_split, _rb("In Blöcke teilen", self.split_pdf_into_chunks)]),
+                _ribbon_group("Bearbeiten", [_rb("Löschen", self.delete_selected_pages, "Ausgewählte Seiten löschen"), btn_remove_empty, btn_crop]),
+                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+                _ribbon_group("Zusammenführen", [btn_merge]),
             ]),
             "Seiten",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset, _rb("An Breite", self.fit_to_width), _rb("An Seite", self.fit_to_page)]),
+                _ribbon_group("Ansicht", [_rb("Fortlaufend", self.show_continuous_view, "Fortlaufende Ansicht aller Seiten")]),
+            ]),
+            "Ansicht",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Erkennen", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+                _ribbon_group("Text", [_rb("Durchsuchbare PDF", self.export_searchable_pdf_copy), _rb("Text anzeigen", self.show_extracted_text_window)]),
             ]),
             "OCR",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Werkzeuge", [btn_split, btn_crop, btn_form_fields, btn_merge]),
+                _ribbon_group("Datei", [_rb("Datei exportieren", self.export_current_file), _rb("Seiten als Bilder", self.export_pages_as_images), _rb("Graustufen", self.export_grayscale_pdf_copy)]),
+                _ribbon_group("Mehr", [_rb("Bilder extrahieren", self.extract_images_from_pdf), _rb("Ordner aggregiert", self.export_folder_aggregate), _rb("Stapel-Umbenennen", self.batch_rename_folder), _rb("Seitenübersicht", self.show_page_overview)]),
             ]),
-            "Werkzeuge",
+            "Exportieren",
         )
         self.ribbon_tabs.setCurrentIndex(1)  # "Start" als Standard
 
@@ -2528,6 +2553,13 @@ class MainWindow(QMainWindow):
             action.setStatusTip(text)
             action.setToolTip(text)
             action.setWhatsThis(text)
+
+        # Die klassische Menüleiste doppelt sich mit dem Ribbon → ausblenden.
+        # Die Aktionen werden zusätzlich am Fenster registriert, damit ihre
+        # Tastenkürzel (Ctrl+O, Ctrl+S, Ctrl+F …) weiterhin funktionieren.
+        for action in all_actions:
+            self.addAction(action)
+        self.menuBar().setVisible(False)
 
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._update_undo_redo_buttons()
@@ -9227,7 +9259,10 @@ class MainWindow(QMainWindow):
             return
         block = self._find_text_block_at(page, point)
         if block is None:
-            self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
+            self.statusBar().showMessage(
+                "Kein bearbeitbarer Text an dieser Stelle. Hinweis: Auf gescannten/bild-basierten "
+                "Seiten gibt es keinen editierbaren Text – bitte direkt auf einen Textabschnitt klicken."
+            )
             return
         # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
         # einen Modal-Dialog zu öffnen.
@@ -9237,10 +9272,16 @@ class MainWindow(QMainWindow):
         self.selected_widget_xref = None
         self.inline_text_edit.setPlainText(block["text"])
         self.inline_edit_card.setVisible(True)
+        # Eingabefeld in den sichtbaren Bereich der Sidebar scrollen, damit es
+        # sofort auffällt.
+        try:
+            self.annotation_panel_scroll.ensureWidgetVisible(self.inline_edit_card)
+        except Exception:
+            pass
         self.inline_text_edit.setFocus()
         self.inline_text_edit.selectAll()
         self.statusBar().showMessage(
-            "Textabschnitt geladen – im Feld unten ändern (löschen/neu schreiben) und 'Änderung speichern'."
+            "Textabschnitt geladen – im Feld 'Text bearbeiten' (rechte Sidebar) ändern und 'Änderung speichern'."
         )
 
     def _apply_text_block_edit(self, new_text: str) -> None:
