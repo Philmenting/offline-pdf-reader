@@ -1144,6 +1144,7 @@ class MainWindow(QMainWindow):
         self.selected_annotation_xref: int | None = None
         self.selected_widget_xref: int | None = None
         self.annotation_drag_state: dict | None = None
+        self._editing_text_block: dict | None = None
         self.annotation_image_path: Path | None = None
         self.annotation_image_preview: QPixmap | None = None
 
@@ -3152,6 +3153,11 @@ class MainWindow(QMainWindow):
             return
         page = self.doc[self.current_page]
         new_text = self.inline_text_edit.toPlainText()
+
+        # Direktes Bearbeiten eines vorhandenen Textblocks hat Vorrang.
+        if self._editing_text_block is not None:
+            self._apply_text_block_edit(new_text)
+            return
 
         if self.selected_widget_xref is not None:
             for w in page.widgets() or []:
@@ -8869,6 +8875,10 @@ class MainWindow(QMainWindow):
         self.preview_drag_points = []
         self.preview.setCursor(Qt.CursorShape.ArrowCursor)
         self._set_annotation_hint("Bereit", active=False)
+        # Laufende direkte Textblock-Bearbeitung verwerfen.
+        if self._editing_text_block is not None:
+            self._editing_text_block = None
+            self.inline_edit_card.setVisible(False)
 
     def _handle_preview_drag_start(self, x: float, y: float) -> None:
         if not self.pending_annotation:
@@ -9034,14 +9044,29 @@ class MainWindow(QMainWindow):
         if block is None:
             self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
             return
-        new_text, ok = QInputDialog.getMultiLineText(
-            self,
-            "Text bearbeiten",
-            "Textabschnitt bearbeiten (wird im Block neu gesetzt):",
-            block["text"],
+        # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
+        # einen Modal-Dialog zu öffnen.
+        block["page"] = self.current_page
+        self._editing_text_block = block
+        self.selected_annotation_xref = None
+        self.selected_widget_xref = None
+        self.inline_text_edit.setPlainText(block["text"])
+        self.inline_edit_card.setVisible(True)
+        self.inline_text_edit.setFocus()
+        self.inline_text_edit.selectAll()
+        self.statusBar().showMessage(
+            "Textabschnitt geladen – im Feld unten ändern (löschen/neu schreiben) und 'Änderung speichern'."
         )
-        if not ok:
+
+    def _apply_text_block_edit(self, new_text: str) -> None:
+        block = self._editing_text_block
+        if not block or not self.doc:
             return
+        pidx = block.get("page", self.current_page)
+        if not (0 <= pidx < len(self.doc)):
+            self._editing_text_block = None
+            return
+        page = self.doc[pidx]
         try:
             self._push_undo_state()
             rect = fitz.Rect(block["bbox"])
@@ -9076,6 +9101,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Textblock bearbeitet{shrunk}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Text konnte nicht bearbeitet werden:\n{e}")
+        finally:
+            self._editing_text_block = None
+            self.inline_edit_card.setVisible(False)
 
     def _handle_preview_click(self, x: float, y: float) -> None:
         if not self.doc:
