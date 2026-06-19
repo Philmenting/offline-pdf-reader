@@ -4002,13 +4002,13 @@ class MainWindow(QMainWindow):
                 border-right: 1px solid #e1e4ec;
             }
             QWidget[role="ribbongroup"] {
-                background: rgba(255, 255, 255, 0.9);
-                border: 1px solid #e4e8f4;
-                border-radius: 14px;
+                background: transparent;
+                border: none;
+                border-right: 1px solid #e9ecf3;
             }
             QLabel[role="ribbontitle"] {
-                color: #5f6c8c;
-                font-size: 11px;
+                color: #97a0b8;
+                font-size: 10px;
                 font-weight: 700;
                 letter-spacing: 0.08em;
                 text-transform: uppercase;
