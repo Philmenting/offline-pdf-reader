@@ -2577,6 +2577,34 @@ class MainWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave_tick)
         self._autosave_timer.start()
 
+        # ── Untere Zoom-Leiste (OnlyOffice-Stil, rechts in der Statusbar) ──
+        self.status_page_label = QLabel("")
+        self.status_page_label.setProperty("role", "statusinfo")
+        btn_status_zoom_out = _icon_btn("−", "Verkleinern")
+        btn_status_zoom_out.clicked.connect(self.zoom_out)
+        self.status_zoom_label = QLabel("100%")
+        self.status_zoom_label.setProperty("role", "statusinfo")
+        self.status_zoom_label.setMinimumWidth(46)
+        self.status_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_status_zoom_in = _icon_btn("+", "Vergrößern")
+        btn_status_zoom_in.clicked.connect(self.zoom_in)
+        btn_status_fit = _icon_btn("⊡", "An Breite anpassen")
+        btn_status_fit.clicked.connect(self.fit_to_width)
+        self.statusBar().addPermanentWidget(self.status_page_label)
+        self.statusBar().addPermanentWidget(btn_status_zoom_out)
+        self.statusBar().addPermanentWidget(self.status_zoom_label)
+        self.statusBar().addPermanentWidget(btn_status_zoom_in)
+        self.statusBar().addPermanentWidget(btn_status_fit)
+
+    def _update_zoom_indicator(self) -> None:
+        if not hasattr(self, "status_zoom_label"):
+            return
+        self.status_zoom_label.setText(f"{int(self.zoom_factor * 100)}%")
+        if self.doc and len(self.doc):
+            self.status_page_label.setText(f"Seite {self.current_page + 1} / {len(self.doc)}")
+        else:
+            self.status_page_label.setText("")
+
     def _configure_tesseract_runtime(self) -> None:
         if os.name != "nt":
             return
@@ -3962,39 +3990,41 @@ class MainWindow(QMainWindow):
 
             /* ── Toolbar-Hintergrund ───────────────────────────────────── */
             QWidget[role="toolbar"] {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:0.55 #f7f9ff, stop:1 #eef3ff);
-                border-bottom: 1px solid #e4e7ef;
-            }
-
-            /* ── Getabbte Ribbon-Leiste (OnlyOffice-Stil) ─────────────── */
-            QTabWidget[role="ribbon"]::pane {
-                border: none;
-                background: transparent;
-            }
-            QTabWidget[role="ribbon"] > QTabBar {
-                qproperty-drawBase: 0;
-            }
-            QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
                 background: #ffffff;
                 border-bottom: 1px solid #e4e7ef;
             }
+
+            /* ── Getabbte Ribbon-Leiste (OnlyOffice: rotes Kopfband) ──── */
+            QTabWidget[role="ribbon"]::pane {
+                border: none;
+                background: #ffffff;
+                border-bottom: 1px solid #e4e7ef;
+            }
+            QTabWidget[role="ribbon"] > QTabBar {
+                qproperty-drawBase: 0;
+                background: #aa3c34;
+            }
+            QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
+                background: #ffffff;
+            }
+            QTabBar {
+                background: #aa3c34;
+            }
             QTabBar::tab {
                 background: transparent;
-                color: #5f6c8c;
-                padding: 8px 18px;
+                color: #f2d7d4;
+                padding: 9px 20px;
                 margin: 0;
                 border: none;
-                border-bottom: 2px solid transparent;
                 font-size: 13px;
                 font-weight: 600;
             }
             QTabBar::tab:hover {
-                color: #1e2432;
-                background: #eef1f8;
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.14);
             }
             QTabBar::tab:selected {
-                color: #b5413b;
-                border-bottom: 2px solid #b5413b;
+                color: #aa3c34;
                 background: #ffffff;
             }
 
@@ -4088,6 +4118,30 @@ class MainWindow(QMainWindow):
                 background: #f5f6f9;
                 color: #aab0c4;
                 border-color: #e8eaf0;
+            }
+
+            /* ── Flache Aktions-Buttons (Ribbon & Sidebar, OnlyOffice) ── */
+            QPushButton[btnRole="action"] {
+                background: #ffffff;
+                color: #303a4d;
+                border: 1px solid #e6e9f1;
+                border-radius: 6px;
+                padding: 6px 11px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton[btnRole="action"]:hover {
+                background: #f4f6fa;
+                border-color: #cfd6e6;
+            }
+            QPushButton[btnRole="action"]:pressed {
+                background: #e9edf4;
+                border-color: #b9c2da;
+            }
+            QPushButton[btnRole="action"]:disabled {
+                background: #fafbfc;
+                color: #b3b9c8;
+                border-color: #eef0f5;
             }
 
             /* ── Icon-Button (kompakt, quadratisch) ───────────────────── */
@@ -4993,6 +5047,7 @@ class MainWindow(QMainWindow):
         self.page_info.setText(
             f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
         )
+        self._update_zoom_indicator()
         self._sync_thumbnail_selection()
         if self.pdf_path:
             self.statusBar().showMessage(f"{self.pdf_path.name} — Seite {self.current_page + 1}/{total}")
