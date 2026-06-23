@@ -41,6 +41,22 @@ standalone "load a PDF into a canvas" widget — it expects the editor API to be
 present. This means a genuine editor requires the sdkjs editor bundle, not just
 the engine binaries.
 
+## Building the engine from source
+
+The PDF editor engine is built from the ONLYOFFICE `sdkjs` **`word`** product —
+its config pulls in all 57 `pdf/src/*` modules (viewer, document, annotations,
+forms, drawings) plus the shared engine. Upstream's build is **concatenation
+only** (no Java/closure compiler), so it runs anywhere Python 3 is available.
+
+`npm run build-engine` does this end to end:
+
+1. downloads the `sdkjs` source tarball at a pinned commit (cached in `.build/`),
+2. runs `python3 build/build.py --product word`,
+3. vendors `deploy/sdkjs` into `vendor/onlyoffice/sdkjs/`.
+
+Output (`sdk-all-min.js` ~3.4 MB, `drawingfile.wasm` ~10 MB, common assets) is
+AGPL-3.0 and gitignored — produced on demand.
+
 ## Project layout
 
 ```
@@ -48,20 +64,26 @@ LICENSE                 GNU AGPL-3.0 (full text)
 NOTICE                  Attribution to ONLYOFFICE / Ascensio System SIA
 package.json
 scripts/
-  fetch-onlyoffice-pdf.mjs   Downloads pinned prebuilt engine -> vendor/
+  build-onlyoffice-pdf.mjs   Builds + vendors the sdkjs PDF engine
 server.mjs              Tiny static dev server (correct wasm MIME + headers)
 public/                 Our host app (HTML/CSS/JS shell around the engine)
-vendor/onlyoffice/      Fetched AGPL engine assets (gitignored)
+vendor/onlyoffice/      Built AGPL engine (gitignored)
+.build/                 Build workspace: source + tarball cache (gitignored)
 ```
 
 ## Getting started
 
 ```bash
-npm run fetch-engine   # download the pinned ONLYOFFICE PDF engine
+npm run build-engine   # build the ONLYOFFICE PDF engine from source (Python 3)
 npm start              # serve at http://localhost:3000
 ```
 
 ## Status
 
-Foundation in place: AGPL licensing, engine vendoring, dev server. The host
-application around the engine is under active development.
+Done: AGPL licensing, reproducible from-source engine build, dev server, host
+shell that loads the engine.
+
+Next: the editor UI. Two layers remain — fonts (`AllFonts.js`), and either
+building the upstream `web-apps/apps/pdfeditor` SPA or driving the
+`Asc.PDFEditorApi` directly from our own minimal UI — plus offline file open
+(local mode, no Document Server).

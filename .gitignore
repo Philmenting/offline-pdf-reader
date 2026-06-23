@@ -1,8 +1,11 @@
 # Dependencies
 node_modules/
 
-# Vendored ONLYOFFICE engine (large prebuilt assets — fetched via script)
+# Vendored ONLYOFFICE engine (built from source via script)
 vendor/onlyoffice/
+
+# Build workspace (downloaded sdkjs source + tarball cache)
+.build/
 
 # Build / runtime
 dist/

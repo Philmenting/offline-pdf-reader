@@ -5,7 +5,7 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "fetch-engine": "node scripts/fetch-onlyoffice-pdf.mjs",
+    "build-engine": "node scripts/build-onlyoffice-pdf.mjs",
     "start": "node server.mjs",
     "dev": "node server.mjs"
   },

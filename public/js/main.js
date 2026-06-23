@@ -6,7 +6,7 @@
  * milestone; see README "Key coupling constraint".
  */
 
-const ENGINE_BASE = "/vendor/onlyoffice/pdf/src/engine/";
+const ENGINE_BASE = "/vendor/onlyoffice/sdkjs/pdf/src/engine/";
 const statusEl = document.getElementById("status");
 const fileInput = document.getElementById("file-input");
 
