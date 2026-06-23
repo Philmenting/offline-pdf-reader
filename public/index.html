@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline PDF Editor</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">Offline PDF Editor</div>
+    <div class="toolbar">
+      <label class="btn" for="file-input">PDF öffnen</label>
+      <input id="file-input" type="file" accept="application/pdf" hidden>
+    </div>
+  </header>
+
+  <main id="viewer-host" class="viewer-host">
+    <div id="id_viewer" class="viewer"></div>
+    <div id="placeholder" class="placeholder">
+      <p>Öffne eine PDF-Datei, um zu beginnen.</p>
+      <p class="muted">Läuft vollständig offline im Browser — kein Server-Upload.</p>
+    </div>
+  </main>
+
+  <footer class="app-status" id="status">Engine wird geladen …</footer>
+
+  <script src="/js/main.js" type="module"></script>
+</body>
+</html>

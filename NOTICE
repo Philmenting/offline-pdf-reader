@@ -1,0 +1,23 @@
+offline-pdf-reader
+==================
+
+This product bundles and builds upon software developed by
+Ascensio System SIA as part of the ONLYOFFICE project.
+
+  ONLYOFFICE sdkjs — https://github.com/ONLYOFFICE/sdkjs
+  Copyright (C) Ascensio System SIA, 2009-2026
+  Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only)
+
+The PDF rendering and editing engine (the contents of `vendor/onlyoffice/`,
+fetched at build time) originates from the ONLYOFFICE sdkjs `pdf` module and
+remains under its original AGPL-3.0 license, including the Appropriate Legal
+Notices required by Section 5 of the AGPL. Original copyright headers in those
+files are preserved.
+
+Because this project links and distributes AGPL-3.0 code, the project as a
+whole is distributed under the GNU Affero General Public License v3.0. See the
+LICENSE file for the full license text.
+
+Trademarks: "ONLYOFFICE" is a trademark of Ascensio System SIA. No trademark
+rights are granted by the AGPL. This project is an independent work and is not
+endorsed by or affiliated with Ascensio System SIA.

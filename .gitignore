@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Vendored ONLYOFFICE engine (large prebuilt assets — fetched via script)
+vendor/onlyoffice/
+
+# Build / runtime
+dist/
+*.log
+.DS_Store
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
