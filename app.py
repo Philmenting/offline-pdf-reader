@@ -1176,6 +1176,7 @@ class MainWindow(QMainWindow):
         self.selected_widget_xref: int | None = None
         self.annotation_drag_state: dict | None = None
         self._editing_text_block: dict | None = None
+        self._inline_overlay: QTextEdit | None = None
         self.annotation_image_path: Path | None = None
         self.annotation_image_preview: QPixmap | None = None
 
@@ -4818,6 +4819,10 @@ class MainWindow(QMainWindow):
         return None
 
     def render_current_page(self) -> None:
+        if self._inline_overlay is not None:
+            self._inline_overlay.hide()
+            self._inline_overlay.deleteLater()
+            self._inline_overlay = None
         if not self.doc or len(self.doc) == 0:
             self._clear_pending_annotation()
             self.preview.clear()
@@ -9288,9 +9293,68 @@ class MainWindow(QMainWindow):
             best_area = area
         return best
 
+    def _page_rect_to_view(self, bbox: tuple) -> tuple[int, int, int, int] | None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return None
+        pixmap = self.preview.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return None
+        page = self.doc[self.current_page]
+        rot = self.page_rotations.get(self.current_page, 0) % 360
+        pw, ph = float(page.rect.width), float(page.rect.height)
+        x0, y0, x1, y1 = bbox
+        if rot == 0:
+            vx0, vy0 = x0, y0
+            vx1, vy1 = x1, y1
+        elif rot == 90:
+            vx0, vy0 = ph - y1, x0
+            vx1, vy1 = ph - y0, x1
+        elif rot == 180:
+            vx0, vy0 = pw - x1, ph - y1
+            vx1, vy1 = pw - x0, ph - y0
+        elif rot == 270:
+            vx0, vy0 = y0, pw - x1
+            vx1, vy1 = y1, pw - x0
+        else:
+            vx0, vy0 = x0, y0
+            vx1, vy1 = x1, y1
+        zf = max(self.zoom_factor, 1e-6)
+        sx, sy = int(vx0 * zf), int(vy0 * zf)
+        sw = int((vx1 - vx0) * zf)
+        sh = int((vy1 - vy0) * zf)
+        return sx, sy, sw, sh
+
+    def _close_inline_overlay(self, apply: bool = False) -> None:
+        if self._inline_overlay is None:
+            return
+        overlay = self._inline_overlay
+        self._inline_overlay = None
+        new_text = overlay.toPlainText() if apply else None
+        overlay.hide()
+        overlay.deleteLater()
+        if apply and self._editing_text_block is not None and new_text and new_text.strip():
+            self._apply_text_block_edit(new_text)
+        elif not apply:
+            self._editing_text_block = None
+
+    def _on_inline_overlay_key(self, event) -> bool:
+        from PySide6.QtCore import QEvent
+        if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            mods = event.modifiers()
+            if key == Qt.Key.Key_Escape:
+                self._close_inline_overlay(apply=False)
+                self.statusBar().showMessage("Textbearbeitung abgebrochen.")
+                return True
+            if key == Qt.Key.Key_Return and mods & Qt.KeyboardModifier.ControlModifier:
+                self._close_inline_overlay(apply=True)
+                return True
+        return False
+
     def _edit_text_block_at_view(self, x: float, y: float) -> None:
         if not self.doc or not (0 <= self.current_page < len(self.doc)):
             return
+        self._close_inline_overlay(apply=False)
         page = self.doc[self.current_page]
         point = self._view_to_page_point(x, y)
         if point is None:
@@ -9298,28 +9362,59 @@ class MainWindow(QMainWindow):
         block = self._find_text_block_at(page, point)
         if block is None:
             self.statusBar().showMessage(
-                "Kein bearbeitbarer Text an dieser Stelle. Hinweis: Auf gescannten Seiten "
-                "gibt es keinen editierbaren Text. Doppelklick auf einen Textabschnitt zum Bearbeiten."
+                "Kein bearbeitbarer Text an dieser Stelle. Auf gescannten Seiten "
+                "gibt es keinen editierbaren Text."
             )
             return
-        # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
-        # einen Modal-Dialog zu öffnen.
         block["page"] = self.current_page
         self._editing_text_block = block
         self.selected_annotation_xref = None
         self.selected_widget_xref = None
-        self.inline_text_edit.setPlainText(block["text"])
-        self.inline_edit_card.setVisible(True)
-        # Eingabefeld in den sichtbaren Bereich der Sidebar scrollen, damit es
-        # sofort auffällt.
-        try:
-            self.annotation_panel_scroll.ensureWidgetVisible(self.inline_edit_card)
-        except Exception:
-            pass
-        self.inline_text_edit.setFocus()
-        self.inline_text_edit.selectAll()
+        view_rect = self._page_rect_to_view(block["bbox"])
+        if view_rect is None:
+            return
+        vx, vy, vw, vh = view_rect
+        pad = 4
+        vx -= pad
+        vy -= pad
+        vw += pad * 2
+        vh += pad * 2
+        min_h = 32
+        if vh < min_h:
+            vh = min_h
+        overlay = QTextEdit(self.preview)
+        overlay.setPlainText(block["text"])
+        font_pt = max(8, int(block["size"] * self.zoom_factor * 0.72))
+        r, g, b = block["color"]
+        overlay.setStyleSheet(
+            f"QTextEdit {{"
+            f"  background: rgba(255, 255, 240, 230);"
+            f"  color: rgb({int(r*255)}, {int(g*255)}, {int(b*255)});"
+            f"  border: 2px solid #3d5afe;"
+            f"  border-radius: 3px;"
+            f"  padding: 2px;"
+            f"  font-size: {font_pt}px;"
+            f"  font-family: sans-serif;"
+            f"}}"
+        )
+        overlay.setGeometry(vx, vy, max(vw, 120), max(vh, min_h))
+        overlay.selectAll()
+        overlay.show()
+        overlay.setFocus()
+        self._inline_overlay = overlay
+        original_key_press = overlay.keyPressEvent
+        def _key_handler(event):
+            if self._on_inline_overlay_key(event):
+                return
+            original_key_press(event)
+        overlay.keyPressEvent = _key_handler
+        def _focus_out(e):
+            QTextEdit.focusOutEvent(overlay, e)
+            if self._inline_overlay is overlay:
+                self._close_inline_overlay(apply=True)
+        overlay.focusOutEvent = _focus_out
         self.statusBar().showMessage(
-            "Textabschnitt geladen – rechts im Feld bearbeiten und 'Änderung speichern' klicken."
+            "Text direkt bearbeiten. Ctrl+Enter = Speichern, Escape = Abbrechen."
         )
 
     def _apply_text_block_edit(self, new_text: str) -> None:
