@@ -12,15 +12,30 @@
     <div class="toolbar">
       <label class="btn" for="file-input">PDF öffnen</label>
       <input id="file-input" type="file" accept="application/pdf" hidden>
+      <span class="sep"></span>
+      <button class="btn ghost" id="btn-zoom-out" title="Verkleinern" disabled>−</button>
+      <button class="btn ghost" id="btn-zoom-in" title="Vergrößern" disabled>+</button>
+      <button class="btn ghost" id="btn-fit-width" title="An Breite anpassen" disabled>Breite</button>
+      <button class="btn ghost" id="btn-fit-page" title="Ganze Seite" disabled>Seite</button>
+      <span class="sep"></span>
+      <button class="btn ghost" id="btn-rotate-left" title="Links drehen" disabled>↺</button>
+      <button class="btn ghost" id="btn-rotate-right" title="Rechts drehen" disabled>↻</button>
     </div>
   </header>
 
-  <main id="viewer-host" class="viewer-host">
-    <div id="id_viewer" class="viewer"></div>
-    <div id="placeholder" class="placeholder">
-      <p>Öffne eine PDF-Datei, um zu beginnen.</p>
-      <p class="muted">Läuft vollständig offline im Browser — kein Server-Upload.</p>
-    </div>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div id="thumbnails" class="thumbnails"></div>
+    </aside>
+    <section class="viewer-host">
+      <!-- ONLYOFFICE CViewer mounts its canvas here; cursor target id is required. -->
+      <div id="id_viewer" class="viewer"></div>
+      <div id="id_target_cursor" class="cursor-target"></div>
+      <div id="placeholder" class="placeholder">
+        <p>Öffne eine PDF-Datei, um zu beginnen.</p>
+        <p class="muted">Läuft vollständig offline im Browser — kein Server-Upload.</p>
+      </div>
+    </section>
   </main>
 
   <footer class="app-status" id="status">Engine wird geladen …</footer>

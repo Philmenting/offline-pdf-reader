@@ -78,12 +78,45 @@ npm run build-engine   # build the ONLYOFFICE PDF engine from source (Python 3)
 npm start              # serve at http://localhost:3000
 ```
 
+## Host integration
+
+The host (`public/`) drives ONLYOFFICE's **standalone viewer** API, mirroring
+upstream's own `sdkjs/pdf/test` harness but as our own minimal UI:
+
+```js
+const viewer = new AscViewer.CViewer("id_viewer", {
+  sdkjsPath: "/vendor/onlyoffice/sdkjs",
+  fontsPath: "/vendor/fonts/",
+});
+viewer.open(arrayBuffer);          // + setZoom / setZoomMode / rotatePage
+viewer.createThumbnails("thumbnails");
+```
+
+The built engine bundle `pdf/src/engine/viewer.js` already includes the
+high-level `CViewer` wrapper, so a single script provides the whole API. We open
+local files entirely in the browser (FileReader → ArrayBuffer), so there is no
+server upload and no Document Server.
+
+## Required: the font registry (`AllFonts.js`)
+
+The engine needs `vendor/onlyoffice/sdkjs/common/AllFonts.js` — a generated
+registry of font metadata — to open **any** PDF. It is **not** in the sdkjs repo:
+it is produced by ONLYOFFICE's `core` C++ tool `AllFontsGen` from the
+[`core-fonts`](https://github.com/ONLYOFFICE/core-fonts) TTFs, alongside the TTF
+files served from `fontsPath`.
+
+The host preflights this file and shows an actionable message if it is missing.
+Generating it from `core-fonts` (a Node port of `AllFontsGen`) is the next
+milestone; until then, drop a prebuilt `AllFonts.js` + `fonts/` from any
+ONLYOFFICE Docs/Desktop install into the paths above.
+
 ## Status
 
-Done: AGPL licensing, reproducible from-source engine build, dev server, host
-shell that loads the engine.
-
-Next: the editor UI. Two layers remain — fonts (`AllFonts.js`), and either
-building the upstream `web-apps/apps/pdfeditor` SPA or driving the
-`Asc.PDFEditorApi` directly from our own minimal UI — plus offline file open
-(local mode, no Document Server).
+- ✅ AGPL licensing + attribution
+- ✅ Reproducible from-source engine build (`npm run build-engine`)
+- ✅ Zero-dependency dev server (correct wasm MIME, COOP/COEP)
+- ✅ Standalone viewer host wired to `AscViewer.CViewer` (open, zoom, rotate,
+     thumbnails, drag & drop) — needs in-browser verification
+- ⏳ Font registry `AllFonts.js` + TTFs (blocks actual rendering)
+- ⏳ Editing (annotations/forms/text) via the full `Asc.PDFEditorApi`
+     (the `word/sdk-all.js` bundle is already built and vendored for this)

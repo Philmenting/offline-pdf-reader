@@ -1,18 +1,34 @@
 /**
- * Host bootstrap for the offline PDF editor.
+ * Host for the offline PDF editor, built on the ONLYOFFICE standalone viewer
+ * (AscViewer.CViewer). This mirrors upstream's own sdkjs/pdf/test harness
+ * (base.js) but as our own minimal UI.
  *
- * Loads the vendored ONLYOFFICE PDF engine and reports its status. Wiring the
- * full editor API (Asc.PDFEditorApi) that drives AscViewer.CViewer is the next
- * milestone; see README "Key coupling constraint".
+ * The built engine bundle `pdf/src/engine/viewer.js` already includes the
+ * high-level CViewer wrapper, so a single script provides:
+ *   new AscViewer.CViewer(mountId, { sdkjsPath, fontsPath, theme })
+ *     .open(arrayBuffer) / .setZoom / .setZoomMode / .rotatePage
+ *     .createThumbnails(panelId) / .resize() / .registerEvent(...)
+ *
+ * The font registry (common/AllFonts.js) and TTFs (fontsPath) are loaded
+ * lazily by the engine on first open.
  */
 
-const ENGINE_BASE = "/vendor/onlyoffice/sdkjs/pdf/src/engine/";
-const statusEl = document.getElementById("status");
-const fileInput = document.getElementById("file-input");
+const SDKJS_PATH = "/vendor/onlyoffice/sdkjs";
+const FONTS_PATH = "/vendor/fonts/";
+const ENGINE_SCRIPT = `${SDKJS_PATH}/pdf/src/engine/viewer.js`;
 
-function setStatus(msg) {
-  statusEl.textContent = msg;
-}
+const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
+
+// AscCommon.ViewerZoomMode enum (sdkjs/pdf/src/viewer.js). Hardcoded because
+// the compiled engine bundle renames the symbol, so it isn't reachable by name.
+const ZOOM_MODE = { Custom: 0, Width: 1, Page: 2 };
+
+const el = (id) => document.getElementById(id);
+const statusEl = el("status");
+const setStatus = (msg) => { statusEl.textContent = msg; };
+
+let viewer = null;
+let thumbnails = null;
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -20,57 +36,108 @@ function loadScript(src) {
     s.src = src;
     s.async = false;
     s.onload = () => resolve(src);
-    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    s.onerror = () => reject(new Error(`Konnte ${src} nicht laden`));
     document.head.appendChild(s);
   });
 }
 
-async function loadEngine() {
+async function initEngine() {
   setStatus("PDF-Engine wird geladen …");
-  // The engine reads these to locate its WASM + cmap relative to the host.
-  window.AscViewer = window.AscViewer || {};
-  window.AscViewer.baseUrl = ENGINE_BASE;
-  window.AscViewer.baseEngineUrl = ENGINE_BASE;
-
-  await loadScript(ENGINE_BASE + "drawingfile.js");
-  await loadScript(ENGINE_BASE + "viewer.js");
-
-  const hasViewer = !!(window.AscViewer && window.AscViewer.CViewer);
-  const hasCommon = !!(window.AscCommon && window.AscCommon.CViewer);
-  if (!hasViewer && !hasCommon) {
+  await loadScript(ENGINE_SCRIPT);
+  if (!(window.AscViewer && typeof window.AscViewer.CViewer === "function")) {
     throw new Error("Engine geladen, aber AscViewer.CViewer fehlt.");
   }
-  setStatus("PDF-Engine bereit. Editor-API-Anbindung folgt (siehe README).");
-  return { hasViewer, hasCommon };
+
+  viewer = new window.AscViewer.CViewer("id_viewer", {
+    sdkjsPath: SDKJS_PATH,
+    fontsPath: FONTS_PATH,
+  });
+  thumbnails = viewer.createThumbnails("thumbnails");
+
+  window.addEventListener("resize", () => {
+    viewer && viewer.resize();
+    thumbnails && thumbnails.resize();
+  });
+
+  // The engine requires the font registry (common/AllFonts.js) to open any PDF.
+  // Preflight it so we can give an actionable message instead of a silent fail.
+  const fontsOk = await fetch(`${SDKJS_PATH}/common/AllFonts.js`, { method: "HEAD" })
+    .then((r) => r.ok)
+    .catch(() => false);
+  if (!fontsOk) {
+    setStatus("Engine bereit – aber Font-Registry fehlt: vendor/onlyoffice/sdkjs/common/AllFonts.js (siehe README).");
+    return;
+  }
+
+  setStatus("Bereit. Öffne eine PDF-Datei.");
+}
+
+function enableTools(on) {
+  for (const id of ["btn-zoom-out", "btn-zoom-in", "btn-fit-width", "btn-fit-page", "btn-rotate-left", "btn-rotate-right"]) {
+    el(id).disabled = !on;
+  }
+}
+
+function currentZoom() {
+  return viewer ? Math.round(viewer.getZoom()) : 100;
+}
+
+function stepZoom(dir) {
+  const z = currentZoom();
+  if (dir > 0) {
+    const next = ZOOM_STEPS.find((v) => v > z);
+    if (next) viewer.setZoom(next);
+  } else {
+    const below = [...ZOOM_STEPS].reverse().find((v) => v < z);
+    if (below) viewer.setZoom(below);
+  }
+  setStatus(`Zoom: ${currentZoom()} %`);
+}
+
+function openArrayBuffer(buf, name) {
+  if (!viewer) return;
+  const bytes = new Uint8Array(buf);
+  const magic = String.fromCharCode(...bytes.slice(0, 5));
+  if (magic !== "%PDF-") {
+    setStatus(`„${name}" ist keine gültige PDF-Datei.`);
+    return;
+  }
+  el("placeholder").style.display = "none";
+  viewer.open(buf);
+  viewer.resize();
+  enableTools(true);
+  setStatus(`„${name}" geöffnet (${(bytes.length / 1024).toFixed(0)} KB).`);
 }
 
 function onFileChosen(file) {
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
-    const bytes = new Uint8Array(reader.result);
-    // Sanity check the PDF magic header.
-    const magic = String.fromCharCode(...bytes.slice(0, 5));
-    if (magic !== "%PDF-") {
-      setStatus(`„${file.name}" ist keine gültige PDF-Datei.`);
-      return;
-    }
-    document.getElementById("placeholder").style.display = "none";
-    setStatus(
-      `„${file.name}" geladen (${(bytes.length / 1024).toFixed(0)} KB). ` +
-      `Rendering folgt mit der Editor-API-Anbindung.`
-    );
-    // TODO(next milestone): construct Asc.PDFEditorApi, then
-    // new AscViewer.CViewer("id_viewer", api) and open these bytes.
-    window.__pdfBytes = bytes;
-  };
+  reader.onload = () => openArrayBuffer(reader.result, file.name);
   reader.onerror = () => setStatus("Datei konnte nicht gelesen werden.");
   reader.readAsArrayBuffer(file);
 }
 
-fileInput.addEventListener("change", (e) => onFileChosen(e.target.files[0]));
+function wireUi() {
+  el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
+  el("btn-zoom-in").addEventListener("click", () => stepZoom(1));
+  el("btn-zoom-out").addEventListener("click", () => stepZoom(-1));
+  el("btn-fit-width").addEventListener("click", () => viewer.setZoomMode(ZOOM_MODE.Width));
+  el("btn-fit-page").addEventListener("click", () => viewer.setZoomMode(ZOOM_MODE.Page));
+  el("btn-rotate-left").addEventListener("click", () => viewer.rotatePage(undefined, -90, true));
+  el("btn-rotate-right").addEventListener("click", () => viewer.rotatePage(undefined, 90, true));
 
-loadEngine().catch((err) => {
+  // Drag & drop onto the viewer.
+  const host = document.querySelector(".viewer-host");
+  host.addEventListener("dragover", (e) => { e.preventDefault(); });
+  host.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    onFileChosen(f);
+  });
+}
+
+wireUi();
+initEngine().catch((err) => {
   console.error(err);
   setStatus(`Fehler beim Laden der Engine: ${err.message}`);
 });
