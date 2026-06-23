@@ -9417,6 +9417,72 @@ class MainWindow(QMainWindow):
             "Text direkt bearbeiten. Ctrl+Enter = Speichern, Escape = Abbrechen."
         )
 
+    @staticmethod
+    def _to_pdf_literal(txt: str) -> str:
+        out: list[str] = []
+        for ch in txt:
+            code = ord(ch)
+            if code > 127:
+                out.append(f"\\{code:03o}")
+            elif ch in ("(", ")", "\\"):
+                out.append(f"\\{ch}")
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    def _try_content_stream_edit(self, page, old_text: str, new_text: str) -> bool:
+        """Replace text directly in the PDF content stream (non-destructive).
+        Handles single-line and multi-line blocks. Falls back gracefully."""
+        try:
+            page.clean_contents()
+            xrefs = page.get_contents()
+            if not xrefs:
+                return False
+            old_lines = old_text.split("\n")
+            new_lines = new_text.split("\n")
+            while len(new_lines) < len(old_lines):
+                new_lines.append("")
+            for xref in xrefs:
+                stream = self.doc.xref_stream(xref)
+                if stream is None:
+                    continue
+                raw = stream.decode("latin-1")
+                replaced_any = False
+                for i, old_line in enumerate(old_lines):
+                    if not old_line.strip():
+                        continue
+                    repl = new_lines[i] if i < len(new_lines) else ""
+                    pdf_old = self._to_pdf_literal(old_line)
+                    pdf_new = self._to_pdf_literal(repl)
+                    old_hex = old_line.encode("latin-1", errors="replace").hex()
+                    new_hex = repl.encode("latin-1", errors="replace").hex()
+                    if f"[({pdf_old})]TJ" in raw:
+                        raw = raw.replace(f"[({pdf_old})]TJ", f"[({pdf_new})]TJ", 1)
+                        replaced_any = True
+                    elif f"({pdf_old})Tj" in raw:
+                        raw = raw.replace(f"({pdf_old})Tj", f"({pdf_new})Tj", 1)
+                        replaced_any = True
+                    elif f"<{old_hex}>" in raw:
+                        raw = raw.replace(f"<{old_hex}>", f"<{new_hex}>", 1)
+                        replaced_any = True
+                if replaced_any:
+                    if len(new_lines) > len(old_lines):
+                        overflow = " ".join(new_lines[len(old_lines):])
+                        if overflow.strip():
+                            last_old = old_lines[-1] if old_lines else ""
+                            pdf_last = self._to_pdf_literal(new_lines[len(old_lines) - 1] if len(old_lines) - 1 < len(new_lines) else "")
+                            combined = self._to_pdf_literal(
+                                (new_lines[len(old_lines) - 1] + " " + overflow).strip()
+                                if len(old_lines) - 1 < len(new_lines) else overflow
+                            )
+                            raw = raw.replace(f"[({pdf_last})]TJ", f"[({combined})]TJ", 1)
+                    self.doc.update_stream(xref, raw.encode("latin-1"))
+                    page.clean_contents()
+                    return True
+            return False
+        except Exception:
+            return False
+
     def _apply_text_block_edit(self, new_text: str) -> None:
         block = self._editing_text_block
         if not block or not self.doc:
@@ -9428,10 +9494,16 @@ class MainWindow(QMainWindow):
         page = self.doc[pidx]
         try:
             self._push_undo_state()
+            old_text = block["text"]
+            if self._try_content_stream_edit(page, old_text, new_text):
+                self._set_dirty(True)
+                self._refresh_thumbnails()
+                self.render_current_page()
+                self.statusBar().showMessage("Text direkt im PDF geändert")
+                return
             rect = fitz.Rect(block["bbox"])
             pad = 1.0
             cover = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
-            # Originaltext endgültig entfernen (Redaction) statt nur zu übermalen.
             if self._remove_content_in_rect(page, cover) is None:
                 return
             rc = -1.0
@@ -9457,7 +9529,7 @@ class MainWindow(QMainWindow):
             self._refresh_thumbnails()
             self.render_current_page()
             shrunk = " (Schrift verkleinert)" if attempt_size < block["size"] else ""
-            self.statusBar().showMessage(f"Textblock bearbeitet{shrunk}")
+            self.statusBar().showMessage(f"Textblock bearbeitet (Fallback){shrunk}")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Text konnte nicht bearbeitet werden:\n{e}")
         finally:
