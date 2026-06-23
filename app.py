@@ -1063,15 +1063,21 @@ class PreviewLabel(QLabel):
         super().__init__(*args, **kwargs)
         self._drag_origin: QPointF | None = None
         self._dragging = False
+        self._double_clicked = False
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            self._double_clicked = True
+            self._dragging = False
+            self._drag_origin = None
             pos = event.position()
             self.doubleClicked.emit(pos.x(), pos.y())
         super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._double_clicked:
+                return
             pos = event.position()
             self._drag_origin = pos
             self._dragging = True
@@ -1079,20 +1085,27 @@ class PreviewLabel(QLabel):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._dragging:
+        if self._dragging and not self._double_clicked:
             pos = event.position()
             self.dragMoved.emit(pos.x(), pos.y())
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._drag_origin is not None:
-            pos = event.position()
-            dx = pos.x() - self._drag_origin.x()
-            dy = pos.y() - self._drag_origin.y()
-            if abs(dx) < 4 and abs(dy) < 4:
-                self.clicked.emit(pos.x(), pos.y())
-            else:
-                self.dragFinished.emit(pos.x(), pos.y())
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._double_clicked:
+                self._double_clicked = False
+                self._drag_origin = None
+                self._dragging = False
+                super().mouseReleaseEvent(event)
+                return
+            if self._drag_origin is not None:
+                pos = event.position()
+                dx = pos.x() - self._drag_origin.x()
+                dy = pos.y() - self._drag_origin.y()
+                if abs(dx) < 4 and abs(dy) < 4:
+                    self.clicked.emit(pos.x(), pos.y())
+                else:
+                    self.dragFinished.emit(pos.x(), pos.y())
         self._drag_origin = None
         self._dragging = False
         super().mouseReleaseEvent(event)
@@ -3975,7 +3988,7 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid #e4e7ef;
             }
 
-            /* ── Getabbte Ribbon-Leiste (OnlyOffice: rotes Kopfband) ──── */
+            /* ── Getabbte Ribbon-Leiste ─────────────────────────────── */
             QTabWidget[role="ribbon"]::pane {
                 border: none;
                 background: #ffffff;
@@ -3983,17 +3996,17 @@ class MainWindow(QMainWindow):
             }
             QTabWidget[role="ribbon"] > QTabBar {
                 qproperty-drawBase: 0;
-                background: #aa3c34;
+                background: #2d3a5e;
             }
             QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
                 background: #ffffff;
             }
             QTabBar {
-                background: #aa3c34;
+                background: #2d3a5e;
             }
             QTabBar::tab {
                 background: transparent;
-                color: #f2d7d4;
+                color: rgba(255, 255, 255, 0.72);
                 padding: 9px 20px;
                 margin: 0;
                 border: none;
@@ -4002,10 +4015,10 @@ class MainWindow(QMainWindow):
             }
             QTabBar::tab:hover {
                 color: #ffffff;
-                background: rgba(255, 255, 255, 0.14);
+                background: rgba(255, 255, 255, 0.12);
             }
             QTabBar::tab:selected {
-                color: #aa3c34;
+                color: #2d3a5e;
                 background: #ffffff;
             }
 
@@ -4611,6 +4624,27 @@ class MainWindow(QMainWindow):
             }
             QSplitter::handle {
                 background: #22304a;
+            }
+            QTabWidget[role="ribbon"] > QTabBar, QTabBar {
+                background: #0d1522;
+            }
+            QTabBar::tab {
+                color: rgba(220, 230, 247, 0.65);
+            }
+            QTabBar::tab:hover {
+                color: #eef4ff;
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QTabBar::tab:selected {
+                color: #eef4ff;
+                background: #162235;
+            }
+            QTabWidget[role="ribbon"]::pane {
+                background: #162235;
+                border-bottom: 1px solid #22304a;
+            }
+            QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
+                background: #162235;
             }
         """
         self.setStyleSheet(base_styles + (dark_overrides if self._is_dark_mode() else ""))
