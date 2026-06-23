@@ -1054,6 +1054,7 @@ class ContinuousPageLabel(QLabel):
 
 class PreviewLabel(QLabel):
     clicked = Signal(float, float)
+    doubleClicked = Signal(float, float)
     dragStarted = Signal(float, float)
     dragMoved = Signal(float, float)
     dragFinished = Signal(float, float)
@@ -1062,6 +1063,12 @@ class PreviewLabel(QLabel):
         super().__init__(*args, **kwargs)
         self._drag_origin: QPointF | None = None
         self._dragging = False
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            self.doubleClicked.emit(pos.x(), pos.y())
+        super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1153,6 +1160,7 @@ class MainWindow(QMainWindow):
         self.thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
         self.thumb_list.pagesReordered.connect(self._reorder_pages_by_thumbnail_order)
         self.preview.clicked.connect(self._handle_preview_click)
+        self.preview.doubleClicked.connect(self._handle_preview_double_click)
         self.preview.dragStarted.connect(self._handle_preview_drag_start)
         self.preview.dragMoved.connect(self._handle_preview_drag_move)
         self.preview.dragFinished.connect(self._handle_preview_drag_finish)
@@ -1728,53 +1736,16 @@ class MainWindow(QMainWindow):
 
         self.annotation_panel = QWidget()
         self.annotation_panel.setProperty("role", "sidepanel")
-        self.annotation_panel.setMinimumWidth(240)
-        self.annotation_panel.setMaximumWidth(360)
+        self.annotation_panel.setMinimumWidth(220)
+        self.annotation_panel.setMaximumWidth(340)
         annotation_layout = QVBoxLayout(self.annotation_panel)
-        annotation_layout.setContentsMargins(12, 12, 12, 12)
-        annotation_layout.setSpacing(10)
-        annotation_title = QLabel("Annotieren")
-        annotation_title.setProperty("role", "paneltitle")
-        annotation_layout.addWidget(annotation_title)
-        annotation_subtitle = QLabel("Werkzeuge und Eigenschaften direkt in der Sidebar – ohne Dialog-Stapel.")
-        annotation_subtitle.setWordWrap(True)
-        annotation_subtitle.setProperty("role", "panelsubtitle")
-        annotation_layout.addWidget(annotation_subtitle)
-
-        tool_card = QWidget()
-        tool_card.setProperty("role", "panelcard")
-        tool_card_layout = QVBoxLayout(tool_card)
-        tool_card_layout.setContentsMargins(12, 12, 12, 12)
-        tool_card_layout.setSpacing(10)
-        tool_card_title = QLabel("Werkzeuge")
-        tool_card_title.setProperty("role", "cardtitle")
-        tool_card_layout.addWidget(tool_card_title)
-        tool_grid = QGridLayout()
-        tool_grid.setHorizontalSpacing(8)
-        tool_grid.setVerticalSpacing(8)
-        tool_grid.addWidget(btn_add_text, 0, 0)
-        tool_grid.addWidget(btn_add_rect, 0, 1)
-        tool_grid.addWidget(btn_add_ellipse, 1, 0)
-        tool_grid.addWidget(btn_add_line, 1, 1)
-        tool_grid.addWidget(btn_add_arrow, 2, 0)
-        tool_grid.addWidget(btn_add_freehand, 2, 1)
-        tool_grid.addWidget(btn_add_highlight, 3, 0)
-        tool_grid.addWidget(btn_add_strikeout, 3, 1)
-        tool_grid.addWidget(btn_add_underline, 4, 0)
-        tool_grid.addWidget(btn_add_link, 4, 1)
-        tool_grid.addWidget(btn_add_image, 5, 0)
-        tool_grid.addWidget(btn_add_note, 5, 1)
-        tool_grid.addWidget(btn_add_redact, 6, 0)
-        tool_grid.addWidget(btn_replace_text, 6, 1)
-        tool_grid.addWidget(btn_edit_text, 7, 0)
-        tool_grid.addWidget(btn_add_star, 7, 1)
-        tool_card_layout.addLayout(tool_grid)
-        annotation_layout.addWidget(tool_card)
+        annotation_layout.setContentsMargins(10, 10, 10, 10)
+        annotation_layout.setSpacing(8)
 
         properties_card = QWidget()
         properties_card.setProperty("role", "panelcard")
         properties_layout = QVBoxLayout(properties_card)
-        properties_layout.setContentsMargins(12, 12, 12, 12)
+        properties_layout.setContentsMargins(10, 10, 10, 10)
         properties_layout.setSpacing(8)
         properties_title = QLabel("Eigenschaften")
         properties_title.setProperty("role", "cardtitle")
@@ -1920,9 +1891,8 @@ class MainWindow(QMainWindow):
         self.btn_delete_annotation.clicked.connect(self.delete_selected_annotation)
         self.btn_delete_annotation.setEnabled(False)
         annotation_layout.addWidget(self.btn_delete_annotation)
-        self.btn_apply_redactions = _action_btn("Schwärzungen final anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
+        self.btn_apply_redactions = _action_btn("Schwärzungen anwenden", "Alle platzierten Schwärzungen endgültig in das PDF einbrennen")
         self.btn_apply_redactions.clicked.connect(self.apply_pending_redactions)
-        annotation_layout.addWidget(self.btn_apply_redactions)
 
         # ── Kommentare / Annotationsübersicht ─────────────────────────────
         self.comment_card = QWidget()
@@ -1978,8 +1948,8 @@ class MainWindow(QMainWindow):
         self.annotation_panel_scroll.setWidgetResizable(True)
         self.annotation_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.annotation_panel_scroll.setProperty("role", "previewarea")
-        self.annotation_panel_scroll.setMinimumWidth(240)
-        self.annotation_panel_scroll.setMaximumWidth(372)
+        self.annotation_panel_scroll.setMinimumWidth(220)
+        self.annotation_panel_scroll.setMaximumWidth(340)
         self.annotation_panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         # ── Toolbar ──────────────────────────────────────────────────────────
@@ -2039,7 +2009,7 @@ class MainWindow(QMainWindow):
         self.ribbon_tabs.addTab(
             _ribbon_tab([
                 _ribbon_group("Navigation", [btn_first, btn_prev, btn_next, btn_last, btn_goto]),
-                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo, _rb("Text bearbeiten", self.edit_text_tool, "Vorhandenen Text anklicken und direkt bearbeiten")]),
+                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo]),
                 _ribbon_group("Suche", [btn_search]),
             ]),
             "Start",
@@ -2080,6 +2050,16 @@ class MainWindow(QMainWindow):
                 _ribbon_group("Mehr", [_rb("Bilder extrahieren", self.extract_images_from_pdf), _rb("Ordner aggregiert", self.export_folder_aggregate), _rb("Stapel-Umbenennen", self.batch_rename_folder), _rb("Seitenübersicht", self.show_page_overview)]),
             ]),
             "Exportieren",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Text", [btn_add_text, btn_edit_text, btn_replace_text]),
+                _ribbon_group("Formen", [btn_add_rect, btn_add_ellipse, btn_add_star, btn_add_line, btn_add_arrow]),
+                _ribbon_group("Markup", [btn_add_highlight, btn_add_strikeout, btn_add_underline, btn_add_freehand]),
+                _ribbon_group("Einfügen", [btn_add_image, btn_add_link, btn_add_note]),
+                _ribbon_group("Korrektur", [btn_add_redact, self.btn_apply_redactions]),
+            ]),
+            "Annotieren",
         )
         self.ribbon_tabs.setCurrentIndex(1)  # "Start" als Standard
 
@@ -2141,7 +2121,7 @@ class MainWindow(QMainWindow):
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
         self.content_splitter.setStretchFactor(2, 0)
-        self.content_splitter.setSizes([170, 840, 310])
+        self.content_splitter.setSizes([170, 900, 260])
 
         # ── Haupt-Layout ─────────────────────────────────────────────────────
         toolbar_scroll = QScrollArea()
@@ -8635,6 +8615,9 @@ class MainWindow(QMainWindow):
         self.annotation_tool_kind = kind
         self._set_annotation_defaults(kind)
         self._sync_annotation_tool_buttons()
+        annotieren_idx = self.ribbon_tabs.count() - 1
+        if self.ribbon_tabs.tabText(annotieren_idx) == "Annotieren":
+            self.ribbon_tabs.setCurrentIndex(annotieren_idx)
         if activate:
             self.activate_selected_annotation_tool()
 
@@ -8718,7 +8701,7 @@ class MainWindow(QMainWindow):
         if kind == "text-edit":
             self._begin_pending_annotation(
                 {"kind": "text-edit"},
-                "Text-Bearbeiten aktiv – klicke auf einen vorhandenen Textabschnitt. Mit 'Modus verlassen' beenden.",
+                "Text-Bearbeiten aktiv – klicke auf einen Textabschnitt. Tipp: Doppelklick auf Text funktioniert auch ohne diesen Modus.",
             )
             return
 
@@ -9315,8 +9298,8 @@ class MainWindow(QMainWindow):
         block = self._find_text_block_at(page, point)
         if block is None:
             self.statusBar().showMessage(
-                "Kein bearbeitbarer Text an dieser Stelle. Hinweis: Auf gescannten/bild-basierten "
-                "Seiten gibt es keinen editierbaren Text – bitte direkt auf einen Textabschnitt klicken."
+                "Kein bearbeitbarer Text an dieser Stelle. Hinweis: Auf gescannten Seiten "
+                "gibt es keinen editierbaren Text. Doppelklick auf einen Textabschnitt zum Bearbeiten."
             )
             return
         # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
@@ -9336,7 +9319,7 @@ class MainWindow(QMainWindow):
         self.inline_text_edit.setFocus()
         self.inline_text_edit.selectAll()
         self.statusBar().showMessage(
-            "Textabschnitt geladen – im Feld 'Text bearbeiten' (rechte Sidebar) ändern und 'Änderung speichern'."
+            "Textabschnitt geladen – rechts im Feld bearbeiten und 'Änderung speichern' klicken."
         )
 
     def _apply_text_block_edit(self, new_text: str) -> None:
@@ -9385,6 +9368,11 @@ class MainWindow(QMainWindow):
         finally:
             self._editing_text_block = None
             self.inline_edit_card.setVisible(False)
+
+    def _handle_preview_double_click(self, x: float, y: float) -> None:
+        if not self.doc or not (0 <= self.current_page < len(self.doc)):
+            return
+        self._edit_text_block_at_view(x, y)
 
     def _handle_preview_click(self, x: float, y: float) -> None:
         if not self.doc:
