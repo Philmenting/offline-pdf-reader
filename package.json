@@ -8,7 +8,8 @@
     "build-engine": "node scripts/build-onlyoffice-pdf.mjs",
     "generate-fonts": "node scripts/generate-allfonts.mjs",
     "start": "node server.mjs",
-    "dev": "node server.mjs"
+    "dev": "node server.mjs",
+    "dist:win": "node scripts/build-portable-win.mjs"
   },
   "engines": {
     "node": ">=18"
