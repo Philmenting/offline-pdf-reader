@@ -29,6 +29,9 @@ const MIME = {
   ".png": "image/png",
   ".ico": "image/x-icon",
   ".pdf": "application/pdf",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".ttc": "font/collection",
 };
 
 // Map URL prefixes to on-disk directories.

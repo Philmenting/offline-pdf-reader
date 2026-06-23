@@ -65,6 +65,7 @@ NOTICE                  Attribution to ONLYOFFICE / Ascensio System SIA
 package.json
 scripts/
   build-onlyoffice-pdf.mjs   Builds + vendors the sdkjs PDF engine
+  generate-allfonts.mjs      Downloads core-fonts + generates AllFonts.js
 server.mjs              Tiny static dev server (correct wasm MIME + headers)
 public/                 Our host app (HTML/CSS/JS shell around the engine)
 vendor/onlyoffice/      Built AGPL engine (gitignored)
@@ -75,6 +76,7 @@ vendor/onlyoffice/      Built AGPL engine (gitignored)
 
 ```bash
 npm run build-engine   # build the ONLYOFFICE PDF engine from source (Python 3)
+npm run generate-fonts # download core-fonts + generate AllFonts.js registry
 npm start              # serve at http://localhost:3000
 ```
 
@@ -97,18 +99,20 @@ high-level `CViewer` wrapper, so a single script provides the whole API. We open
 local files entirely in the browser (FileReader → ArrayBuffer), so there is no
 server upload and no Document Server.
 
-## Required: the font registry (`AllFonts.js`)
+## Font registry (`AllFonts.js`)
 
 The engine needs `vendor/onlyoffice/sdkjs/common/AllFonts.js` — a generated
-registry of font metadata — to open **any** PDF. It is **not** in the sdkjs repo:
-it is produced by ONLYOFFICE's `core` C++ tool `AllFontsGen` from the
-[`core-fonts`](https://github.com/ONLYOFFICE/core-fonts) TTFs, alongside the TTF
-files served from `fontsPath`.
+registry of font metadata — to open **any** PDF. `npm run generate-fonts` builds
+it automatically:
 
-The host preflights this file and shows an actionable message if it is missing.
-Generating it from `core-fonts` (a Node port of `AllFontsGen`) is the next
-milestone; until then, drop a prebuilt `AllFonts.js` + `fonts/` from any
-ONLYOFFICE Docs/Desktop install into the paths above.
+1. Downloads TTF/OTF files from [`ONLYOFFICE/core-fonts`](https://github.com/ONLYOFFICE/core-fonts)
+   (cached in `.build/`).
+2. Parses TTF name/OS2/head tables to extract family names and style variants.
+3. Groups fonts into families (Regular, Italic, Bold, Bold Italic).
+4. Generates `vendor/onlyoffice/sdkjs/common/AllFonts.js` (the registry) and
+   copies the font files to `vendor/fonts/`.
+
+Output: ~120 font families, ~189 font files. All gitignored.
 
 ## Status
 
@@ -117,6 +121,6 @@ ONLYOFFICE Docs/Desktop install into the paths above.
 - ✅ Zero-dependency dev server (correct wasm MIME, COOP/COEP)
 - ✅ Standalone viewer host wired to `AscViewer.CViewer` (open, zoom, rotate,
      thumbnails, drag & drop) — needs in-browser verification
-- ⏳ Font registry `AllFonts.js` + TTFs (blocks actual rendering)
+- ✅ Font registry `AllFonts.js` + TTFs generated from core-fonts (`npm run generate-fonts`)
 - ⏳ Editing (annotations/forms/text) via the full `Asc.PDFEditorApi`
      (the `word/sdk-all.js` bundle is already built and vendored for this)

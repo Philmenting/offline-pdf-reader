@@ -6,6 +6,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "build-engine": "node scripts/build-onlyoffice-pdf.mjs",
+    "generate-fonts": "node scripts/generate-allfonts.mjs",
     "start": "node server.mjs",
     "dev": "node server.mjs"
   },
