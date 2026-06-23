@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHeaderView,
     QInputDialog,
@@ -1117,6 +1118,12 @@ class MainWindow(QMainWindow):
         self.preview.setMinimumSize(400, 460)
         self.preview.setCursor(Qt.CursorShape.ArrowCursor)
         self.preview.setProperty("role", "pagepreview")
+        # Schwebende Seite: dezenter Schlagschatten wie in modernen PDF-Editoren.
+        _page_shadow = QGraphicsDropShadowEffect(self)
+        _page_shadow.setBlurRadius(24)
+        _page_shadow.setColor(QColor(0, 0, 0, 60))
+        _page_shadow.setOffset(0, 3)
+        self.preview.setGraphicsEffect(_page_shadow)
 
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidget(self.preview)
@@ -2009,45 +2016,70 @@ class MainWindow(QMainWindow):
             page_layout.addStretch(1)
             return page
 
-        # Getabbte Ribbon-Leiste (OnlyOffice-artig) statt einzeiliger Toolbar.
+        def _rb(label: str, slot, tooltip: str = "") -> QPushButton:
+            """Erzeugt einen Ribbon-Button und verbindet ihn mit einer Methode."""
+            button = _action_btn(label, tooltip or label)
+            button.clicked.connect(slot)
+            return button
+
+        # Getabbte Ribbon-Leiste (OnlyOffice-artig). Sie ersetzt die klassische
+        # Menüleiste vollständig – jede wichtige Funktion ist hier erreichbar.
+        # (Annotations-/Markup-Werkzeuge liegen weiterhin in der rechten Sidebar.)
         self.ribbon_tabs = QTabWidget()
         self.ribbon_tabs.setProperty("role", "ribbon")
         self.ribbon_tabs.addTab(
-            _ribbon_tab([_ribbon_group("Datei", [btn_open, btn_save, btn_saveas])]),
+            _ribbon_tab([
+                _ribbon_group("Öffnen", [btn_open, _rb("Office öffnen", self.import_office_as_pdf, "Word/Excel/PowerPoint als PDF öffnen")]),
+                _ribbon_group("Speichern", [btn_save, btn_saveas, _rb("Als Word", self.export_as_office, "Als DOCX exportieren"), _rb("Drucken", self.print_document, "Drucken (Ctrl+P)")]),
+                _ribbon_group("Dokument", [_rb("Infos", self.show_document_info), _rb("Metadaten", self.edit_pdf_metadata), _rb("Bereinigen", self.scrub_metadata, "Metadaten & versteckte Daten entfernen")]),
+                _ribbon_group("Schutz", [_rb("Verschlüsseln", self.export_encrypted_pdf_copy), _rb("Optimieren", self.export_optimized_pdf_copy)]),
+            ]),
             "Datei",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
                 _ribbon_group("Navigation", [btn_first, btn_prev, btn_next, btn_last, btn_goto]),
-                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo]),
+                _ribbon_group("Bearbeiten", [self.btn_undo, self.btn_redo, _rb("Text bearbeiten", self.edit_text_tool, "Vorhandenen Text anklicken und direkt bearbeiten")]),
                 _ribbon_group("Suche", [btn_search]),
             ]),
             "Start",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset]),
-                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+                _ribbon_group("Seite", [btn_blank_page, _rb("Seitenzahlen", self.insert_page_numbers), _rb("Kopf-/Fußzeile", self.insert_header_footer), _rb("Wasserzeichen", self.add_text_watermark)]),
+                _ribbon_group("Objekte", [_rb("Tabelle", self.insert_table), _rb("Bilder→PDF", self.images_to_pdf), btn_form_fields]),
             ]),
-            "Ansicht",
+            "Einfügen",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Seiten", [btn_duplicate, btn_blank_page, btn_reorder, btn_remove_empty]),
+                _ribbon_group("Anordnen", [btn_duplicate, btn_reorder, btn_split, _rb("In Blöcke teilen", self.split_pdf_into_chunks)]),
+                _ribbon_group("Bearbeiten", [_rb("Löschen", self.delete_selected_pages, "Ausgewählte Seiten löschen"), btn_remove_empty, btn_crop]),
+                _ribbon_group("Drehen", [btn_rotate_left, btn_rotate_right, btn_rotate_reset]),
+                _ribbon_group("Zusammenführen", [btn_merge]),
             ]),
             "Seiten",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("OCR", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+                _ribbon_group("Zoom", [btn_zoom_out, btn_zoom_in, btn_zoom_reset, _rb("An Breite", self.fit_to_width), _rb("An Seite", self.fit_to_page)]),
+                _ribbon_group("Ansicht", [_rb("Fortlaufend", self.show_continuous_view, "Fortlaufende Ansicht aller Seiten")]),
+            ]),
+            "Ansicht",
+        )
+        self.ribbon_tabs.addTab(
+            _ribbon_tab([
+                _ribbon_group("Erkennen", [btn_extract, btn_extract_all, btn_auto_ocr_name]),
+                _ribbon_group("Text", [_rb("Durchsuchbare PDF", self.export_searchable_pdf_copy), _rb("Text anzeigen", self.show_extracted_text_window)]),
             ]),
             "OCR",
         )
         self.ribbon_tabs.addTab(
             _ribbon_tab([
-                _ribbon_group("Werkzeuge", [btn_split, btn_crop, btn_form_fields, btn_merge]),
+                _ribbon_group("Datei", [_rb("Datei exportieren", self.export_current_file), _rb("Seiten als Bilder", self.export_pages_as_images), _rb("Graustufen", self.export_grayscale_pdf_copy)]),
+                _ribbon_group("Mehr", [_rb("Bilder extrahieren", self.extract_images_from_pdf), _rb("Ordner aggregiert", self.export_folder_aggregate), _rb("Stapel-Umbenennen", self.batch_rename_folder), _rb("Seitenübersicht", self.show_page_overview)]),
             ]),
-            "Werkzeuge",
+            "Exportieren",
         )
         self.ribbon_tabs.setCurrentIndex(1)  # "Start" als Standard
 
@@ -2522,6 +2554,13 @@ class MainWindow(QMainWindow):
             action.setToolTip(text)
             action.setWhatsThis(text)
 
+        # Die klassische Menüleiste doppelt sich mit dem Ribbon → ausblenden.
+        # Die Aktionen werden zusätzlich am Fenster registriert, damit ihre
+        # Tastenkürzel (Ctrl+O, Ctrl+S, Ctrl+F …) weiterhin funktionieren.
+        for action in all_actions:
+            self.addAction(action)
+        self.menuBar().setVisible(False)
+
         self.statusBar().showMessage("Bereit. Öffne ein PDF, um zu starten.")
         self._update_undo_redo_buttons()
         self._update_ocr_mode_label()
@@ -2537,6 +2576,34 @@ class MainWindow(QMainWindow):
         self._autosave_timer.setInterval(60_000)  # alle 60 s
         self._autosave_timer.timeout.connect(self._autosave_tick)
         self._autosave_timer.start()
+
+        # ── Untere Zoom-Leiste (OnlyOffice-Stil, rechts in der Statusbar) ──
+        self.status_page_label = QLabel("")
+        self.status_page_label.setProperty("role", "statusinfo")
+        btn_status_zoom_out = _icon_btn("−", "Verkleinern")
+        btn_status_zoom_out.clicked.connect(self.zoom_out)
+        self.status_zoom_label = QLabel("100%")
+        self.status_zoom_label.setProperty("role", "statusinfo")
+        self.status_zoom_label.setMinimumWidth(46)
+        self.status_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_status_zoom_in = _icon_btn("+", "Vergrößern")
+        btn_status_zoom_in.clicked.connect(self.zoom_in)
+        btn_status_fit = _icon_btn("⊡", "An Breite anpassen")
+        btn_status_fit.clicked.connect(self.fit_to_width)
+        self.statusBar().addPermanentWidget(self.status_page_label)
+        self.statusBar().addPermanentWidget(btn_status_zoom_out)
+        self.statusBar().addPermanentWidget(self.status_zoom_label)
+        self.statusBar().addPermanentWidget(btn_status_zoom_in)
+        self.statusBar().addPermanentWidget(btn_status_fit)
+
+    def _update_zoom_indicator(self) -> None:
+        if not hasattr(self, "status_zoom_label"):
+            return
+        self.status_zoom_label.setText(f"{int(self.zoom_factor * 100)}%")
+        if self.doc and len(self.doc):
+            self.status_page_label.setText(f"Seite {self.current_page + 1} / {len(self.doc)}")
+        else:
+            self.status_page_label.setText("")
 
     def _configure_tesseract_runtime(self) -> None:
         if os.name != "nt":
@@ -3923,8 +3990,42 @@ class MainWindow(QMainWindow):
 
             /* ── Toolbar-Hintergrund ───────────────────────────────────── */
             QWidget[role="toolbar"] {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:0.55 #f7f9ff, stop:1 #eef3ff);
+                background: #ffffff;
                 border-bottom: 1px solid #e4e7ef;
+            }
+
+            /* ── Getabbte Ribbon-Leiste (OnlyOffice: rotes Kopfband) ──── */
+            QTabWidget[role="ribbon"]::pane {
+                border: none;
+                background: #ffffff;
+                border-bottom: 1px solid #e4e7ef;
+            }
+            QTabWidget[role="ribbon"] > QTabBar {
+                qproperty-drawBase: 0;
+                background: #aa3c34;
+            }
+            QTabWidget[role="ribbon"] QWidget[role="ribbontab"] {
+                background: #ffffff;
+            }
+            QTabBar {
+                background: #aa3c34;
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: #f2d7d4;
+                padding: 9px 20px;
+                margin: 0;
+                border: none;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QTabBar::tab:hover {
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.14);
+            }
+            QTabBar::tab:selected {
+                color: #aa3c34;
+                background: #ffffff;
             }
 
             /* ── Namens-Zeile ─────────────────────────────────────────── */
@@ -3958,18 +4059,18 @@ class MainWindow(QMainWindow):
                 border-radius: 12px;
             }
             QWidget[role="previewcard"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fdfefe, stop:1 #f6f8fc);
-                border-left: 1px solid #edf1f8;
-                border-right: 1px solid #edf1f8;
+                background: #e9ebf0;
+                border-left: 1px solid #e1e4ec;
+                border-right: 1px solid #e1e4ec;
             }
             QWidget[role="ribbongroup"] {
-                background: rgba(255, 255, 255, 0.9);
-                border: 1px solid #e4e8f4;
-                border-radius: 14px;
+                background: transparent;
+                border: none;
+                border-right: 1px solid #e9ecf3;
             }
             QLabel[role="ribbontitle"] {
-                color: #5f6c8c;
-                font-size: 11px;
+                color: #97a0b8;
+                font-size: 10px;
                 font-weight: 700;
                 letter-spacing: 0.08em;
                 text-transform: uppercase;
@@ -4017,6 +4118,30 @@ class MainWindow(QMainWindow):
                 background: #f5f6f9;
                 color: #aab0c4;
                 border-color: #e8eaf0;
+            }
+
+            /* ── Flache Aktions-Buttons (Ribbon & Sidebar, OnlyOffice) ── */
+            QPushButton[btnRole="action"] {
+                background: #ffffff;
+                color: #303a4d;
+                border: 1px solid #e6e9f1;
+                border-radius: 6px;
+                padding: 6px 11px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton[btnRole="action"]:hover {
+                background: #f4f6fa;
+                border-color: #cfd6e6;
+            }
+            QPushButton[btnRole="action"]:pressed {
+                background: #e9edf4;
+                border-color: #b9c2da;
+            }
+            QPushButton[btnRole="action"]:disabled {
+                background: #fafbfc;
+                color: #b3b9c8;
+                border-color: #eef0f5;
             }
 
             /* ── Icon-Button (kompakt, quadratisch) ───────────────────── */
@@ -4240,9 +4365,9 @@ class MainWindow(QMainWindow):
                 border: none;
             }
             QScrollArea[role="previewarea"] {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #edf1fb, stop:1 #e7ebf6);
-                border-left: 1px solid #edf1f8;
-                border-right: 1px solid #edf1f8;
+                background: #e9ebf0;
+                border-left: 1px solid #e1e4ec;
+                border-right: 1px solid #e1e4ec;
             }
             QScrollBar:vertical {
                 background: #f0f2f7;
@@ -4922,6 +5047,7 @@ class MainWindow(QMainWindow):
         self.page_info.setText(
             f"Seite: {self.current_page + 1}/{total} | Zoom: {int(self.zoom_factor * 100)}% | Drehung: {rotation}°"
         )
+        self._update_zoom_indicator()
         self._sync_thumbnail_selection()
         if self.pdf_path:
             self.statusBar().showMessage(f"{self.pdf_path.name} — Seite {self.current_page + 1}/{total}")
@@ -9188,7 +9314,10 @@ class MainWindow(QMainWindow):
             return
         block = self._find_text_block_at(page, point)
         if block is None:
-            self.statusBar().showMessage("Kein bearbeitbarer Textabschnitt an dieser Stelle gefunden.")
+            self.statusBar().showMessage(
+                "Kein bearbeitbarer Text an dieser Stelle. Hinweis: Auf gescannten/bild-basierten "
+                "Seiten gibt es keinen editierbaren Text – bitte direkt auf einen Textabschnitt klicken."
+            )
             return
         # Direkt im Sidebar-Feld bearbeiten (löschen + neu schreiben), statt
         # einen Modal-Dialog zu öffnen.
@@ -9198,10 +9327,16 @@ class MainWindow(QMainWindow):
         self.selected_widget_xref = None
         self.inline_text_edit.setPlainText(block["text"])
         self.inline_edit_card.setVisible(True)
+        # Eingabefeld in den sichtbaren Bereich der Sidebar scrollen, damit es
+        # sofort auffällt.
+        try:
+            self.annotation_panel_scroll.ensureWidgetVisible(self.inline_edit_card)
+        except Exception:
+            pass
         self.inline_text_edit.setFocus()
         self.inline_text_edit.selectAll()
         self.statusBar().showMessage(
-            "Textabschnitt geladen – im Feld unten ändern (löschen/neu schreiben) und 'Änderung speichern'."
+            "Textabschnitt geladen – im Feld 'Text bearbeiten' (rechte Sidebar) ändern und 'Änderung speichern'."
         )
 
     def _apply_text_block_edit(self, new_text: str) -> None:
@@ -9408,9 +9543,15 @@ class MainWindow(QMainWindow):
                     fontname=self.pending_annotation.get("fontname", "helv"),
                     text_color=self.pending_annotation["color"],
                     fill_color=(1, 1, 1),
-                    border_color=self.pending_annotation["color"],
                     align=0,
                 )
+                # Rahmenfarbe/-stärke nachträglich setzen: border_color als
+                # Konstruktor-Argument verlangt rich_text=True (PyMuPDF-Fehler
+                # "cannot set border_color if rich_text is False").
+                try:
+                    annot.set_colors(stroke=self.pending_annotation["color"])
+                except Exception:
+                    pass
                 try:
                     annot.set_border(width=1)
                 except Exception:
