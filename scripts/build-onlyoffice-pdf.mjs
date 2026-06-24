@@ -66,23 +66,65 @@ async function exists(p) {
  * exactly the ArrayBuffer the engine indexes into. `Module["HEAP8"]` is in scope
  * (same IIFE) and is reassigned on every WASM memory growth, so reading it at
  * call time always yields the current buffer.
+ *
+ * Additionally, _InitializeFonts has an early-return when g_fonts_selection_bin
+ * is falsy (we set it to "" since we have no precomputed selection table). That
+ * early-return also skips _InitializeFontsRanges, which the WASM engine needs
+ * to map Unicode codepoints to font files. Without ranges, every page's font
+ * requirements stay "pending" and getPagePixmap returns null → blank pages.
+ * We patch the early-return so it still initialises the base path and symbol
+ * ranges even when there is no selection-bin data.
  */
 async function patchDrawingFile() {
   const file = join(VENDOR, "sdkjs", "pdf", "src", "engine", "drawingfile.js");
   if (!(await exists(file))) return;
   let src = await readFile(file, "utf8");
-  if (src.includes('CFile.prototype["memory"]')) return; // already patched
+
+  // Patch 1: re-add memory() method
   const anchor = 'self["AscViewer"]["CDrawingFile"]=CFile;';
   if (!src.includes(anchor)) {
-    console.warn("⚠ drawingfile.js: memory() patch anchor not found; skipping");
+    console.warn("⚠ drawingfile.js: patch anchor not found; skipping");
     return;
   }
-  src = src.replace(
-    anchor,
-    'CFile.prototype["memory"]=function(){return Module["HEAP8"]};' + anchor
-  );
+  if (!src.includes('CFile.prototype["memory"]')) {
+    src = src.replace(
+      anchor,
+      'CFile.prototype["memory"]=function(){return Module["HEAP8"]};' + anchor
+    );
+    console.log("→ patched drawingfile.js: re-added CDrawingFile.memory()");
+  }
+
+  // Patch 2: fix _InitializeFonts early-return skipping font ranges
+  const oldGuard = 'if(!window["g_fonts_selection_bin"])return;';
+  if (src.includes(oldGuard)) {
+    // Replace the hard return with a conditional that still runs the ranges
+    // initialisation below. We split the function body: decode selection bin
+    // only when data exists, but always run the ranges block.
+    const oldBlock =
+      'if(!window["g_fonts_selection_bin"])return;' +
+      'var memoryBuffer=window["g_fonts_selection_bin"].toUtf8();' +
+      'var pointer=Module["_malloc"](memoryBuffer.length);' +
+      'Module.HEAP8.set(memoryBuffer,pointer);' +
+      'Module["_InitializeFontsBase64"](pointer,memoryBuffer.length);' +
+      'Module["_free"](pointer);' +
+      'delete window["g_fonts_selection_bin"];';
+    const newBlock =
+      'if(window["g_fonts_selection_bin"]){' +
+      'var memoryBuffer=window["g_fonts_selection_bin"].toUtf8();' +
+      'var pointer=Module["_malloc"](memoryBuffer.length);' +
+      'Module.HEAP8.set(memoryBuffer,pointer);' +
+      'Module["_InitializeFontsBase64"](pointer,memoryBuffer.length);' +
+      'Module["_free"](pointer);' +
+      'delete window["g_fonts_selection_bin"];}';
+    if (src.includes(oldBlock)) {
+      src = src.replace(oldBlock, newBlock);
+      console.log("→ patched drawingfile.js: _InitializeFonts no longer skips font ranges");
+    } else {
+      console.warn("⚠ drawingfile.js: _InitializeFonts code block not matched; skipping ranges patch");
+    }
+  }
+
   await writeFile(file, src, "utf8");
-  console.log("→ patched drawingfile.js: re-added CDrawingFile.memory()");
 }
 
 async function downloadTarball() {
