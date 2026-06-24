@@ -1,0 +1,40 @@
+name: Build Windows Desktop ZIP
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build ONLYOFFICE PDF engine
+        run: npm run build-engine
+
+      - name: Generate font registry
+        run: npm run generate-fonts
+
+      - name: Build Windows desktop package
+        run: npm run dist:win
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Offline-PDF-Editor.zip
+          generate_release_notes: true
+          tag_name: ${{ github.ref_name || 'latest' }}
+          name: "Offline PDF Editor ${{ github.ref_name || 'latest' }}"
