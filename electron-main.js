@@ -1,10 +1,11 @@
 const { app, BrowserWindow } = require("electron");
 const { createServer } = require("http");
 const { readFile, stat } = require("fs/promises");
-const { join, normalize, extname } = require("path");
+const { join, posix, extname } = require("path");
 
-const IS_PACKAGED = app.isPackaged;
-const ROOT = IS_PACKAGED ? process.resourcesPath : __dirname;
+// electron-main.js lives next to public/ and vendor/ both in dev (repo root)
+// and when packaged (resources/app/), so __dirname is the correct base in both.
+const ROOT = __dirname;
 const PORT = 0;
 
 const MIME = {
@@ -30,11 +31,14 @@ const MOUNTS = [
 ];
 
 function resolvePath(urlPath) {
-  const clean = normalize(decodeURIComponent(urlPath.split("?")[0]));
+  // Use posix.normalize so URL slashes stay "/" on Windows (path.normalize
+  // would rewrite them to "\\" and break the prefix matching below).
+  const clean = posix.normalize(decodeURIComponent(urlPath.split("?")[0]));
   if (clean.includes("..")) return null;
   for (const m of MOUNTS) {
     if (clean.startsWith(m.prefix)) {
-      return join(m.dir, clean.slice(m.prefix.length) || "index.html");
+      const rel = clean.slice(m.prefix.length) || "index.html";
+      return join(m.dir, ...rel.split("/"));
     }
   }
   return null;
