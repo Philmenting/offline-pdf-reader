@@ -30,6 +30,34 @@ const setStatus = (msg) => { statusEl.textContent = msg; };
 let viewer = null;
 let thumbnails = null;
 
+// ── Diagnostics overlay ───────────────────────────────────────────────────
+// Surfaces engine events and uncaught errors on screen (and to the console,
+// which the Electron shell also writes to offline-pdf-editor.log).
+const diag = document.createElement("div");
+diag.style.cssText =
+  "position:fixed;right:8px;bottom:32px;max-width:46ch;max-height:50vh;overflow:auto;" +
+  "z-index:9999;background:rgba(20,24,34,.92);color:#e7ecf5;font:11px/1.4 monospace;" +
+  "padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none;";
+document.body.appendChild(diag);
+function diagLog(line, isError) {
+  const t = new Date().toLocaleTimeString();
+  const row = document.createElement("div");
+  if (isError) row.style.color = "#ff9b9b";
+  row.textContent = `${t}  ${line}`;
+  diag.appendChild(row);
+  diag.scrollTop = diag.scrollHeight;
+  (isError ? console.error : console.log)(`[diag] ${line}`);
+}
+window.addEventListener("error", (e) => {
+  diagLog(`window.onerror: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, true);
+  if (e.error && e.error.stack) diagLog(String(e.error.stack), true);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  diagLog(`unhandledrejection: ${(r && r.message) || r}`, true);
+  if (r && r.stack) diagLog(String(r.stack), true);
+});
+
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script");
@@ -53,6 +81,19 @@ async function initEngine() {
     fontsPath: FONTS_PATH,
   });
   thumbnails = viewer.createThumbnails("thumbnails");
+
+  // Surface engine lifecycle events so we can see where opening/rendering stops.
+  const reg = (name) => {
+    try {
+      viewer.registerEvent(name, (...args) => {
+        let detail = "";
+        try { detail = args.length ? JSON.stringify(args[0]).slice(0, 120) : ""; } catch { detail = "[unserializable]"; }
+        diagLog(`event ${name} ${detail}`);
+      });
+    } catch (e) { diagLog(`registerEvent(${name}) failed: ${e.message}`, true); }
+  };
+  ["onFileOpened", "onPagesCount", "onNeedPassword", "onStructure", "onCurrentPageChanged", "onZoom"].forEach(reg);
+  diagLog("viewer created; AllFonts at " + `${SDKJS_PATH}/common/AllFonts.js`);
 
   window.addEventListener("resize", () => {
     viewer && viewer.resize();
@@ -103,8 +144,13 @@ function openArrayBuffer(buf, name) {
     return;
   }
   el("placeholder").style.display = "none";
-  viewer.open(buf);
-  viewer.resize();
+  diagLog(`open() called for "${name}" (${(bytes.length / 1024).toFixed(0)} KB)`);
+  try {
+    viewer.open(buf);
+  } catch (e) {
+    diagLog(`open() threw: ${e.message}`, true);
+    if (e.stack) diagLog(String(e.stack), true);
+  }
   enableTools(true);
   setStatus(`„${name}" geöffnet (${(bytes.length / 1024).toFixed(0)} KB).`);
 }

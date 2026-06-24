@@ -1,7 +1,25 @@
 const { app, BrowserWindow } = require("electron");
 const { createServer } = require("http");
 const { readFile, stat } = require("fs/promises");
-const { join, posix, extname } = require("path");
+const { appendFileSync } = require("fs");
+const { join, posix, extname, dirname } = require("path");
+const os = require("os");
+
+// Diagnostic log written next to the executable (falls back to temp dir if the
+// install folder is read-only). Captures renderer console output and failed
+// resource loads so rendering problems can be diagnosed without DevTools.
+let LOG_PATH = join(dirname(app.getPath("exe")), "offline-pdf-editor.log");
+function logLine(line) {
+  const stamped = `[${new Date().toISOString()}] ${line}\n`;
+  try {
+    appendFileSync(LOG_PATH, stamped);
+  } catch {
+    try {
+      LOG_PATH = join(os.tmpdir(), "offline-pdf-editor.log");
+      appendFileSync(LOG_PATH, stamped);
+    } catch { /* give up quietly */ }
+  }
+}
 
 // electron-main.js lives next to public/ and vendor/ both in dev (repo root)
 // and when packaged (resources/app/), so __dirname is the correct base in both.
@@ -81,6 +99,32 @@ app.on("ready", async () => {
       nodeIntegration: false,
       contextIsolation: true,
     },
+  });
+
+  // ── Diagnostics ────────────────────────────────────────────────────────
+  logLine(`=== App start (packaged=${app.isPackaged}, electron=${process.versions.electron}) ===`);
+  const wc = mainWindow.webContents;
+  wc.on("console-message", (_e, level, message, line, sourceId) => {
+    const tag = ["log", "warn", "error", "info"][level] || level;
+    logLine(`[renderer:${tag}] ${message} (${sourceId}:${line})`);
+  });
+  wc.on("did-fail-load", (_e, code, desc, url) => {
+    logLine(`[did-fail-load] ${code} ${desc} ${url}`);
+  });
+  wc.on("render-process-gone", (_e, details) => {
+    logLine(`[render-process-gone] ${JSON.stringify(details)}`);
+  });
+  wc.on("unresponsive", () => logLine("[unresponsive]"));
+  wc.session.webRequest.onCompleted((d) => {
+    if (d.statusCode >= 400) logLine(`[http ${d.statusCode}] ${d.url}`);
+  });
+  // Open DevTools so the exact error + stack is visible for a screenshot.
+  wc.openDevTools({ mode: "detach" });
+  // F12 toggles DevTools.
+  wc.on("before-input-event", (_e, input) => {
+    if (input.type === "keyDown" && input.key === "F12") {
+      wc.isDevToolsOpened() ? wc.closeDevTools() : wc.openDevTools({ mode: "detach" });
+    }
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
