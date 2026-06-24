@@ -19,3 +19,4 @@ dist/
 # Python
 __pycache__/
 *.pyc
+package-lock.json

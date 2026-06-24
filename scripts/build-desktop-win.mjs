@@ -1,19 +1,15 @@
 #!/usr/bin/env node
 /**
- * Builds a portable Windows ZIP of the Offline PDF Editor.
+ * Builds a standalone Windows desktop app (Electron-based, no browser needed).
  *
- * The package includes:
- *   - A portable Node.js runtime (node.exe)
- *   - The static file server (server.mjs)
- *   - The host app (public/)
- *   - The ONLYOFFICE viewer engine + Western fonts (vendor/)
- *   - A batch launcher (Starten.bat)
+ * Downloads the Windows Electron binary, bundles it with the PDF editor app
+ * (viewer engine, Western fonts, host UI), and produces a ready-to-run ZIP.
  *
  * Prerequisites: run `npm run build-engine` and `npm run generate-fonts` first.
  *
- * Usage: node scripts/build-portable-win.mjs
+ * Usage: node scripts/build-desktop-win.mjs
  */
-import { mkdir, rm, writeFile, readFile, readdir, stat, cp } from "node:fs/promises";
+import { mkdir, rm, cp, readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { join, dirname, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWriteStream } from "node:fs";
@@ -22,20 +18,20 @@ import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
+const CACHE = join(ROOT, ".build");
 const DIST = join(ROOT, "dist", "Offline-PDF-Editor");
 const ZIP_OUT = join(ROOT, "dist", "Offline-PDF-Editor.zip");
 
-const NODE_VER = "v22.22.2";
-const NODE_ZIP_NAME = `node-${NODE_VER}-win-x64.zip`;
-const NODE_URL = `https://nodejs.org/dist/${NODE_VER}/${NODE_ZIP_NAME}`;
-const CACHE = join(ROOT, ".build");
+const ELECTRON_VER = "v42.5.0";
+const ELECTRON_ZIP = `electron-${ELECTRON_VER}-win32-x64.zip`;
+const ELECTRON_URL = `https://github.com/electron/electron/releases/download/${ELECTRON_VER}/${ELECTRON_ZIP}`;
 
 const WESTERN_FONT_PREFIXES = [
   "ASC", "Liberation", "DejaVu", "Free", "OpenSans", "opens___",
   "Ubuntu", "Carlito", "caladea", "Symbola",
 ];
 
-const REMOVE_DIRS = [
+const TRIM_DIRS = [
   "common/SmartArts", "common/spell", "common/Native",
   "common/serviceworker", "common/hash", "common/Charts",
   "common/Drawings", "common/DocxToHtml",
@@ -43,13 +39,13 @@ const REMOVE_DIRS = [
   "pdf/build", "pdf/test",
 ];
 
-const REMOVE_FILES = [
+const TRIM_FILES = [
   "word/sdk-all.js",
   "pdf/src/engine/drawingfile_ie.js",
   "pdf/src/engine/drawingfile_native.js",
 ];
 
-// ── TTF parsing (same as generate-allfonts.mjs) ────────────────────────
+// ── TTF parsing ─────────────────────────────────────────────────────────
 
 function readU16BE(b, o) { return (b[o] << 8) | b[o + 1]; }
 function readU32BE(b, o) { return ((b[o] << 24) | (b[o+1] << 16) | (b[o+2] << 8) | b[o+3]) >>> 0; }
@@ -102,6 +98,37 @@ function parseTTF(buf) {
   return family ? { family, style } : null;
 }
 
+async function generateSlimAllFonts(fontsDir, outputPath) {
+  const files = (await readdir(fontsDir))
+    .filter(f => [".ttf", ".otf"].includes(extname(f).toLowerCase())).sort();
+  const families = new Map();
+  const fileNames = [];
+  const fileIdx = new Map();
+  for (const f of files) {
+    const buf = await readFile(join(fontsDir, f));
+    const info = parseTTF(buf);
+    if (!info) continue;
+    let idx;
+    if (fileIdx.has(f)) idx = fileIdx.get(f);
+    else { idx = fileNames.length; fileNames.push(f); fileIdx.set(f, idx); }
+    if (!families.has(info.family)) families.set(info.family, {});
+    const fam = families.get(info.family);
+    if (!fam[info.style]) fam[info.style] = { fileIndex: idx, faceIndex: 0 };
+  }
+  const sorted = [...families.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const infos = sorted.map(([name, styles]) => {
+    const r = styles.regular || styles.bold || styles.italic || styles.bolditalic;
+    const i = styles.italic || r;
+    const b = styles.bold || r;
+    const bi = styles.bolditalic || styles.bold || styles.italic || r;
+    return [name, r?.fileIndex??-1, r?.faceIndex??-1, i?.fileIndex??-1, i?.faceIndex??-1,
+      b?.fileIndex??-1, b?.faceIndex??-1, bi?.fileIndex??-1, bi?.faceIndex??-1];
+  });
+  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\n})(window);\n`;
+  await writeFile(outputPath, js, "utf8");
+  return { families: infos.length, files: fileNames.length };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 async function exists(p) { try { await stat(p); return true; } catch { return false; } }
@@ -124,129 +151,98 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-async function generateSlimAllFonts(fontsDir, outputPath) {
-  const files = (await readdir(fontsDir))
-    .filter(f => [".ttf", ".otf"].includes(extname(f).toLowerCase())).sort();
-
-  const families = new Map();
-  const fileNames = [];
-  const fileIdx = new Map();
-
-  for (const f of files) {
-    const buf = await readFile(join(fontsDir, f));
-    const info = parseTTF(buf);
-    if (!info) continue;
-    let idx;
-    if (fileIdx.has(f)) { idx = fileIdx.get(f); }
-    else { idx = fileNames.length; fileNames.push(f); fileIdx.set(f, idx); }
-    if (!families.has(info.family)) families.set(info.family, {});
-    const fam = families.get(info.family);
-    if (!fam[info.style]) fam[info.style] = { fileIndex: idx, faceIndex: 0 };
-  }
-
-  const sorted = [...families.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const infos = sorted.map(([name, styles]) => {
-    const r = styles.regular || styles.bold || styles.italic || styles.bolditalic;
-    const i = styles.italic || r;
-    const b = styles.bold || r;
-    const bi = styles.bolditalic || styles.bold || styles.italic || r;
-    return [name, r?.fileIndex??-1, r?.faceIndex??-1, i?.fileIndex??-1, i?.faceIndex??-1,
-      b?.fileIndex??-1, b?.faceIndex??-1, bi?.fileIndex??-1, bi?.faceIndex??-1];
-  });
-
-  const js = `// Generated AllFonts.js (slim Western font set)\n(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\n})(window);\n`;
-  await writeFile(outputPath, js, "utf8");
-  return { families: infos.length, files: fileNames.length };
-}
-
 // ── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("=== Building Portable Windows Package ===\n");
+  console.log("=== Building Offline PDF Editor (Windows Desktop) ===\n");
 
-  // Verify prerequisites
   const vendorEngine = join(ROOT, "vendor", "onlyoffice", "sdkjs", "pdf", "src", "engine", "viewer.js");
   const vendorFonts = join(ROOT, "vendor", "fonts");
-  if (!(await exists(vendorEngine))) {
-    console.error("Engine not built. Run: npm run build-engine");
-    process.exit(1);
-  }
-  if (!(await exists(vendorFonts))) {
-    console.error("Fonts not generated. Run: npm run generate-fonts");
-    process.exit(1);
-  }
+  if (!(await exists(vendorEngine))) { console.error("Run: npm run build-engine"); process.exit(1); }
+  if (!(await exists(vendorFonts))) { console.error("Run: npm run generate-fonts"); process.exit(1); }
 
-  // Clean
-  await rm(DIST, { recursive: true, force: true });
-  await rm(ZIP_OUT, { force: true });
-
-  // 1. Download portable Node.js for Windows
+  // 1. Download Windows Electron
   await mkdir(CACHE, { recursive: true });
-  const nodeZipPath = join(CACHE, NODE_ZIP_NAME);
-  if (!(await exists(nodeZipPath))) {
-    await download(NODE_URL, nodeZipPath);
+  const electronZip = join(CACHE, ELECTRON_ZIP);
+  if (!(await exists(electronZip))) {
+    await download(ELECTRON_URL, electronZip);
+  } else {
+    console.log("  Using cached Electron Windows binary.");
   }
-  console.log("  Extracting node.exe…");
-  await mkdir(join(DIST, "runtime"), { recursive: true });
-  await run("unzip", ["-jo", nodeZipPath, `node-${NODE_VER}-win-x64/node.exe`, "-d", join(DIST, "runtime")]);
 
-  // 2. Copy app files
-  console.log("  Copying app files…");
-  await cp(join(ROOT, "server.mjs"), join(DIST, "server.mjs"));
-  await cp(join(ROOT, "public"), join(DIST, "public"), { recursive: true });
-  await cp(join(ROOT, "vendor", "onlyoffice"), join(DIST, "vendor", "onlyoffice"), { recursive: true });
+  // 2. Extract Electron
+  console.log("  Extracting Electron…");
+  await rm(DIST, { recursive: true, force: true });
+  await mkdir(DIST, { recursive: true });
+  await run("unzip", ["-q", electronZip, "-d", DIST]);
 
-  // 3. Copy only Western fonts
-  console.log("  Copying Western fonts…");
-  await mkdir(join(DIST, "vendor", "fonts"), { recursive: true });
-  const allFonts = await readdir(vendorFonts);
+  // Rename executable
+  const { rename } = await import("node:fs/promises");
+  await rename(join(DIST, "electron.exe"), join(DIST, "Offline-PDF-Editor.exe"));
+  await rm(join(DIST, "resources", "default_app.asar"), { force: true });
+
+  // 3. Create app directory
+  console.log("  Bundling app…");
+  const APP = join(DIST, "resources", "app");
+  await mkdir(APP, { recursive: true });
+
+  // electron-main.js
+  await cp(join(ROOT, "electron-main.js"), join(APP, "electron-main.js"));
+
+  // package.json for electron
+  await writeFile(join(APP, "package.json"), JSON.stringify({
+    name: "offline-pdf-editor",
+    version: "0.1.0",
+    main: "electron-main.js",
+  }, null, 2));
+
+  // public/
+  await cp(join(ROOT, "public"), join(APP, "public"), { recursive: true });
+
+  // vendor/onlyoffice (engine)
+  await cp(join(ROOT, "vendor", "onlyoffice"), join(APP, "vendor", "onlyoffice"), { recursive: true });
+
+  // vendor/fonts (Western only)
+  await mkdir(join(APP, "vendor", "fonts"), { recursive: true });
+  const allFontFiles = await readdir(vendorFonts);
   let fontCount = 0;
-  for (const f of allFonts) {
+  for (const f of allFontFiles) {
     if (WESTERN_FONT_PREFIXES.some(p => f.startsWith(p))) {
-      await cp(join(vendorFonts, f), join(DIST, "vendor", "fonts", f));
+      await cp(join(vendorFonts, f), join(APP, "vendor", "fonts", f));
       fontCount++;
     }
   }
-  console.log(`  Copied ${fontCount} font files.`);
+  console.log(`  ${fontCount} Western font files copied.`);
 
   // 4. Regenerate AllFonts.js for slim font set
-  console.log("  Generating slim AllFonts.js…");
-  const result = await generateSlimAllFonts(
-    join(DIST, "vendor", "fonts"),
-    join(DIST, "vendor", "onlyoffice", "sdkjs", "common", "AllFonts.js")
+  const r = await generateSlimAllFonts(
+    join(APP, "vendor", "fonts"),
+    join(APP, "vendor", "onlyoffice", "sdkjs", "common", "AllFonts.js")
   );
-  console.log(`  ${result.families} families, ${result.files} files.`);
+  console.log(`  AllFonts.js: ${r.families} families, ${r.files} files.`);
 
-  // 5. Remove unnecessary engine files
+  // 5. Trim engine
   console.log("  Trimming engine…");
-  const sdkjs = join(DIST, "vendor", "onlyoffice", "sdkjs");
-  for (const d of REMOVE_DIRS) {
-    await rm(join(sdkjs, d), { recursive: true, force: true });
-  }
-  for (const f of REMOVE_FILES) {
-    await rm(join(sdkjs, f), { force: true });
-  }
-  // Remove pdf/src subdirectories except engine/
+  const sdkjs = join(APP, "vendor", "onlyoffice", "sdkjs");
+  for (const d of TRIM_DIRS) await rm(join(sdkjs, d), { recursive: true, force: true });
+  for (const f of TRIM_FILES) await rm(join(sdkjs, f), { force: true });
   const pdfSrc = join(sdkjs, "pdf", "src");
   if (await exists(pdfSrc)) {
     for (const e of await readdir(pdfSrc, { withFileTypes: true })) {
-      if (e.isFile()) await rm(join(pdfSrc, e.name), { force: true });
-      else if (e.name !== "engine") await rm(join(pdfSrc, e.name), { recursive: true, force: true });
+      if (e.isFile()) await rm(join(pdfSrc, e.name));
+      else if (e.name !== "engine") await rm(join(pdfSrc, e.name), { recursive: true });
     }
   }
 
-  // 6. Write batch launcher
-  const bat = `@echo off\r\ntitle Offline PDF Editor\r\necho ============================================\r\necho   Offline PDF Editor wird gestartet...\r\necho ============================================\r\necho.\r\n\r\nset "DIR=%~dp0"\r\nset "NODE=%DIR%runtime\\node.exe"\r\n\r\nif not exist "%NODE%" (\r\n    echo FEHLER: node.exe nicht gefunden.\r\n    echo Bitte entpacke das gesamte ZIP-Archiv.\r\n    pause\r\n    exit /b 1\r\n)\r\n\r\necho Server startet auf http://localhost:3000\r\necho Browser wird geoeffnet...\r\necho.\r\necho Zum Beenden dieses Fenster schliessen oder Ctrl+C druecken.\r\necho.\r\n\r\nstart "" "http://localhost:3000"\r\n"%NODE%" "%DIR%server.mjs"\r\n`;
-  await writeFile(join(DIST, "Starten.bat"), bat);
-
-  // 7. Create ZIP
+  // 6. Create ZIP
   console.log("  Creating ZIP…");
-  await run("zip", ["-r", "-q", ZIP_OUT, "Offline-PDF-Editor"], { cwd: join(ROOT, "dist") });
+  await rm(ZIP_OUT, { force: true });
+  await run("zip", ["-r", "-q", ZIP_OUT, basename(DIST)], { cwd: dirname(DIST) });
 
   const zipStat = await stat(ZIP_OUT);
-  const sizeMB = (zipStat.size / 1024 / 1024).toFixed(1);
-  console.log(`\n  Package: dist/Offline-PDF-Editor.zip (${sizeMB} MB)`);
-  console.log("  Zum Testen: ZIP entpacken → Starten.bat doppelklicken.");
+  const sizeMB = (zipStat.size / 1024 / 1024).toFixed(0);
+  console.log(`\n  ✓ dist/Offline-PDF-Editor.zip (${sizeMB} MB)`);
+  console.log("  Zum Testen: ZIP entpacken → Offline-PDF-Editor.exe starten.");
   console.log("\nDone!");
 }
 
