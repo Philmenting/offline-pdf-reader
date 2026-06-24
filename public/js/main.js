@@ -87,7 +87,7 @@ async function initEngine() {
     throw new Error("Engine geladen, aber AscViewer.CViewer fehlt.");
   }
 
-  viewer = new window.AscViewer.CViewer("id_viewer", {
+  viewer = new window.AscViewer.CViewer("viewer-container", {
     sdkjsPath: SDKJS_PATH,
     fontsPath: FONTS_PATH,
   });
@@ -106,7 +106,14 @@ async function initEngine() {
   ["onFileOpened", "onPagesCount", "onNeedPassword", "onStructure", "onCurrentPageChanged", "onZoom"].forEach(reg);
   diagLog("viewer created; AllFonts at " + `${SDKJS_PATH}/common/AllFonts.js`);
 
+  if (typeof window.AscViewer.checkApplicationScale === "function") {
+    window.AscViewer.checkApplicationScale();
+  }
+
   window.addEventListener("resize", () => {
+    if (typeof window.AscViewer.checkApplicationScale === "function") {
+      window.AscViewer.checkApplicationScale();
+    }
     viewer && viewer.resize();
     thumbnails && thumbnails.resize();
   });
