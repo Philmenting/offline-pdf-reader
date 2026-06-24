@@ -90,6 +90,32 @@ body {
 
 .cursor-target { position: absolute; width: 1px; height: 1px; pointer-events: none; }
 
+/*
+ * Scrollbar layers created by the ONLYOFFICE engine.
+ *
+ * The engine builds its own scroll containers (#id_vertical_scroll /
+ * #id_horizontal_scroll, plus the thumbnail variants) inside the mount div and
+ * positions them with inline `left`/`top` — which only take effect when the
+ * element is itself positioned. Upstream ships a stylesheet that sets these to
+ * `position: absolute`; we don't, so they fell back to `position: static`.
+ *
+ * The consequence: the absolutely-positioned <canvas> the engine paints the
+ * scrollbar into (width:100%) resolved its width against the full-size viewer
+ * container instead of the 14px-wide scroll strip. That stretched the 14px-wide
+ * scrollbar bitmap across the entire viewport, on top of the page (z-index 100),
+ * so every PDF showed up as a grey smear with the page hidden underneath.
+ *
+ * Anchoring the scroll containers makes their inner canvas size correctly to the
+ * 14px strip on the edge, revealing the page.
+ */
+#id_vertical_scroll,
+#id_horizontal_scroll,
+#id_vertical_scroll_th,
+#id_horizontal_scroll_th {
+  position: absolute;
+  overflow: hidden;
+}
+
 .placeholder {
   position: absolute;
   inset: 0;
