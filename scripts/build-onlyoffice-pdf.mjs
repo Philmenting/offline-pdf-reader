@@ -97,9 +97,6 @@ async function patchDrawingFile() {
   // Patch 2: fix _InitializeFonts early-return skipping font ranges
   const oldGuard = 'if(!window["g_fonts_selection_bin"])return;';
   if (src.includes(oldGuard)) {
-    // Replace the hard return with a conditional that still runs the ranges
-    // initialisation below. We split the function body: decode selection bin
-    // only when data exists, but always run the ranges block.
     const oldBlock =
       'if(!window["g_fonts_selection_bin"])return;' +
       'var memoryBuffer=window["g_fonts_selection_bin"].toUtf8();' +
@@ -109,6 +106,7 @@ async function patchDrawingFile() {
       'Module["_free"](pointer);' +
       'delete window["g_fonts_selection_bin"];';
     const newBlock =
+      'console.log("[engine] _InitializeFonts entered, g_fonts_selection_bin="+typeof window["g_fonts_selection_bin"]+" len="+(window["g_fonts_selection_bin"]?window["g_fonts_selection_bin"].length:0));' +
       'if(window["g_fonts_selection_bin"]){' +
       'var memoryBuffer=window["g_fonts_selection_bin"].toUtf8();' +
       'var pointer=Module["_malloc"](memoryBuffer.length);' +
@@ -122,6 +120,40 @@ async function patchDrawingFile() {
     } else {
       console.warn("⚠ drawingfile.js: _InitializeFonts code block not matched; skipping ranges patch");
     }
+  }
+
+  // Patch 3: log _InitializeFontsRanges execution
+  const rangesCall = 'Module["_InitializeFontsRanges"]';
+  if (src.includes(rangesCall) && !src.includes('[engine] _InitializeFontsRanges')) {
+    src = src.replace(
+      rangesCall,
+      'console.log("[engine] _InitializeFontsRanges called");' + rangesCall
+    );
+    console.log("→ patched drawingfile.js: added _InitializeFontsRanges logging");
+  }
+
+  // Patch 4: log font request via CheckStreamId public API
+  const checkStreamPublic = 'self["AscViewer"]["CheckStreamId"]=function(data,status){return CFile.prototype._CheckStreamId(data,status)}';
+  if (src.includes(checkStreamPublic) && !src.includes('[engine] CheckStreamId')) {
+    src = src.replace(
+      checkStreamPublic,
+      'self["AscViewer"]["CheckStreamId"]=function(data,status){console.log("[engine] CheckStreamId status="+status);return CFile.prototype._CheckStreamId(data,status)}'
+    );
+    console.log("→ patched drawingfile.js: added CheckStreamId logging");
+  }
+
+  // Patch 5: log getPagePixmap null returns (blank pages)
+  const getPixmapAnchor = 'CFile.prototype["getPagePixmap"]=function';
+  if (src.includes(getPixmapAnchor) && !src.includes('[engine] getPagePixmap')) {
+    src = src.replace(
+      getPixmapAnchor,
+      'CFile.prototype["getPagePixmap"]=function(){' +
+      'var r=this.__origGetPagePixmap.apply(this,arguments);' +
+      'if(!r)console.log("[engine] getPagePixmap returned null for page="+arguments[0]+" pendingFonts="+(this.l&&this.l[arguments[0]]&&this.l[arguments[0]].fonts?this.l[arguments[0]].fonts.length:"?"));' +
+      'return r;};' +
+      'CFile.prototype["__origGetPagePixmap"]=function'
+    );
+    console.log("→ patched drawingfile.js: added getPagePixmap null-return logging");
   }
 
   await writeFile(file, src, "utf8");

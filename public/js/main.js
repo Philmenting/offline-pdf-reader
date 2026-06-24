@@ -41,9 +41,6 @@ if (typeof window["g_fonts_selection_bin"] === "undefined") {
 }
 
 // ── Diagnostics ───────────────────────────────────────────────────────────
-// Logs engine events and uncaught errors to the console (the Electron shell
-// mirrors these to offline-pdf-editor.log). A small overlay appears only when
-// an error is logged, so normal use is unobstructed.
 const diag = document.createElement("div");
 diag.style.cssText =
   "position:fixed;right:8px;bottom:32px;max-width:46ch;max-height:50vh;overflow:auto;" +
@@ -68,6 +65,32 @@ window.addEventListener("unhandledrejection", (e) => {
   diagLog(`unhandledrejection: ${(r && r.message) || r}`, true);
   if (r && r.stack) diagLog(String(r.stack), true);
 });
+
+// ── Font pipeline instrumentation ────────────────────────────────────────
+// Intercepts XHR to log every font/resource fetch and its outcome.
+const _xhrOpen = XMLHttpRequest.prototype.open;
+const _xhrSend = XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+  this._diagUrl = String(url);
+  return _xhrOpen.call(this, method, url, ...rest);
+};
+XMLHttpRequest.prototype.send = function (...args) {
+  const url = this._diagUrl || "";
+  if (url.includes("/fonts/") || url.includes("AllFonts") || url.includes("cmap") || url.includes(".ttf") || url.includes(".otf")) {
+    diagLog(`XHR → ${url.split("/").pop()}`);
+    this.addEventListener("load", () => {
+      const size = this.response ? (this.response.byteLength || this.response.length || 0) : 0;
+      diagLog(`XHR ✓ ${url.split("/").pop()} ${this.status} (${(size/1024).toFixed(0)}KB)`);
+    });
+    this.addEventListener("error", () => {
+      diagLog(`XHR ✗ ${url.split("/").pop()} NETWORK ERROR`, true);
+    });
+    this.addEventListener("timeout", () => {
+      diagLog(`XHR ✗ ${url.split("/").pop()} TIMEOUT`, true);
+    });
+  }
+  return _xhrSend.apply(this, args);
+};
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -103,8 +126,9 @@ async function initEngine() {
       });
     } catch (e) { diagLog(`registerEvent(${name}) failed: ${e.message}`, true); }
   };
-  ["onFileOpened", "onPagesCount", "onNeedPassword", "onStructure", "onCurrentPageChanged", "onZoom"].forEach(reg);
+  ["onFileOpened", "onPagesCount", "onNeedPassword", "onStructure", "onCurrentPageChanged", "onZoom", "onRepaint"].forEach(reg);
   diagLog("viewer created; AllFonts at " + `${SDKJS_PATH}/common/AllFonts.js`);
+  diagLog(`__fonts_files=${(window.__fonts_files||[]).length} __fonts_infos=${(window.__fonts_infos||[]).length} g_fonts_selection_bin=${typeof window.g_fonts_selection_bin}(${(window.g_fonts_selection_bin||"").length})`);
 
   if (typeof window.AscViewer.checkApplicationScale === "function") {
     window.AscViewer.checkApplicationScale();
@@ -153,6 +177,42 @@ function stepZoom(dir) {
   setStatus(`Zoom: ${currentZoom()} %`);
 }
 
+function inspectRenderState(label) {
+  try {
+    const eng = viewer.getEngine();
+    const file = eng.file || eng.z || eng;
+    const pageCount = typeof file.Na === "function" ? file.Na() : "?";
+    let pendingFonts = "?";
+    try {
+      const pages = file.l || file.pages || [];
+      if (pages.length > 0) {
+        const p0 = pages[0];
+        pendingFonts = (p0.fonts || p0.Oe || []).length;
+      }
+    } catch {}
+    const cvs = document.getElementById("id_viewer");
+    const cvsInfo = cvs ? `${cvs.width}x${cvs.height}` : "MISSING";
+    let nonWhite = 0;
+    if (cvs && cvs.getContext) {
+      try {
+        const ctx = cvs.getContext("2d");
+        const d = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i+3] > 0 && !(d[i] > 250 && d[i+1] > 250 && d[i+2] > 250)) nonWhite++;
+        }
+      } catch {}
+    }
+    diagLog(`[${label}] pages=${pageCount} pendingFonts=${pendingFonts} canvas=${cvsInfo} nonWhitePx=${nonWhite}`);
+    // Log AscFonts state
+    if (window.AscFonts) {
+      const af = window.AscFonts;
+      diagLog(`[${label}] AscFonts: pickFont=${typeof af.pickFont} files=${(window.__fonts_files||[]).length} infos=${(window.__fonts_infos||[]).length}`);
+    }
+  } catch (e) {
+    diagLog(`[${label}] inspect error: ${e.message}`, true);
+  }
+}
+
 function openArrayBuffer(buf, name) {
   if (!viewer) return;
   const bytes = new Uint8Array(buf);
@@ -163,6 +223,8 @@ function openArrayBuffer(buf, name) {
   }
   el("placeholder").style.display = "none";
   diagLog(`open() called for "${name}" (${(bytes.length / 1024).toFixed(0)} KB)`);
+  // Log pre-open state
+  diagLog(`g_fonts_selection_bin="${typeof window.g_fonts_selection_bin}" __fonts_files=${(window.__fonts_files||[]).length} __fonts_infos=${(window.__fonts_infos||[]).length}`);
   try {
     viewer.open(buf);
   } catch (e) {
@@ -171,6 +233,11 @@ function openArrayBuffer(buf, name) {
   }
   enableTools(true);
   setStatus(`„${name}" geöffnet (${(bytes.length / 1024).toFixed(0)} KB).`);
+  // Inspect render state at intervals to see font loading progress
+  setTimeout(() => inspectRenderState("1s"), 1000);
+  setTimeout(() => inspectRenderState("3s"), 3000);
+  setTimeout(() => inspectRenderState("8s"), 8000);
+  setTimeout(() => inspectRenderState("15s"), 15000);
 }
 
 function onFileChosen(file) {
