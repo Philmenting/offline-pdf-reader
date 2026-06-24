@@ -18,7 +18,7 @@
  *
  * Usage: node scripts/build-onlyoffice-pdf.mjs
  */
-import { mkdir, rm, stat, cp, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, cp, writeFile, readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -49,6 +49,40 @@ function run(cmd, args, opts = {}) {
 
 async function exists(p) {
   try { await stat(p); return true; } catch { return false; }
+}
+
+/**
+ * Patch the prebuilt drawingfile.js (WASM wrapper) for engine/viewer.js compat.
+ *
+ * At the pinned commit the standalone engine bundle `engine/viewer.js` still
+ * calls `this.V.memory()` on the CDrawingFile to read a page pixmap out of the
+ * WASM heap (the 2D, non-WebGL render path: `new Uint8ClampedArray(
+ * this.memory().buffer, ptr, 4*w*h)`). The matching `engine/drawingfile.js`
+ * dropped that method in favour of `getUint8ClampedArray`, so on machines where
+ * WebGL is unavailable (e.g. our Electron shell) rendering crashes with
+ * "this.V.memory is not a function".
+ *
+ * Re-add a `memory()` method returning the heap typed array, whose `.buffer` is
+ * exactly the ArrayBuffer the engine indexes into. `Module["HEAP8"]` is in scope
+ * (same IIFE) and is reassigned on every WASM memory growth, so reading it at
+ * call time always yields the current buffer.
+ */
+async function patchDrawingFile() {
+  const file = join(VENDOR, "sdkjs", "pdf", "src", "engine", "drawingfile.js");
+  if (!(await exists(file))) return;
+  let src = await readFile(file, "utf8");
+  if (src.includes('CFile.prototype["memory"]')) return; // already patched
+  const anchor = 'self["AscViewer"]["CDrawingFile"]=CFile;';
+  if (!src.includes(anchor)) {
+    console.warn("⚠ drawingfile.js: memory() patch anchor not found; skipping");
+    return;
+  }
+  src = src.replace(
+    anchor,
+    'CFile.prototype["memory"]=function(){return Module["HEAP8"]};' + anchor
+  );
+  await writeFile(file, src, "utf8");
+  console.log("→ patched drawingfile.js: re-added CDrawingFile.memory()");
 }
 
 async function downloadTarball() {
@@ -84,6 +118,9 @@ async function main() {
   await rm(join(VENDOR, "sdkjs"), { recursive: true, force: true });
   await mkdir(VENDOR, { recursive: true });
   await cp(join(SRC_DIR, "deploy", "sdkjs"), join(VENDOR, "sdkjs"), { recursive: true });
+
+  console.log("→ patching engine for standalone-viewer compatibility ...");
+  await patchDrawingFile();
 
   await writeFile(
     join(VENDOR, "PROVENANCE.json"),
