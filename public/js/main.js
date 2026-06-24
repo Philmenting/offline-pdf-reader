@@ -30,19 +30,30 @@ const setStatus = (msg) => { statusEl.textContent = msg; };
 let viewer = null;
 let thumbnails = null;
 
-// ── Diagnostics overlay ───────────────────────────────────────────────────
-// Surfaces engine events and uncaught errors on screen (and to the console,
-// which the Electron shell also writes to offline-pdf-editor.log).
+// The engine's viewer.js does `"" != window.g_fonts_selection_bin` and then
+// base64-decodes it; if it is undefined that decode throws ("Cannot read
+// properties of undefined (reading 'length')") and no page ever renders. We
+// ship no precomputed font-selection table, so seed the empty-string fallback
+// before the engine runs. (AllFonts.js also sets this; this is belt-and-braces
+// so older font registries keep working.)
+if (typeof window["g_fonts_selection_bin"] === "undefined") {
+  window["g_fonts_selection_bin"] = "";
+}
+
+// ── Diagnostics ───────────────────────────────────────────────────────────
+// Logs engine events and uncaught errors to the console (the Electron shell
+// mirrors these to offline-pdf-editor.log). A small overlay appears only when
+// an error is logged, so normal use is unobstructed.
 const diag = document.createElement("div");
 diag.style.cssText =
   "position:fixed;right:8px;bottom:32px;max-width:46ch;max-height:50vh;overflow:auto;" +
   "z-index:9999;background:rgba(20,24,34,.92);color:#e7ecf5;font:11px/1.4 monospace;" +
-  "padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none;";
+  "padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none;display:none;";
 document.body.appendChild(diag);
 function diagLog(line, isError) {
   const t = new Date().toLocaleTimeString();
   const row = document.createElement("div");
-  if (isError) row.style.color = "#ff9b9b";
+  if (isError) { row.style.color = "#ff9b9b"; diag.style.display = "block"; }
   row.textContent = `${t}  ${line}`;
   diag.appendChild(row);
   diag.scrollTop = diag.scrollHeight;

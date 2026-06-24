@@ -342,6 +342,10 @@ async function main() {
 (function(w) {
 w["__fonts_files"] = ${JSON.stringify(finalFileNames)};
 w["__fonts_infos"] = ${JSON.stringify(infos)};
+// The engine's viewer.js checks "" != g_fonts_selection_bin and tries to
+// base64-decode it; if left undefined that decode throws and no page renders.
+// We ship no precomputed font-selection table, so set "" for runtime fallback.
+w["g_fonts_selection_bin"] = "";
 })(window);
 `;
 

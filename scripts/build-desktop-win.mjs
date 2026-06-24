@@ -124,7 +124,9 @@ async function generateSlimAllFonts(fontsDir, outputPath) {
     return [name, r?.fileIndex??-1, r?.faceIndex??-1, i?.fileIndex??-1, i?.faceIndex??-1,
       b?.fileIndex??-1, b?.faceIndex??-1, bi?.fileIndex??-1, bi?.faceIndex??-1];
   });
-  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\n})(window);\n`;
+  // g_fonts_selection_bin must be "" (not undefined): viewer.js does
+  // `"" != g_fonts_selection_bin` and base64-decodes it, throwing on undefined.
+  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\nw["g_fonts_selection_bin"] = "";\n})(window);\n`;
   await writeFile(outputPath, js, "utf8");
   return { families: infos.length, files: fileNames.length };
 }

@@ -118,9 +118,7 @@ app.on("ready", async () => {
   wc.session.webRequest.onCompleted((d) => {
     if (d.statusCode >= 400) logLine(`[http ${d.statusCode}] ${d.url}`);
   });
-  // Open DevTools so the exact error + stack is visible for a screenshot.
-  wc.openDevTools({ mode: "detach" });
-  // F12 toggles DevTools.
+  // F12 toggles DevTools (kept for troubleshooting; not opened automatically).
   wc.on("before-input-event", (_e, input) => {
     if (input.type === "keyDown" && input.key === "F12") {
       wc.isDevToolsOpened() ? wc.closeDevTools() : wc.openDevTools({ mode: "detach" });
