@@ -19,8 +19,6 @@ const ENGINE_SCRIPT = `${SDKJS_PATH}/pdf/src/engine/viewer.js`;
 
 const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
 
-// AscCommon.ViewerZoomMode enum (sdkjs/pdf/src/viewer.js). Hardcoded because
-// the compiled engine bundle renames the symbol, so it isn't reachable by name.
 const ZOOM_MODE = { Custom: 0, Width: 1, Page: 2 };
 
 const el = (id) => document.getElementById(id);
@@ -30,67 +28,122 @@ const setStatus = (msg) => { statusEl.textContent = msg; };
 let viewer = null;
 let thumbnails = null;
 
-// The engine's viewer.js does `"" != window.g_fonts_selection_bin` and then
-// base64-decodes it; if it is undefined that decode throws ("Cannot read
-// properties of undefined (reading 'length')") and no page ever renders. We
-// ship no precomputed font-selection table, so seed the empty-string fallback
-// before the engine runs. (AllFonts.js also sets this; this is belt-and-braces
-// so older font registries keep working.)
 if (typeof window["g_fonts_selection_bin"] === "undefined") {
   window["g_fonts_selection_bin"] = "";
 }
 
-// ── Diagnostics ───────────────────────────────────────────────────────────
-const diag = document.createElement("div");
-diag.style.cssText =
-  "position:fixed;right:8px;bottom:32px;max-width:46ch;max-height:50vh;overflow:auto;" +
-  "z-index:9999;background:rgba(20,24,34,.92);color:#e7ecf5;font:11px/1.4 monospace;" +
-  "padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none;display:none;";
-document.body.appendChild(diag);
-function diagLog(line, isError) {
-  const t = new Date().toLocaleTimeString();
-  const row = document.createElement("div");
-  if (isError) { row.style.color = "#ff9b9b"; diag.style.display = "block"; }
-  row.textContent = `${t}  ${line}`;
-  diag.appendChild(row);
-  diag.scrollTop = diag.scrollHeight;
-  (isError ? console.error : console.log)(`[diag] ${line}`);
-}
-window.addEventListener("error", (e) => {
-  diagLog(`window.onerror: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, true);
-  if (e.error && e.error.stack) diagLog(String(e.error.stack), true);
-});
-window.addEventListener("unhandledrejection", (e) => {
-  const r = e.reason;
-  diagLog(`unhandledrejection: ${(r && r.message) || r}`, true);
-  if (r && r.stack) diagLog(String(r.stack), true);
-});
+// ── Font substitution ────────────────────────────────────────────────────
+// The engine's font manager scores fonts via g_fonts_selection_bin. We ship
+// no precomputed binary, so the scoring index only contains the minimal ASCW3
+// fallback. We patch pickFont to do a direct name lookup with a substitution
+// table mapping common font names to our bundled Liberation/DejaVu families.
+function installFontSubstitutionPatch() {
+  const af = window.AscFonts;
+  if (!af || !af.jh || !af.kh) return false;
 
-// ── Font pipeline instrumentation ────────────────────────────────────────
-// Intercepts XHR to log every font/resource fetch and its outcome.
-const _xhrOpen = XMLHttpRequest.prototype.open;
-const _xhrSend = XMLHttpRequest.prototype.send;
-XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-  this._diagUrl = String(url);
-  return _xhrOpen.call(this, method, url, ...rest);
-};
-XMLHttpRequest.prototype.send = function (...args) {
-  const url = this._diagUrl || "";
-  if (url.includes("/fonts/") || url.includes("AllFonts") || url.includes("cmap") || url.includes(".ttf") || url.includes(".otf")) {
-    diagLog(`XHR → ${url.split("/").pop()}`);
-    this.addEventListener("load", () => {
-      const size = this.response ? (this.response.byteLength || this.response.length || 0) : 0;
-      diagLog(`XHR ✓ ${url.split("/").pop()} ${this.status} (${(size/1024).toFixed(0)}KB)`);
-    });
-    this.addEventListener("error", () => {
-      diagLog(`XHR ✗ ${url.split("/").pop()} NETWORK ERROR`, true);
-    });
-    this.addEventListener("timeout", () => {
-      diagLog(`XHR ✗ ${url.split("/").pop()} TIMEOUT`, true);
-    });
+  const SUBS = {
+    "Arial": "Liberation Sans",
+    "Arial Narrow": "Liberation Sans Narrow",
+    "Helvetica": "Liberation Sans",
+    "Helvetica Neue": "Liberation Sans",
+    "Times New Roman": "Liberation Serif",
+    "Times": "Liberation Serif",
+    "Times Roman": "Liberation Serif",
+    "TimesNewRoman": "Liberation Serif",
+    "TimesNewRomanPS": "Liberation Serif",
+    "TimesNewRomanPSMT": "Liberation Serif",
+    "ArialMT": "Liberation Sans",
+    "CourierNewPSMT": "Liberation Mono",
+    "Courier New": "Liberation Mono",
+    "Courier": "Liberation Mono",
+    "Calibri": "Carlito",
+    "Cambria": "Caladea",
+    "Verdana": "DejaVu Sans",
+    "Georgia": "DejaVu Serif",
+    "Tahoma": "DejaVu Sans",
+    "Trebuchet MS": "DejaVu Sans",
+    "Lucida Sans": "DejaVu Sans",
+    "Lucida Console": "DejaVu Sans Mono",
+    "Consolas": "DejaVu Sans Mono",
+    "Segoe UI": "DejaVu Sans",
+    "Palatino": "DejaVu Serif",
+    "Palatino Linotype": "DejaVu Serif",
+    "Book Antiqua": "DejaVu Serif",
+    "Garamond": "DejaVu Serif",
+    "Century": "DejaVu Serif",
+    "Impact": "Liberation Sans",
+    "Comic Sans MS": "DejaVu Sans",
+    "Symbol": "Symbola",
+    "ZapfDingbats": "Symbola",
+  };
+
+  const STYLE_KEYWORDS = {
+    "Bold": 1, "Bd": 1, "Demi": 1, "Heavy": 1, "Black": 1,
+    "Italic": 2, "It": 2, "Oblique": 2, "Obl": 2, "Slanted": 2,
+    "BoldItalic": 3, "BoldOblique": 3, "BoldIt": 3,
+    "Roman": 0, "Regular": 0, "Book": 0, "Medium": 0, "Light": 0,
+  };
+
+  function parsePostScriptName(psName) {
+    const dashIdx = psName.indexOf("-");
+    if (dashIdx < 0) {
+      const commaIdx = psName.indexOf(",");
+      if (commaIdx < 0) return { family: psName, styleOverride: null };
+      const suffix = psName.slice(commaIdx + 1).trim();
+      if (STYLE_KEYWORDS[suffix] !== undefined) {
+        return { family: psName.slice(0, commaIdx), styleOverride: STYLE_KEYWORDS[suffix] };
+      }
+      return { family: psName, styleOverride: null };
+    }
+    const family = psName.slice(0, dashIdx);
+    const suffix = psName.slice(dashIdx + 1);
+    if (STYLE_KEYWORDS[suffix] !== undefined) {
+      return { family, styleOverride: STYLE_KEYWORDS[suffix] };
+    }
+    return { family: psName, styleOverride: null };
   }
-  return _xhrSend.apply(this, args);
-};
+
+  const origPickFont = af.pickFont;
+  af.pickFont = function (name, style) {
+    const kh = af.kh;
+    const jh = af.jh;
+
+    let resolvedName = name;
+    let effectiveStyle = style;
+
+    if (kh[resolvedName] === undefined) {
+      const ps = parsePostScriptName(name);
+      if (ps.styleOverride !== null) {
+        resolvedName = ps.family;
+        effectiveStyle = ps.styleOverride;
+      }
+    }
+
+    if (kh[resolvedName] === undefined && SUBS[resolvedName]) {
+      resolvedName = SUBS[resolvedName];
+    }
+    if (kh[resolvedName] === undefined) {
+      const upper = resolvedName.toUpperCase();
+      for (const k of Object.keys(kh)) {
+        if (k.toUpperCase() === upper) { resolvedName = k; break; }
+      }
+    }
+    if (kh[resolvedName] === undefined && SUBS[name]) {
+      resolvedName = SUBS[name];
+    }
+
+    if (kh[resolvedName] !== undefined) {
+      const entry = jh[kh[resolvedName]];
+      if (entry && entry.Mn) {
+        return entry.Mn(AscCommon.je, effectiveStyle).file;
+      }
+    }
+
+    return origPickFont.call(this, name, style);
+  };
+
+  return true;
+}
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -116,20 +169,6 @@ async function initEngine() {
   });
   thumbnails = viewer.createThumbnails("thumbnails");
 
-  // Surface engine lifecycle events so we can see where opening/rendering stops.
-  const reg = (name) => {
-    try {
-      viewer.registerEvent(name, (...args) => {
-        let detail = "";
-        try { detail = args.length ? JSON.stringify(args[0]).slice(0, 120) : ""; } catch { detail = "[unserializable]"; }
-        diagLog(`event ${name} ${detail}`);
-      });
-    } catch (e) { diagLog(`registerEvent(${name}) failed: ${e.message}`, true); }
-  };
-  ["onFileOpened", "onPagesCount", "onNeedPassword", "onStructure", "onCurrentPageChanged", "onZoom", "onRepaint"].forEach(reg);
-  diagLog("viewer created; AllFonts at " + `${SDKJS_PATH}/common/AllFonts.js`);
-  diagLog(`__fonts_files=${(window.__fonts_files||[]).length} __fonts_infos=${(window.__fonts_infos||[]).length} g_fonts_selection_bin=${typeof window.g_fonts_selection_bin}(${(window.g_fonts_selection_bin||"").length})`);
-
   if (typeof window.AscViewer.checkApplicationScale === "function") {
     window.AscViewer.checkApplicationScale();
   }
@@ -141,16 +180,6 @@ async function initEngine() {
     viewer && viewer.resize();
     thumbnails && thumbnails.resize();
   });
-
-  // The engine requires the font registry (common/AllFonts.js) to open any PDF.
-  // Preflight it so we can give an actionable message instead of a silent fail.
-  const fontsOk = await fetch(`${SDKJS_PATH}/common/AllFonts.js`, { method: "HEAD" })
-    .then((r) => r.ok)
-    .catch(() => false);
-  if (!fontsOk) {
-    setStatus("Engine bereit – aber Font-Registry fehlt: vendor/onlyoffice/sdkjs/common/AllFonts.js (siehe README).");
-    return;
-  }
 
   setStatus("Bereit. Öffne eine PDF-Datei.");
 }
@@ -177,42 +206,6 @@ function stepZoom(dir) {
   setStatus(`Zoom: ${currentZoom()} %`);
 }
 
-function inspectRenderState(label) {
-  try {
-    const eng = viewer.getEngine();
-    const file = eng.file || eng.z || eng;
-    const pageCount = typeof file.Na === "function" ? file.Na() : "?";
-    let pendingFonts = "?";
-    try {
-      const pages = file.l || file.pages || [];
-      if (pages.length > 0) {
-        const p0 = pages[0];
-        pendingFonts = (p0.fonts || p0.Oe || []).length;
-      }
-    } catch {}
-    const cvs = document.getElementById("id_viewer");
-    const cvsInfo = cvs ? `${cvs.width}x${cvs.height}` : "MISSING";
-    let nonWhite = 0;
-    if (cvs && cvs.getContext) {
-      try {
-        const ctx = cvs.getContext("2d");
-        const d = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
-        for (let i = 0; i < d.length; i += 4) {
-          if (d[i+3] > 0 && !(d[i] > 250 && d[i+1] > 250 && d[i+2] > 250)) nonWhite++;
-        }
-      } catch {}
-    }
-    diagLog(`[${label}] pages=${pageCount} pendingFonts=${pendingFonts} canvas=${cvsInfo} nonWhitePx=${nonWhite}`);
-    // Log AscFonts state
-    if (window.AscFonts) {
-      const af = window.AscFonts;
-      diagLog(`[${label}] AscFonts: pickFont=${typeof af.pickFont} files=${(window.__fonts_files||[]).length} infos=${(window.__fonts_infos||[]).length}`);
-    }
-  } catch (e) {
-    diagLog(`[${label}] inspect error: ${e.message}`, true);
-  }
-}
-
 function openArrayBuffer(buf, name) {
   if (!viewer) return;
   const bytes = new Uint8Array(buf);
@@ -222,22 +215,14 @@ function openArrayBuffer(buf, name) {
     return;
   }
   el("placeholder").style.display = "none";
-  diagLog(`open() called for "${name}" (${(bytes.length / 1024).toFixed(0)} KB)`);
-  // Log pre-open state
-  diagLog(`g_fonts_selection_bin="${typeof window.g_fonts_selection_bin}" __fonts_files=${(window.__fonts_files||[]).length} __fonts_infos=${(window.__fonts_infos||[]).length}`);
   try {
     viewer.open(buf);
   } catch (e) {
-    diagLog(`open() threw: ${e.message}`, true);
-    if (e.stack) diagLog(String(e.stack), true);
+    console.error("open() error:", e);
   }
+  installFontSubstitutionPatch();
   enableTools(true);
   setStatus(`„${name}" geöffnet (${(bytes.length / 1024).toFixed(0)} KB).`);
-  // Inspect render state at intervals to see font loading progress
-  setTimeout(() => inspectRenderState("1s"), 1000);
-  setTimeout(() => inspectRenderState("3s"), 3000);
-  setTimeout(() => inspectRenderState("8s"), 8000);
-  setTimeout(() => inspectRenderState("15s"), 15000);
 }
 
 function onFileChosen(file) {
@@ -257,7 +242,6 @@ function wireUi() {
   el("btn-rotate-left").addEventListener("click", () => viewer.rotatePage(undefined, -90, true));
   el("btn-rotate-right").addEventListener("click", () => viewer.rotatePage(undefined, 90, true));
 
-  // Drag & drop onto the viewer.
   const host = document.querySelector(".viewer-host");
   host.addEventListener("dragover", (e) => { e.preventDefault(); });
   host.addEventListener("drop", (e) => {
