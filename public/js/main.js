@@ -289,8 +289,16 @@ function registerEditorCallbacks() {
   };
 
   on("asc_onError", (id, level) => {
-    console.error("[editor] asc_onError", id, level);
-    setStatus(`Editor-Fehler (${id}).`);
+    // Level.Critical === -1, Level.NoCritical === 0. Non-critical errors (e.g.
+    // the optional ChartStyles.js 404, id -24) must not clobber the status or
+    // alarm the user — log them and carry on.
+    const critical = (level === -1);
+    if (critical) {
+      console.error("[editor] asc_onError (critical)", id, level);
+      setStatus(`Editor-Fehler (${id}).`);
+    } else {
+      console.warn("[editor] asc_onError (non-critical, ignored)", id, level);
+    }
   });
   on("asc_onDocumentContentReady", () => {
     docOpen = true;

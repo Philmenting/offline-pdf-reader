@@ -35,11 +35,13 @@ const WESTERN_FONT_PREFIXES = [
 
 const TRIM_DIRS = [
   "common/SmartArts", "common/spell", "common/Native",
-  "common/serviceworker", "common/hash", "common/Charts",
+  "common/serviceworker", "common/hash",
   "common/DocxToHtml",
   // NOTE: common/libfont/engine is intentionally kept — the PDF *editor*
   // (Asc.PDFEditorApi) loads this font-shaping engine at runtime for text
   // editing / FreeText annotations. Trimming it leaves editing broken.
+  // common/Charts is also kept — the editor eagerly loads Charts/ChartStyles.js
+  // during init; trimming it produced a LoadingScriptError (asc_onError -24).
   "common/libfont/test",
   "pdf/build", "pdf/test",
 ];
