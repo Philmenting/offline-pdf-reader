@@ -30,6 +30,18 @@ const ALLFONTS      = `${SDKJS_PATH}/common/AllFonts.js`;
 const EDITOR_BUNDLE = `${SDKJS_PATH}/word/sdk-all-min.js`;
 const VIEWER_BUNDLE = `${SDKJS_PATH}/pdf/src/engine/viewer.js`;
 
+// Third-party libs the sdkjs editor core expects as globals *before* the
+// bundle runs (otherwise sdk-all-min.js throws "XRegExp is not defined" /
+// "jQuery is not defined" and never defines Asc.PDFEditorApi). polyfill is
+// optional on modern engines; jQuery + XRegExp are required.
+const REQUIRED_LIBS = [
+  `${SDKJS_PATH}/vendor/jquery.min.js`,
+  `${SDKJS_PATH}/vendor/xregexp-all-min.js`,
+];
+const OPTIONAL_LIBS = [
+  `${SDKJS_PATH}/vendor/polyfill.js`,
+];
+
 const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
 const ZOOM_MODE  = { Custom: 0, Width: 1, Page: 2 };
 
@@ -171,6 +183,16 @@ let sdkLoadError = null; // captured if _onEndLoadSdk throws inside the ctor
 
 async function initEditor() {
   setStatus("PDF-Editor wird geladen …");
+
+  // Third-party libs first (jQuery, XRegExp). polyfill is best-effort.
+  console.log("[bootstrap] loading third-party libs (jquery, xregexp) …");
+  for (const lib of OPTIONAL_LIBS) {
+    try { await loadScript(lib); } catch (e) { console.warn(`[bootstrap] optional lib skipped: ${lib}`, e); }
+  }
+  for (const lib of REQUIRED_LIBS) await loadScript(lib);
+  if (typeof window.jQuery !== "function") throw new Error("jQuery fehlt (vendor/jquery.min.js).");
+  if (typeof window.XRegExp === "undefined") throw new Error("XRegExp fehlt (vendor/xregexp-all-min.js).");
+
   console.log("[bootstrap] loading AllFonts.js + editor bundle …");
   await loadScript(ALLFONTS);
   await loadScript(EDITOR_BUNDLE);

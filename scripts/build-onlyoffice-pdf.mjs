@@ -193,6 +193,25 @@ async function main() {
   await mkdir(VENDOR, { recursive: true });
   await cp(join(SRC_DIR, "deploy", "sdkjs"), join(VENDOR, "sdkjs"), { recursive: true });
 
+  // The sdkjs editor core assumes a few third-party libs are loaded *before*
+  // sdk-all-min.js — they are NOT concatenated into the bundle nor copied into
+  // deploy/ by build.py (in ONLYOFFICE's own deployment the editor HTML loads
+  // them as separate <script> tags). Without them the bundle throws e.g.
+  // "XRegExp is not defined" / "jQuery is not defined" mid-execution and never
+  // defines Asc.PDFEditorApi. Vendor them from the same pinned sdkjs source.
+  console.log("→ vendoring third-party libs (jquery, xregexp, polyfill) ...");
+  const VENDOR_LIBS = ["jquery.min.js", "xregexp-all-min.js", "polyfill.js"];
+  await mkdir(join(VENDOR, "sdkjs", "vendor"), { recursive: true });
+  for (const lib of VENDOR_LIBS) {
+    const src = join(SRC_DIR, "vendor", lib);
+    if (await exists(src)) {
+      await cp(src, join(VENDOR, "sdkjs", "vendor", lib));
+      console.log(`  ✓ vendor/${lib}`);
+    } else {
+      console.warn(`  ⚠ vendor/${lib} not found in source — editor may fail to load`);
+    }
+  }
+
   console.log("→ patching engine for standalone-viewer compatibility ...");
   await patchDrawingFile();
 

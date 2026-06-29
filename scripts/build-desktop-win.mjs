@@ -165,11 +165,18 @@ async function main() {
 
   const vendorEngine = join(ROOT, "vendor", "onlyoffice", "sdkjs", "pdf", "src", "engine", "viewer.js");
   const editorBundle = join(ROOT, "vendor", "onlyoffice", "sdkjs", "word", "sdk-all-min.js");
+  const sdkjsVendor = join(ROOT, "vendor", "onlyoffice", "sdkjs", "vendor");
   const vendorFonts = join(ROOT, "vendor", "fonts");
   if (!(await exists(vendorEngine))) { console.error("Run: npm run build-engine"); process.exit(1); }
   if (!(await exists(editorBundle))) {
     console.error("Editor bundle word/sdk-all-min.js missing — run: npm run build-engine");
     process.exit(1);
+  }
+  for (const lib of ["jquery.min.js", "xregexp-all-min.js"]) {
+    if (!(await exists(join(sdkjsVendor, lib)))) {
+      console.error(`Editor dependency vendor/${lib} missing — re-run: npm run build-engine`);
+      process.exit(1);
+    }
   }
   if (!(await exists(vendorFonts))) { console.error("Run: npm run generate-fonts"); process.exit(1); }
 

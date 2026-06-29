@@ -14,6 +14,15 @@ remains under its original AGPL-3.0 license, including the Appropriate Legal
 Notices required by Section 5 of the AGPL. Original copyright headers in those
 files are preserved.
 
+The editor core additionally requires two third-party libraries at runtime,
+vendored from the same ONLYOFFICE sdkjs `vendor/` directory and loaded before
+the SDK bundle:
+
+  jQuery   — https://jquery.com — Copyright OpenJS Foundation and contributors,
+             licensed under the MIT License.
+  XRegExp  — https://xregexp.com — Copyright Steven Levithan,
+             licensed under the MIT License.
+
 Because this project links and distributes AGPL-3.0 code, the project as a
 whole is distributed under the GNU Affero General Public License v3.0. See the
 LICENSE file for the full license text.
