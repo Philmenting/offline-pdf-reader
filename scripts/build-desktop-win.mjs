@@ -45,7 +45,10 @@ const TRIM_DIRS = [
 ];
 
 const TRIM_FILES = [
-  "word/sdk-all.js",
+  // NOTE: word/sdk-all.js must NOT be trimmed — it is the second half of the
+  // editor (History, document model, annotations, drawings); without it the
+  // editor throws "Cannot read properties of undefined (reading 'Add')" and
+  // falls back to read-only.
   "pdf/src/engine/drawingfile_ie.js",
   "pdf/src/engine/drawingfile_native.js",
 ];
@@ -164,13 +167,15 @@ async function main() {
   console.log("=== Building Offline PDF Editor (Windows Desktop) ===\n");
 
   const vendorEngine = join(ROOT, "vendor", "onlyoffice", "sdkjs", "pdf", "src", "engine", "viewer.js");
-  const editorBundle = join(ROOT, "vendor", "onlyoffice", "sdkjs", "word", "sdk-all-min.js");
+  const sdkjsWord = join(ROOT, "vendor", "onlyoffice", "sdkjs", "word");
   const sdkjsVendor = join(ROOT, "vendor", "onlyoffice", "sdkjs", "vendor");
   const vendorFonts = join(ROOT, "vendor", "fonts");
   if (!(await exists(vendorEngine))) { console.error("Run: npm run build-engine"); process.exit(1); }
-  if (!(await exists(editorBundle))) {
-    console.error("Editor bundle word/sdk-all-min.js missing — run: npm run build-engine");
-    process.exit(1);
+  for (const bundle of ["sdk-all-min.js", "sdk-all.js"]) {
+    if (!(await exists(join(sdkjsWord, bundle)))) {
+      console.error(`Editor bundle word/${bundle} missing — run: npm run build-engine`);
+      process.exit(1);
+    }
   }
   for (const lib of ["jquery.min.js", "xregexp-all-min.js"]) {
     if (!(await exists(join(sdkjsVendor, lib)))) {
@@ -211,7 +216,7 @@ async function main() {
   // package.json for electron
   await writeFile(join(APP, "package.json"), JSON.stringify({
     name: "offline-pdf-editor",
-    version: "0.1.0",
+    version: "0.2.0",
     main: "electron-main.js",
   }, null, 2));
 

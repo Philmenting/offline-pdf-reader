@@ -35,7 +35,12 @@ const MIME = {
 };
 
 // Map URL prefixes to on-disk directories.
+// `/sdkjs/` is an alias for the vendored ONLYOFFICE sdkjs root: the editor core
+// hardcodes asset paths like `../../../../sdkjs/common/libfont/engine/fonts.js`
+// (font engine, cursors, spell, stamps). Served from our page at "/", those
+// resolve to `/sdkjs/…`, so we mount the vendored sdkjs there too.
 const MOUNTS = [
+  { prefix: "/sdkjs/", dir: join(ROOT, "vendor", "onlyoffice", "sdkjs") },
   { prefix: "/vendor/", dir: join(ROOT, "vendor") },
   { prefix: "/", dir: join(ROOT, "public") },
 ];

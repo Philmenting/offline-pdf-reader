@@ -27,7 +27,12 @@ const SDKJS_PATH    = "/vendor/onlyoffice/sdkjs";
 const ENGINE_DIR    = `${SDKJS_PATH}/pdf/src/engine/`;   // trailing slash required
 const FONTS_PATH    = "/vendor/fonts/";
 const ALLFONTS      = `${SDKJS_PATH}/common/AllFonts.js`;
-const EDITOR_BUNDLE = `${SDKJS_PATH}/word/sdk-all-min.js`;
+const APPLY_CHANGES = `${SDKJS_PATH}/common/applyDocumentChanges.js`;
+// The editor build is split into two concatenated bundles: sdk-all-min.js
+// (core API shell) and sdk-all.js (the bulk of the editor: History, document
+// model, annotations, drawings). Both are required, min first.
+const EDITOR_MIN    = `${SDKJS_PATH}/word/sdk-all-min.js`;
+const EDITOR_COMMON = `${SDKJS_PATH}/word/sdk-all.js`;
 const VIEWER_BUNDLE = `${SDKJS_PATH}/pdf/src/engine/viewer.js`;
 
 // Third-party libs the sdkjs editor core expects as globals *before* the
@@ -193,14 +198,20 @@ async function initEditor() {
   if (typeof window.jQuery !== "function") throw new Error("jQuery fehlt (vendor/jquery.min.js).");
   if (typeof window.XRegExp === "undefined") throw new Error("XRegExp fehlt (vendor/xregexp-all-min.js).");
 
-  console.log("[bootstrap] loading AllFonts.js + editor bundle …");
+  // Font registry + change-applier, then BOTH editor bundles (min then common).
+  console.log("[bootstrap] loading AllFonts.js + editor bundles (min + common) …");
   await loadScript(ALLFONTS);
-  await loadScript(EDITOR_BUNDLE);
+  try { await loadScript(APPLY_CHANGES); } catch (e) { console.warn("[bootstrap] applyDocumentChanges.js skipped", e); }
+  await loadScript(EDITOR_MIN);
+  await loadScript(EDITOR_COMMON);
 
   if (!(window.Asc && typeof window.Asc.PDFEditorApi === "function")) {
     throw new Error("Editor-Bundle geladen, aber Asc.PDFEditorApi fehlt.");
   }
-  console.log("[bootstrap] editor bundle loaded; Asc.PDFEditorApi present");
+  if (!(window.AscCommon && window.AscCommon.History)) {
+    throw new Error("Editor-Bundle unvollständig: AscCommon.History fehlt (sdk-all.js nicht geladen?).");
+  }
+  console.log("[bootstrap] editor bundles loaded; Asc.PDFEditorApi + History present");
 
   // `AscCommon.loadSdk(name, onSuccess, onError)` is normally provided by the
   // web-apps script loader (it lazy-loads the SDK chunks). We ship the SDK as a

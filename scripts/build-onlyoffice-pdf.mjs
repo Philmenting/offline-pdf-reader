@@ -212,6 +212,17 @@ async function main() {
     }
   }
 
+  // applyDocumentChanges.js is loaded as a standalone script before the SDK
+  // bundles in ONLYOFFICE's own deployment; build.py does not copy it into
+  // deploy/, so vendor it explicitly next to the bundles.
+  {
+    const adcSrc = join(SRC_DIR, "common", "applyDocumentChanges.js");
+    if (await exists(adcSrc)) {
+      await cp(adcSrc, join(VENDOR, "sdkjs", "common", "applyDocumentChanges.js"));
+      console.log("  ✓ common/applyDocumentChanges.js");
+    }
+  }
+
   console.log("→ patching engine for standalone-viewer compatibility ...");
   await patchDrawingFile();
 

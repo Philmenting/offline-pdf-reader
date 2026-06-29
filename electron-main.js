@@ -43,7 +43,11 @@ const MIME = {
   ".ttc": "font/collection",
 };
 
+// `/sdkjs/` aliases the vendored ONLYOFFICE sdkjs root so the editor core's
+// hardcoded `../../../../sdkjs/…` asset paths (font engine, cursors, spell,
+// stamps) resolve against our offline bundle.
 const MOUNTS = [
+  { prefix: "/sdkjs/", dir: join(ROOT, "vendor", "onlyoffice", "sdkjs") },
   { prefix: "/vendor/", dir: join(ROOT, "vendor") },
   { prefix: "/", dir: join(ROOT, "public") },
 ];
