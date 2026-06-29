@@ -164,8 +164,13 @@ async function main() {
   console.log("=== Building Offline PDF Editor (Windows Desktop) ===\n");
 
   const vendorEngine = join(ROOT, "vendor", "onlyoffice", "sdkjs", "pdf", "src", "engine", "viewer.js");
+  const editorBundle = join(ROOT, "vendor", "onlyoffice", "sdkjs", "word", "sdk-all-min.js");
   const vendorFonts = join(ROOT, "vendor", "fonts");
   if (!(await exists(vendorEngine))) { console.error("Run: npm run build-engine"); process.exit(1); }
+  if (!(await exists(editorBundle))) {
+    console.error("Editor bundle word/sdk-all-min.js missing — run: npm run build-engine");
+    process.exit(1);
+  }
   if (!(await exists(vendorFonts))) { console.error("Run: npm run generate-fonts"); process.exit(1); }
 
   // 1. Download Windows Electron
