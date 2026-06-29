@@ -26,30 +26,41 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 14px;
-  height: 52px;
+  gap: 12px;
+  padding: 0 12px;
+  min-height: 52px;
   background: var(--accent);
   color: #fff;
   flex: 0 0 auto;
 }
 
-.brand { font-weight: 700; font-size: 15px; }
+.brand { font-weight: 700; font-size: 15px; flex: 0 0 auto; }
 
-.toolbar { display: flex; gap: 6px; align-items: center; }
-.toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.25); margin: 0 4px; }
+.toolbar {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  padding: 7px 0;
+  scrollbar-width: thin;
+}
+.toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.25); margin: 0 3px; flex: 0 0 auto; }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  padding: 6px 14px;
+  padding: 6px 12px;
   background: #fff;
   color: var(--accent);
+  border: 1px solid transparent;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .btn:hover { background: #eef0f6; }
 .btn.ghost {
@@ -60,6 +71,11 @@ body {
   justify-content: center;
 }
 .btn.ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.btn.tool.active {
+  background: #fff;
+  color: var(--accent);
+  border-color: #fff;
+}
 .btn:disabled { opacity: 0.4; cursor: default; }
 
 .workspace {
@@ -83,10 +99,12 @@ body {
   overflow: hidden;
 }
 
-.viewer {
+.viewer,
+.editor-host {
   position: absolute;
   inset: 0;
 }
+.editor-host[hidden] { display: none; }
 
 .cursor-target { position: absolute; width: 1px; height: 1px; pointer-events: none; }
 

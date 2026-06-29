@@ -9,17 +9,47 @@
 <body>
   <header class="app-header">
     <div class="brand">Offline PDF Editor</div>
-    <div class="toolbar">
+
+    <div class="toolbar" id="toolbar">
+      <!-- File -->
       <label class="btn" for="file-input">PDF öffnen</label>
       <input id="file-input" type="file" accept="application/pdf" hidden>
+      <button class="btn" id="btn-save" title="Bearbeitetes PDF herunterladen" disabled>Speichern</button>
+
       <span class="sep"></span>
-      <button class="btn ghost" id="btn-zoom-out" title="Verkleinern" disabled>−</button>
-      <button class="btn ghost" id="btn-zoom-in" title="Vergrößern" disabled>+</button>
-      <button class="btn ghost" id="btn-fit-width" title="An Breite anpassen" disabled>Breite</button>
-      <button class="btn ghost" id="btn-fit-page" title="Ganze Seite" disabled>Seite</button>
+
+      <!-- History -->
+      <button class="btn ghost" data-tool="undo" title="Rückgängig" disabled>↶</button>
+      <button class="btn ghost" data-tool="redo" title="Wiederholen" disabled>↷</button>
+
       <span class="sep"></span>
-      <button class="btn ghost" id="btn-rotate-left" title="Links drehen" disabled>↺</button>
-      <button class="btn ghost" id="btn-rotate-right" title="Rechts drehen" disabled>↻</button>
+
+      <!-- Edit tools (toggle group) -->
+      <button class="btn ghost tool" data-tool="select"    title="Auswählen / Hand" disabled>Auswahl</button>
+      <button class="btn ghost tool" data-tool="edit-text" title="Text bearbeiten" disabled>Text</button>
+      <button class="btn ghost tool" data-tool="textbox"   title="Textfeld einfügen" disabled>Textfeld</button>
+      <button class="btn ghost tool" data-tool="highlight" title="Markieren" disabled>Marker</button>
+      <button class="btn ghost tool" data-tool="underline" title="Unterstreichen" disabled>U̲</button>
+      <button class="btn ghost tool" data-tool="strikeout" title="Durchstreichen" disabled>S̶</button>
+      <button class="btn ghost tool" data-tool="shape"     title="Form (Rechteck)" disabled>Form</button>
+      <button class="btn ghost tool" data-tool="comment"   title="Kommentar" disabled>💬</button>
+      <button class="btn ghost tool" data-tool="image"     title="Bild einfügen" disabled>Bild</button>
+
+      <span class="sep"></span>
+
+      <!-- Pages -->
+      <button class="btn ghost" data-tool="page-add"    title="Seite hinzufügen" disabled>＋Seite</button>
+      <button class="btn ghost" data-tool="page-remove" title="Seite löschen" disabled>－Seite</button>
+      <button class="btn ghost" data-tool="rotate-left" title="Seite links drehen" disabled>↺</button>
+      <button class="btn ghost" data-tool="rotate-right" title="Seite rechts drehen" disabled>↻</button>
+
+      <span class="sep"></span>
+
+      <!-- View -->
+      <button class="btn ghost" data-tool="zoom-out"  title="Verkleinern" disabled>−</button>
+      <button class="btn ghost" data-tool="zoom-in"   title="Vergrößern" disabled>+</button>
+      <button class="btn ghost" data-tool="fit-width" title="An Breite anpassen" disabled>Breite</button>
+      <button class="btn ghost" data-tool="fit-page"  title="Ganze Seite" disabled>Seite</button>
     </div>
   </header>
 
@@ -28,12 +58,22 @@
       <div id="thumbnails" class="thumbnails"></div>
     </aside>
     <section class="viewer-host">
-      <!-- ONLYOFFICE CViewer mounts its canvas here; cursor target id is required. -->
-      <div id="viewer-container" class="viewer"></div>
-      <div id="id_target_cursor" class="cursor-target"></div>
+      <!--
+        The ONLYOFFICE PDF editor (Asc.PDFEditorApi) replaces this element's
+        innerHTML with the full editor page DOM (id_main / id_viewer /
+        id_target_cursor / scrollbars …). It must be present and empty before
+        the API is constructed.
+      -->
+      <div id="editor_sdk" class="editor-host"></div>
+
+      <!-- Read-only fallback mount (used only if the editor bundle is missing).
+           Its #id_target_cursor is created at runtime to avoid colliding with
+           the editor's own #id_target_cursor inside #editor_sdk. -->
+      <div id="viewer-container" class="viewer" hidden></div>
+
       <div id="placeholder" class="placeholder">
-        <p>Öffne eine PDF-Datei, um zu beginnen.</p>
-        <p class="muted">Läuft vollständig offline im Browser — kein Server-Upload.</p>
+        <p>Öffne eine PDF-Datei, um sie zu bearbeiten.</p>
+        <p class="muted">Läuft vollständig offline — kein Server-Upload.</p>
       </div>
     </section>
   </main>

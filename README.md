@@ -82,22 +82,46 @@ npm start              # serve at http://localhost:3000
 
 ## Host integration
 
-The host (`public/`) drives ONLYOFFICE's **standalone viewer** API, mirroring
-upstream's own `sdkjs/pdf/test` harness but as our own minimal UI:
+The host (`public/`) drives ONLYOFFICE's **full PDF editor API**
+(`Asc.PDFEditorApi`) — the same API the upstream `pdfeditor` web-app uses — not
+just the read-only viewer. The editor lives in the `word` product bundle
+(`word/sdk-all-min.js`) that `npm run build-engine` produces.
 
 ```js
-const viewer = new AscViewer.CViewer("id_viewer", {
-  sdkjsPath: "/vendor/onlyoffice/sdkjs",
-  fontsPath: "/vendor/fonts/",
-});
-viewer.open(arrayBuffer);          // + setZoom / setZoomMode / rotatePage
-viewer.createThumbnails("thumbnails");
+// 1. load the font registry + the editor bundle
+//    /vendor/onlyoffice/sdkjs/common/AllFonts.js
+//    /vendor/onlyoffice/sdkjs/word/sdk-all-min.js
+// 2. pin the engine asset base URL (drawingfile.wasm / cmap.bin)
+window.AscViewer.baseEngineUrl = "/vendor/onlyoffice/sdkjs/pdf/src/engine/";
+
+// 3. construct the editor — it builds its page DOM into #editor_sdk and
+//    creates WordControl (CEditorPage) via _onEndLoadSdk()
+const editor = new Asc.PDFEditorApi({ "id-view": "editor_sdk" });
+editor.baseFontsPath = "/vendor/fonts/";
+
+// 4. open an in-memory PDF — no server, no Document Server, no upload
+editor.openDocument({ data: uint8Array });
+
+// editing → real API methods
+editor.AddFreeTextAnnot(...);                   // text box
+editor.SetMarkerFormat(type, true, op, r,g,b);  // highlight / underline / strikeout
+editor.StartAddShape("rect", false);            // shapes
+editor.asc_AddPage / asc_RemovePage / asc_RotatePage;
+editor.Undo() / editor.Redo();
+
+// save the edited PDF back out (in-WASM serializer) and download it
+const bytes = editor.getDocumentRenderer().Save();
 ```
 
-The built engine bundle `pdf/src/engine/viewer.js` already includes the
-high-level `CViewer` wrapper, so a single script provides the whole API. We open
-local files entirely in the browser (FileReader → ArrayBuffer), so there is no
-server upload and no Document Server.
+If the editor bundle is missing the host falls back to the read-only
+`AscViewer.CViewer` so opening a PDF still works.
+
+### Editing UI (`public/`)
+
+The toolbar wires the editor API to: text editing, text boxes, highlight /
+underline / strikeout markers, shapes, comments, image insert, page
+add / delete / rotate, undo / redo, and **Save** (downloads the edited PDF). All
+local, all offline.
 
 ## Font registry (`AllFonts.js`)
 
@@ -119,8 +143,11 @@ Output: ~120 font families, ~189 font files. All gitignored.
 - ✅ AGPL licensing + attribution
 - ✅ Reproducible from-source engine build (`npm run build-engine`)
 - ✅ Zero-dependency dev server (correct wasm MIME, COOP/COEP)
-- ✅ Standalone viewer host wired to `AscViewer.CViewer` (open, zoom, rotate,
-     thumbnails, drag & drop) — needs in-browser verification
 - ✅ Font registry `AllFonts.js` + TTFs generated from core-fonts (`npm run generate-fonts`)
-- ⏳ Editing (annotations/forms/text) via the full `Asc.PDFEditorApi`
-     (the `word/sdk-all.js` bundle is already built and vendored for this)
+- ✅ Full **PDF editor** host wired to `Asc.PDFEditorApi` (text boxes, highlight/
+     underline/strikeout, shapes, comments, images, page add/delete/rotate,
+     undo/redo, Save → download edited PDF) — built on `word/sdk-all-min.js`
+- ✅ Read-only `AscViewer.CViewer` fallback if the editor bundle is unavailable
+- ⏳ In-browser / Windows-build verification of the editor bootstrap (open a PDF,
+     make edits, Save) — run `npm run build-engine && npm run generate-fonts`
+     then `npm run dev` or build the desktop ZIP with `npm run dist:win`

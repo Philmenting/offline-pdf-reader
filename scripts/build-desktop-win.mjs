@@ -3,7 +3,9 @@
  * Builds a standalone Windows desktop app (Electron-based, no browser needed).
  *
  * Downloads the Windows Electron binary, bundles it with the PDF editor app
- * (viewer engine, Western fonts, host UI), and produces a ready-to-run ZIP.
+ * (the ONLYOFFICE PDF *editor* engine incl. the font-shaping engine, the word
+ * sdk-all-min.js editor bundle, Western fonts, host UI), and produces a
+ * ready-to-run ZIP.
  *
  * Prerequisites: run `npm run build-engine` and `npm run generate-fonts` first.
  *
@@ -34,8 +36,11 @@ const WESTERN_FONT_PREFIXES = [
 const TRIM_DIRS = [
   "common/SmartArts", "common/spell", "common/Native",
   "common/serviceworker", "common/hash", "common/Charts",
-  "common/Drawings", "common/DocxToHtml",
-  "common/libfont/engine", "common/libfont/test",
+  "common/DocxToHtml",
+  // NOTE: common/libfont/engine is intentionally kept — the PDF *editor*
+  // (Asc.PDFEditorApi) loads this font-shaping engine at runtime for text
+  // editing / FreeText annotations. Trimming it leaves editing broken.
+  "common/libfont/test",
   "pdf/build", "pdf/test",
 ];
 
