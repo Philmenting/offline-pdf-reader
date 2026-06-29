@@ -44,6 +44,7 @@ let mode = "loading";    // "editor" | "viewer" | "loading"
 let docOpen = false;
 let lastName = "document.pdf";
 let activeTool = "select";
+let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
 
 if (typeof window["g_fonts_selection_bin"] === "undefined") {
   window["g_fonts_selection_bin"] = "";
@@ -166,35 +167,51 @@ function lockEngineBaseUrl() {
 }
 
 // ── Editor bootstrap ──────────────────────────────────────────────────────
+let sdkLoadError = null; // captured if _onEndLoadSdk throws inside the ctor
+
 async function initEditor() {
   setStatus("PDF-Editor wird geladen …");
+  console.log("[bootstrap] loading AllFonts.js + editor bundle …");
   await loadScript(ALLFONTS);
   await loadScript(EDITOR_BUNDLE);
 
   if (!(window.Asc && typeof window.Asc.PDFEditorApi === "function")) {
     throw new Error("Editor-Bundle geladen, aber Asc.PDFEditorApi fehlt.");
   }
+  console.log("[bootstrap] editor bundle loaded; Asc.PDFEditorApi present");
 
   // `AscCommon.loadSdk(name, onSuccess, onError)` is normally provided by the
   // web-apps script loader (it lazy-loads the SDK chunks). We ship the SDK as a
-  // single pre-loaded bundle, so the SDK is already present: shim loadSdk to run
-  // the success callback immediately. Without this, the api constructor's
-  // _init() → loadSdk() never calls back and _onEndLoadSdk() (WordControl + page
-  // DOM) never runs.
+  // single pre-loaded bundle, so the SDK is already present. Force-install a
+  // shim that runs the success callback immediately — and capture any error
+  // thrown synchronously by _onEndLoadSdk() (which runs inside the api ctor) so
+  // we can report the real reason instead of a generic timeout. Without this,
+  // the ctor's _init() → loadSdk() never calls back and the editor page DOM /
+  // WordControl never gets built.
   window.AscCommon = window.AscCommon || {};
-  if (typeof window.AscCommon.loadSdk !== "function") {
-    window.AscCommon.loadSdk = function (name, onSuccess, onError) {
-      try { onSuccess && onSuccess(); }
-      catch (e) { if (onError) onError(e); else throw e; }
-    };
-  }
+  window.AscCommon.loadSdk = function (name, onSuccess, onError) {
+    try { onSuccess && onSuccess(); }
+    catch (e) {
+      sdkLoadError = e;
+      console.error("[bootstrap] _onEndLoadSdk threw:", e);
+      if (onError) onError(e);
+    }
+  };
 
   lockEngineBaseUrl();
 
-  editor = new window.Asc.PDFEditorApi({
-    "id-view": "editor_sdk",
-    "embedded": false,
-  });
+  console.log("[bootstrap] constructing Asc.PDFEditorApi …");
+  try {
+    editor = new window.Asc.PDFEditorApi({
+      "id-view": "editor_sdk",
+      "embedded": false,
+    });
+  } catch (e) {
+    throw new Error(`PDFEditorApi-Konstruktor fehlgeschlagen: ${e && e.message ? e.message : e}`);
+  }
+  if (sdkLoadError) {
+    throw new Error(`Editor-SDK-Initialisierung fehlgeschlagen: ${sdkLoadError.message || sdkLoadError}`);
+  }
   // Where the engine loads bundled TTFs from (sdkjs reads Api.baseFontsPath).
   editor.baseFontsPath = FONTS_PATH;
 
@@ -217,8 +234,12 @@ async function initEditor() {
   registerEditorCallbacks();
 
   // Wait until loadSdk has run _onEndLoadSdk() (WordControl + page DOM built).
-  await waitFor(() => editor.isLoadFullApi === true && !!editor.WordControl, 15000,
-    "Editor-SDK wurde nicht rechtzeitig initialisiert.");
+  await waitFor(
+    () => editor.isLoadFullApi === true && !!editor.WordControl,
+    15000,
+    `Editor-SDK wurde nicht rechtzeitig initialisiert (isLoadFullApi=${editor.isLoadFullApi}, WordControl=${!!editor.WordControl}).`
+  );
+  console.log("[bootstrap] editor SDK ready (WordControl built)");
 
   if (typeof window.AscViewer.checkApplicationScale === "function") {
     window.AscViewer.checkApplicationScale();
@@ -330,7 +351,8 @@ function openArrayBuffer(buf, name) {
       enableEditing(false);
       setToolEnabled("zoom-in", true); setToolEnabled("zoom-out", true);
       setToolEnabled("fit-width", true); setToolEnabled("fit-page", true);
-      setStatus(`„${name}" geöffnet (Nur-Lese-Modus).`);
+      const why = editorErrorMsg ? ` — Editor-Fehler: ${editorErrorMsg}` : "";
+      setStatus(`„${name}" geöffnet (Nur-Lese-Modus)${why}`);
     }
   } catch (e) {
     console.error("open() error:", e);
@@ -576,8 +598,9 @@ function wireUi() {
 
 wireUi();
 initEditor().catch((err) => {
+  editorErrorMsg = (err && err.message) ? err.message : String(err);
   console.error("Editor-Bootstrap fehlgeschlagen:", err);
-  setStatus(`Editor konnte nicht geladen werden (${err.message}) — Wechsel in den Nur-Lese-Modus …`);
+  setStatus(`Editor konnte nicht geladen werden: ${editorErrorMsg} — Wechsel in den Nur-Lese-Modus …`);
   initViewerFallback().catch((err2) => {
     console.error(err2);
     setStatus(`Fehler beim Laden der Engine: ${err2.message}`);
