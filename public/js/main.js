@@ -69,87 +69,116 @@ if (typeof window["g_fonts_selection_bin"] === "undefined") {
 
 // ── Font substitution patch ──────────────────────────────────────────────
 // The engine's font manager scores fonts via g_fonts_selection_bin. We ship no
-// precomputed binary, so we patch pickFont to map common PDF font names onto our
-// bundled Liberation/DejaVu families. Applies to both viewer and editor builds
-// (same AscFonts global).
+// precomputed binary, so pickFont() mis-resolves common PDF fonts (Arial,
+// Times, …) → garbled text. We patch pickFont to map those names onto our
+// bundled Liberation/DejaVu families.
+//
+// Two builds expose different internals:
+//   • Viewer (closure-minified engine/viewer.js): AscFonts.jh/.kh name index.
+//   • Editor (concatenated common/libfont/map.js): pickFont() delegates to
+//     g_fontApplication.GetFontInfo(name, style) — no jh/kh.
+// We support both: rewrite the requested name to a bundled family, then let the
+// build's own resolution take over.
+const FONT_SUBS = {
+  "Arial": "Liberation Sans", "Arial Narrow": "Liberation Sans Narrow",
+  "Helvetica": "Liberation Sans", "Helvetica Neue": "Liberation Sans",
+  "Times New Roman": "Liberation Serif", "Times": "Liberation Serif",
+  "Times Roman": "Liberation Serif", "TimesNewRoman": "Liberation Serif",
+  "TimesNewRomanPS": "Liberation Serif", "TimesNewRomanPSMT": "Liberation Serif",
+  "ArialMT": "Liberation Sans", "Arial-BoldMT": "Liberation Sans",
+  "Arial-ItalicMT": "Liberation Sans", "Arial-BoldItalicMT": "Liberation Sans",
+  "CourierNewPSMT": "Liberation Mono", "CourierNewPS": "Liberation Mono",
+  "Courier New": "Liberation Mono", "Courier": "Liberation Mono",
+  "Calibri": "Carlito", "Cambria": "Caladea", "Verdana": "DejaVu Sans",
+  "Georgia": "DejaVu Serif", "Tahoma": "DejaVu Sans", "Trebuchet MS": "DejaVu Sans",
+  "Lucida Sans": "DejaVu Sans", "Lucida Console": "DejaVu Sans Mono",
+  "Consolas": "DejaVu Sans Mono", "Segoe UI": "DejaVu Sans",
+  "Palatino": "DejaVu Serif", "Palatino Linotype": "DejaVu Serif",
+  "Book Antiqua": "DejaVu Serif", "Garamond": "DejaVu Serif",
+  "Century": "DejaVu Serif", "Impact": "Liberation Sans",
+  "Comic Sans MS": "DejaVu Sans", "Symbol": "Symbola", "ZapfDingbats": "Symbola",
+};
+
+const STYLE_KEYWORDS = {
+  "Bold": 1, "Bd": 1, "Demi": 1, "Heavy": 1, "Black": 1,
+  "Italic": 2, "It": 2, "Oblique": 2, "Obl": 2, "Slanted": 2,
+  "BoldItalic": 3, "BoldOblique": 3, "BoldIt": 3,
+  "Roman": 0, "Regular": 0, "Book": 0, "Medium": 0, "Light": 0,
+};
+
+// "Arial-BoldMT" → {family:"Arial", styleOverride:1}; "ArialMT" → {family:"Arial"}
+function parsePostScriptName(psName) {
+  const dashIdx = psName.indexOf("-");
+  if (dashIdx >= 0) {
+    const family = psName.slice(0, dashIdx);
+    const suffix = psName.slice(dashIdx + 1).replace(/MT$/, "");
+    return { family, styleOverride: STYLE_KEYWORDS[suffix] ?? null };
+  }
+  const commaIdx = psName.indexOf(",");
+  if (commaIdx >= 0) {
+    const suffix = psName.slice(commaIdx + 1).trim();
+    return { family: psName.slice(0, commaIdx), styleOverride: STYLE_KEYWORDS[suffix] ?? null };
+  }
+  // strip a trailing "MT" (ArialMT, TimesNewRomanPSMT) to expose the base family
+  const base = psName.replace(/(PS)?MT$/, "");
+  return { family: base, styleOverride: null };
+}
+
+// Map a requested PDF font name to a bundled family name (or null if unknown).
+function substituteFontName(name) {
+  if (typeof name !== "string" || !name) return null;
+  if (FONT_SUBS[name]) return FONT_SUBS[name];
+  const ps = parsePostScriptName(name);
+  if (ps.family !== name && FONT_SUBS[ps.family]) return FONT_SUBS[ps.family];
+  // Conservative keyword fallback for names not in the table (e.g. subset
+  // prefixes like "ABCDEF+Arial", vendor variants): pick a same-class bundled
+  // family rather than letting the manager mis-resolve to garbage.
+  const n = name.toLowerCase();
+  if (/(arial|helvetica|verdana|tahoma|segoe|calibri|frutiger)/.test(n)) return "Liberation Sans";
+  if (/(times|georgia|garamond|cambria|minion|book antiqua|palatino)/.test(n)) return "Liberation Serif";
+  if (/(courier|consol|mono)/.test(n)) return "Liberation Mono";
+  return null;
+}
+
 function installFontSubstitutionPatch() {
   const af = window.AscFonts;
-  if (!af || !af.jh || !af.kh || af.__substPatched) return false;
-
-  const SUBS = {
-    "Arial": "Liberation Sans", "Arial Narrow": "Liberation Sans Narrow",
-    "Helvetica": "Liberation Sans", "Helvetica Neue": "Liberation Sans",
-    "Times New Roman": "Liberation Serif", "Times": "Liberation Serif",
-    "Times Roman": "Liberation Serif", "TimesNewRoman": "Liberation Serif",
-    "TimesNewRomanPS": "Liberation Serif", "TimesNewRomanPSMT": "Liberation Serif",
-    "ArialMT": "Liberation Sans", "CourierNewPSMT": "Liberation Mono",
-    "Courier New": "Liberation Mono", "Courier": "Liberation Mono",
-    "Calibri": "Carlito", "Cambria": "Caladea", "Verdana": "DejaVu Sans",
-    "Georgia": "DejaVu Serif", "Tahoma": "DejaVu Sans", "Trebuchet MS": "DejaVu Sans",
-    "Lucida Sans": "DejaVu Sans", "Lucida Console": "DejaVu Sans Mono",
-    "Consolas": "DejaVu Sans Mono", "Segoe UI": "DejaVu Sans",
-    "Palatino": "DejaVu Serif", "Palatino Linotype": "DejaVu Serif",
-    "Book Antiqua": "DejaVu Serif", "Garamond": "DejaVu Serif",
-    "Century": "DejaVu Serif", "Impact": "Liberation Sans",
-    "Comic Sans MS": "DejaVu Sans", "Symbol": "Symbola", "ZapfDingbats": "Symbola",
-  };
-
-  const STYLE_KEYWORDS = {
-    "Bold": 1, "Bd": 1, "Demi": 1, "Heavy": 1, "Black": 1,
-    "Italic": 2, "It": 2, "Oblique": 2, "Obl": 2, "Slanted": 2,
-    "BoldItalic": 3, "BoldOblique": 3, "BoldIt": 3,
-    "Roman": 0, "Regular": 0, "Book": 0, "Medium": 0, "Light": 0,
-  };
-
-  function parsePostScriptName(psName) {
-    const dashIdx = psName.indexOf("-");
-    if (dashIdx < 0) {
-      const commaIdx = psName.indexOf(",");
-      if (commaIdx < 0) return { family: psName, styleOverride: null };
-      const suffix = psName.slice(commaIdx + 1).trim();
-      if (STYLE_KEYWORDS[suffix] !== undefined) {
-        return { family: psName.slice(0, commaIdx), styleOverride: STYLE_KEYWORDS[suffix] };
-      }
-      return { family: psName, styleOverride: null };
-    }
-    const family = psName.slice(0, dashIdx);
-    const suffix = psName.slice(dashIdx + 1);
-    if (STYLE_KEYWORDS[suffix] !== undefined) {
-      return { family, styleOverride: STYLE_KEYWORDS[suffix] };
-    }
-    return { family: psName, styleOverride: null };
-  }
+  if (!af || typeof af.pickFont !== "function" || af.__substPatched) return false;
 
   const origPickFont = af.pickFont;
+
+  if (af.jh && af.kh) {
+    // ── Viewer build: resolve via the jh/kh name index directly. ──
+    af.pickFont = function (name, style) {
+      const kh = af.kh, jh = af.jh;
+      let resolvedName = name, effectiveStyle = style;
+      if (kh[resolvedName] === undefined) {
+        const ps = parsePostScriptName(name);
+        if (ps.styleOverride !== null) { resolvedName = ps.family; effectiveStyle = ps.styleOverride; }
+      }
+      if (kh[resolvedName] === undefined && FONT_SUBS[resolvedName]) resolvedName = FONT_SUBS[resolvedName];
+      if (kh[resolvedName] === undefined) {
+        const upper = resolvedName.toUpperCase();
+        for (const k of Object.keys(kh)) { if (k.toUpperCase() === upper) { resolvedName = k; break; } }
+      }
+      if (kh[resolvedName] === undefined && FONT_SUBS[name]) resolvedName = FONT_SUBS[name];
+      if (kh[resolvedName] !== undefined) {
+        const entry = jh[kh[resolvedName]];
+        if (entry && entry.Mn) return entry.Mn(AscCommon.je, effectiveStyle).file;
+      }
+      return origPickFont.call(this, name, style);
+    };
+    af.__substPatched = true;
+    console.log("[fonts] substitution patch installed (viewer/jh-kh build)");
+    return true;
+  }
+
+  // ── Editor build: rewrite the name, let GetFontInfo resolve the family. ──
   af.pickFont = function (name, style) {
-    const kh = af.kh, jh = af.jh;
-    let resolvedName = name;
-    let effectiveStyle = style;
-
-    if (kh[resolvedName] === undefined) {
-      const ps = parsePostScriptName(name);
-      if (ps.styleOverride !== null) {
-        resolvedName = ps.family;
-        effectiveStyle = ps.styleOverride;
-      }
-    }
-    if (kh[resolvedName] === undefined && SUBS[resolvedName]) resolvedName = SUBS[resolvedName];
-    if (kh[resolvedName] === undefined) {
-      const upper = resolvedName.toUpperCase();
-      for (const k of Object.keys(kh)) {
-        if (k.toUpperCase() === upper) { resolvedName = k; break; }
-      }
-    }
-    if (kh[resolvedName] === undefined && SUBS[name]) resolvedName = SUBS[name];
-
-    if (kh[resolvedName] !== undefined) {
-      const entry = jh[kh[resolvedName]];
-      if (entry && entry.Mn) return entry.Mn(AscCommon.je, effectiveStyle).file;
-    }
-    return origPickFont.call(this, name, style);
+    const mapped = substituteFontName(name);
+    return origPickFont.call(this, mapped !== null ? mapped : name, style);
   };
-
   af.__substPatched = true;
+  console.log("[fonts] substitution patch installed (editor/g_fontApplication build)");
   return true;
 }
 
