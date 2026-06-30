@@ -415,14 +415,20 @@ function openArrayBuffer(buf, name) {
       installFontSubstitutionPatch();
       docOpen = false;
       editor.openDocument({ data: bytes });   // browser open: no server, no upload
-      // We bypass the Document Server handshake, so the "server id wait" that
-      // gates _openDocumentEndCallback() never completes on its own. Signal it
-      // manually so asc_onDocumentContentReady fires once fonts/images/render
-      // finish (all three completion paths call _openDocumentEndCallback, and
-      // the last one then sees every flag satisfied).
+      // Offline: there is no Document Server, so the two "wait for server" gates
+      // that block _openDocumentEndCallback() never clear on their own. Mark
+      // both complete; the editor's own onFileOpened → _openDocumentEndCallback
+      // then fires asc_onDocumentContentReady through the proper pipeline (which
+      // creates the thumbnails that asc_EditPage() dereferences unguarded).
       try {
-        if (typeof editor.asyncServerIdEndLoaded === "function") editor.asyncServerIdEndLoaded();
-      } catch (e) { console.warn("asyncServerIdEndLoaded fehlgeschlagen:", e); }
+        editor.ServerImagesWaitComplete = true;
+        if (typeof editor.asyncServerIdEndLoaded === "function") {
+          editor.asyncServerIdEndLoaded();           // sets ServerIdWaitComplete + nudges callback
+        } else {
+          editor.ServerIdWaitComplete = true;
+          if (typeof editor._openDocumentEndCallback === "function") editor._openDocumentEndCallback();
+        }
+      } catch (e) { console.warn("Offline-Öffnen-Abschluss fehlgeschlagen:", e); }
       setStatus(`„${name}" wird geöffnet …`);
       scheduleOpenFallback(name);
     } else if (mode === "viewer") {
@@ -440,10 +446,11 @@ function openArrayBuffer(buf, name) {
   }
 }
 
-// Safety net: if the asc_onDocumentContentReady event has not flipped docOpen
-// within a few seconds but the PDF document already exists (it renders), finish
-// the open manually so the editing UI activates. Guards against any remaining
-// gap in the offline open pipeline.
+// Safety net for the offline open pipeline. Once the PDF document exists, keep
+// nudging the *proper* guarded completion (_openDocumentEndCallback) until
+// asc_onDocumentContentReady fires. Only if that never happens do we force the
+// UI active — and even then we create thumbnails first, because asc_EditPage()
+// dereferences Viewer.thumbnails without a null check.
 function scheduleOpenFallback(name) {
   let tries = 0;
   const timer = setInterval(() => {
@@ -452,23 +459,36 @@ function scheduleOpenFallback(name) {
     let doc = null;
     try { doc = (typeof editor.getPDFDoc === "function") ? editor.getPDFDoc() : null; } catch { /* not ready */ }
     if (doc) {
-      clearInterval(timer);
-      console.warn("[bootstrap] content-ready event not received — finalising open manually");
-      try { if (typeof editor.onDocumentContentReady === "function") editor.onDocumentContentReady(); }
-      catch (e) { console.warn("onDocumentContentReady() manuell fehlgeschlagen:", e); }
-      if (!docOpen) {
-        docOpen = true;
-        enableEditing(true);
-        setupThumbnails();
-        refreshHistoryButtons();
-        setStatus(`„${name}" geöffnet — bereit zum Bearbeiten.`);
+      try {
+        editor.ServerImagesWaitComplete = true;
+        editor.ServerIdWaitComplete = true;
+        if (typeof editor._openDocumentEndCallback === "function") editor._openDocumentEndCallback();
+      } catch (e) { console.warn("_openDocumentEndCallback nudge fehlgeschlagen:", e); }
+      if (docOpen) { clearInterval(timer); return; }
+      if (tries > 8) { // ~4s of nudging without the event → force the UI active
+        clearInterval(timer);
+        console.warn("[bootstrap] content-ready did not fire — forcing editor UI active");
+        forceEnableEditing(name);
       }
-    } else if (tries > 30) { // ~15s
+    } else if (tries > 30) { // ~15s, document never materialised
       clearInterval(timer);
       console.warn("[bootstrap] open did not complete (no PDF document after 15s)");
       setStatus(`„${name}" konnte nicht vollständig geöffnet werden.`);
     }
   }, 500);
+}
+
+// Last-resort UI activation that avoids the unguarded asc_EditPage crash by
+// ensuring thumbnails exist first.
+function forceEnableEditing(name) {
+  try {
+    const r = (typeof editor.getDocumentRenderer === "function") ? editor.getDocumentRenderer() : null;
+    if (r && typeof r.createThumbnails === "function" && !r.thumbnails) r.createThumbnails("thumbnails");
+  } catch (e) { console.warn("createThumbnails (force) fehlgeschlagen:", e); }
+  docOpen = true;
+  enableEditing(true);
+  refreshHistoryButtons();
+  setStatus(`„${name}" geöffnet — bereit zum Bearbeiten.`);
 }
 
 function onFileChosen(file) {
