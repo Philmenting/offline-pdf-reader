@@ -384,8 +384,18 @@ function openArrayBuffer(buf, name) {
   try {
     if (mode === "editor") {
       installFontSubstitutionPatch();
+      docOpen = false;
       editor.openDocument({ data: bytes });   // browser open: no server, no upload
+      // We bypass the Document Server handshake, so the "server id wait" that
+      // gates _openDocumentEndCallback() never completes on its own. Signal it
+      // manually so asc_onDocumentContentReady fires once fonts/images/render
+      // finish (all three completion paths call _openDocumentEndCallback, and
+      // the last one then sees every flag satisfied).
+      try {
+        if (typeof editor.asyncServerIdEndLoaded === "function") editor.asyncServerIdEndLoaded();
+      } catch (e) { console.warn("asyncServerIdEndLoaded fehlgeschlagen:", e); }
       setStatus(`„${name}" wird geöffnet …`);
+      scheduleOpenFallback(name);
     } else if (mode === "viewer") {
       viewer.open(buf);
       installFontSubstitutionPatch();
@@ -399,6 +409,37 @@ function openArrayBuffer(buf, name) {
     console.error("open() error:", e);
     setStatus(`„${name}" konnte nicht geöffnet werden: ${e.message}`);
   }
+}
+
+// Safety net: if the asc_onDocumentContentReady event has not flipped docOpen
+// within a few seconds but the PDF document already exists (it renders), finish
+// the open manually so the editing UI activates. Guards against any remaining
+// gap in the offline open pipeline.
+function scheduleOpenFallback(name) {
+  let tries = 0;
+  const timer = setInterval(() => {
+    if (docOpen) { clearInterval(timer); return; }
+    tries++;
+    let doc = null;
+    try { doc = (typeof editor.getPDFDoc === "function") ? editor.getPDFDoc() : null; } catch { /* not ready */ }
+    if (doc) {
+      clearInterval(timer);
+      console.warn("[bootstrap] content-ready event not received — finalising open manually");
+      try { if (typeof editor.onDocumentContentReady === "function") editor.onDocumentContentReady(); }
+      catch (e) { console.warn("onDocumentContentReady() manuell fehlgeschlagen:", e); }
+      if (!docOpen) {
+        docOpen = true;
+        enableEditing(true);
+        setupThumbnails();
+        refreshHistoryButtons();
+        setStatus(`„${name}" geöffnet — bereit zum Bearbeiten.`);
+      }
+    } else if (tries > 30) { // ~15s
+      clearInterval(timer);
+      console.warn("[bootstrap] open did not complete (no PDF document after 15s)");
+      setStatus(`„${name}" konnte nicht vollständig geöffnet werden.`);
+    }
+  }, 500);
 }
 
 function onFileChosen(file) {
