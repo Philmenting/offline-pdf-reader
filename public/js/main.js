@@ -333,7 +333,7 @@ function registerEditorCallbacks() {
     docOpen = true;
     enableEditing(true);
     setStatus(`„${lastName}" geöffnet — bereit zum Bearbeiten.`);
-    setupThumbnails();
+    ensureEditorThumbnails();
     refreshHistoryButtons();
   });
   on("asc_onCountPages", (n) => { /* page count available */ });
@@ -346,11 +346,18 @@ function registerEditorCallbacks() {
   });
 }
 
-function setupThumbnails() {
+// The editor's own onDocumentContentReady creates a ThumbnailsControl into
+// #thumbnails-list. Mirror that (idempotently) so Viewer.thumbnails is never
+// null — asc_EditPage() and change repaints dereference it WITHOUT a null guard,
+// so a missing thumbnails object crashes the first edit.
+function ensureEditorThumbnails() {
   try {
-    const renderer = editor.getDocumentRenderer && editor.getDocumentRenderer();
-    if (renderer && typeof renderer.createThumbnails === "function") {
-      thumbnails = renderer.createThumbnails("thumbnails");
+    const r = editor.getDocumentRenderer && editor.getDocumentRenderer();
+    if (!r || r.Thumbnails) return; // already created (by us or the editor)
+    if (window.AscCommon && typeof window.AscCommon.ThumbnailsControl === "function"
+        && document.getElementById("thumbnails-list")) {
+      r.Thumbnails = new window.AscCommon.ThumbnailsControl("thumbnails-list");
+      r.setThumbnailsControl(r.Thumbnails);
     }
   } catch (e) {
     console.warn("Thumbnails konnten nicht erstellt werden:", e);
@@ -373,6 +380,9 @@ async function initViewerFallback() {
   }
   el("editor_sdk").hidden = true;
   el("viewer-container").hidden = false;
+  // Swap the thumbnail rails: the fallback viewer renders into #thumbnails.
+  if (el("thumbnails-list")) el("thumbnails-list").hidden = true;
+  if (el("thumbnails")) el("thumbnails").hidden = false;
 
   // The standalone viewer needs a #id_target_cursor element; create it here so
   // it never collides with the editor's own (the editor failed to load in this
@@ -465,26 +475,26 @@ function scheduleOpenFallback(name) {
         if (typeof editor._openDocumentEndCallback === "function") editor._openDocumentEndCallback();
       } catch (e) { console.warn("_openDocumentEndCallback nudge fehlgeschlagen:", e); }
       if (docOpen) { clearInterval(timer); return; }
-      if (tries > 8) { // ~4s of nudging without the event → force the UI active
+      // Content-ready can take a while (fonts finish loading first). Give the
+      // natural path plenty of time before forcing.
+      if (tries > 40) { // ~20s of nudging without the event → force the UI active
         clearInterval(timer);
         console.warn("[bootstrap] content-ready did not fire — forcing editor UI active");
         forceEnableEditing(name);
       }
-    } else if (tries > 30) { // ~15s, document never materialised
+    } else if (tries > 60) { // ~30s, document never materialised
       clearInterval(timer);
-      console.warn("[bootstrap] open did not complete (no PDF document after 15s)");
+      console.warn("[bootstrap] open did not complete (no PDF document after 30s)");
       setStatus(`„${name}" konnte nicht vollständig geöffnet werden.`);
     }
   }, 500);
 }
 
-// Last-resort UI activation that avoids the unguarded asc_EditPage crash by
-// ensuring thumbnails exist first.
+// Last-resort UI activation. Create the thumbnails control first (the editor
+// does this in onDocumentContentReady, which by definition did not run here) so
+// the unguarded asc_EditPage() dereference of Viewer.thumbnails cannot crash.
 function forceEnableEditing(name) {
-  try {
-    const r = (typeof editor.getDocumentRenderer === "function") ? editor.getDocumentRenderer() : null;
-    if (r && typeof r.createThumbnails === "function" && !r.thumbnails) r.createThumbnails("thumbnails");
-  } catch (e) { console.warn("createThumbnails (force) fehlgeschlagen:", e); }
+  ensureEditorThumbnails();
   docOpen = true;
   enableEditing(true);
   refreshHistoryButtons();

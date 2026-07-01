@@ -55,7 +55,12 @@
 
   <main class="workspace">
     <aside class="sidebar">
-      <div id="thumbnails" class="thumbnails"></div>
+      <!-- Editor thumbnails: the PDF editor (onDocumentContentReady) creates its
+           ThumbnailsControl into an element with THIS exact id. Without it, the
+           editor's Viewer.thumbnails stays null and asc_EditPage() crashes. -->
+      <div id="thumbnails-list" class="thumbnails"></div>
+      <!-- Viewer-fallback thumbnails (only used in read-only fallback mode). -->
+      <div id="thumbnails" class="thumbnails" hidden></div>
     </aside>
     <section class="viewer-host">
       <!--
