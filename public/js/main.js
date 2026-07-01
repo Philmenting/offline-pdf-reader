@@ -724,6 +724,18 @@ function wireUi() {
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   el("btn-save").addEventListener("click", saveDocument);
 
+  // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
+  // document "focus" listener: whenever DOM focus lands on an element it does
+  // not recognise as editable, it treats that as "left the editor" and disables
+  // key-event capture. Our plain <button> toolbar steals focus on click, which
+  // silently kills typing in text boxes/annotations afterwards — the box gets
+  // created (mouse events still work), but no keystroke ever reaches it.
+  // Standard fix (every WYSIWYG toolbar does this): stop the click's implicit
+  // focus shift on mousedown. The click event itself still fires normally.
+  el("toolbar").addEventListener("mousedown", (e) => {
+    if (e.target.closest("button")) e.preventDefault();
+  });
+
   for (const btn of document.querySelectorAll("[data-tool]")) {
     const tool = btn.getAttribute("data-tool");
     btn.addEventListener("click", () => {
