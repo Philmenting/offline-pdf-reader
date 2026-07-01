@@ -342,7 +342,10 @@ function installInputDiagnostics() {
   }, true);
   window.addEventListener("keydown", (e) => {
     const a = document.activeElement;
-    console.log(`[input-debug] keydown key="${e.key}" activeElement=<${a && a.tagName}${a && a.id ? "#" + a.id : ""}>`);
+    let longAction = "?", canEdit = "?";
+    try { longAction = editor.isLongAction(); } catch { /* ignore */ }
+    try { canEdit = editor.canEdit(); } catch { /* ignore */ }
+    console.log(`[input-debug] keydown key="${e.key}" activeElement=<${a && a.tagName}${a && a.id ? "#" + a.id : ""}> isLongAction=${longAction} (counter=${editor.IsLongActionCurrent}) canEdit=${canEdit}`);
   }, true);
   try {
     const orig = editor.asc_enterText;
@@ -379,6 +382,7 @@ function registerEditorCallbacks() {
   });
   on("asc_onDocumentContentReady", () => {
     docOpen = true;
+    resetLongActionCounter();
     enableEditing(true);
     setStatus(`„${lastName}" geöffnet — bereit zum Bearbeiten.`);
     ensureEditorThumbnails();
@@ -417,6 +421,23 @@ function refreshHistoryButtons() {
     if (typeof editor.asc_getCanUndo === "function") setToolEnabled("undo", docOpen && editor.asc_getCanUndo());
     if (typeof editor.asc_getCanRedo === "function") setToolEnabled("redo", docOpen && editor.asc_getCanRedo());
   } catch { /* ignore */ }
+}
+
+// Every sync_StartAction() must be paired with a matching sync_EndAction() to
+// decrement IsLongActionCurrent back to 0; while it's non-zero, isLongAction()
+// is true and CTextInputPrototype.onKeyDown() swallows every keystroke before
+// any other processing (AscCommon.stopEvent + early return). Our offline open
+// bypasses parts of the normal Start/End pairing (we mark server-wait gates
+// complete directly rather than through the real network completion path), so
+// if some action's matching End never ran, the counter can get stuck above 0
+// forever — silently blocking all keyboard input with no error anywhere.
+function resetLongActionCounter() {
+  try {
+    if (editor && typeof editor.IsLongActionCurrent === "number" && editor.IsLongActionCurrent !== 0) {
+      console.warn(`[bootstrap] IsLongActionCurrent was ${editor.IsLongActionCurrent} (stuck long-action) — resetting to 0`);
+      editor.IsLongActionCurrent = 0;
+    }
+  } catch (e) { console.warn("resetLongActionCounter fehlgeschlagen:", e); }
 }
 
 // ── Viewer fallback (read-only) ───────────────────────────────────────────
@@ -544,6 +565,7 @@ function scheduleOpenFallback(name) {
 function forceEnableEditing(name) {
   ensureEditorThumbnails();
   docOpen = true;
+  resetLongActionCounter();
   enableEditing(true);
   refreshHistoryButtons();
   setStatus(`„${name}" geöffnet — bereit zum Bearbeiten.`);
@@ -620,7 +642,11 @@ const TOOL_HANDLERS = {
 
   "select":      () => { editor.SetMarkerFormat(undefined, false); setActiveTool("select"); },
   "edit-text":   () => { if (typeof editor.asc_EditPage === "function") editor.asc_EditPage(); setActiveTool("edit-text"); },
-  "textbox":     () => { if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2); setActiveTool("textbox"); },
+  "textbox":     () => {
+    if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
+    setActiveTool("textbox");
+    console.log(`[input-debug] after AddFreeTextAnnot: IsLongActionCurrent=${editor.IsLongActionCurrent}`);
+  },
   "highlight":   () => setMarker("Highlight", 255, 236, 0, 1),
   "underline":   () => setMarker("Underline", 220, 30, 30, 1),
   "strikeout":   () => setMarker("Strikeout", 220, 30, 30, 1),
