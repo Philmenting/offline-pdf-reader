@@ -39,8 +39,14 @@ const MIME = {
 // hardcodes asset paths like `../../../../sdkjs/common/libfont/engine/fonts.js`
 // (font engine, cursors, spell, stamps). Served from our page at "/", those
 // resolve to `/sdkjs/…`, so we mount the vendored sdkjs there too.
+// `/fonts/` covers a second hardcoded path: CGlobalFontLoader
+// (common/GlobalLoaders.js) defaults fontFilesPath to "../../../../fonts/",
+// independent of the Api.baseFontsPath we set in JS. We patch that variable at
+// runtime too, but keep this alias as a safety net for any other reference to
+// the same relative path.
 const MOUNTS = [
   { prefix: "/sdkjs/", dir: join(ROOT, "vendor", "onlyoffice", "sdkjs") },
+  { prefix: "/fonts/", dir: join(ROOT, "vendor", "fonts") },
   { prefix: "/vendor/", dir: join(ROOT, "vendor") },
   { prefix: "/", dir: join(ROOT, "public") },
 ];

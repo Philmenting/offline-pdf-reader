@@ -45,9 +45,11 @@ const MIME = {
 
 // `/sdkjs/` aliases the vendored ONLYOFFICE sdkjs root so the editor core's
 // hardcoded `../../../../sdkjs/…` asset paths (font engine, cursors, spell,
-// stamps) resolve against our offline bundle.
+// stamps) resolve against our offline bundle. `/fonts/` is a safety net for
+// CGlobalFontLoader's hardcoded fontFilesPath (patched at runtime too).
 const MOUNTS = [
   { prefix: "/sdkjs/", dir: join(ROOT, "vendor", "onlyoffice", "sdkjs") },
+  { prefix: "/fonts/", dir: join(ROOT, "vendor", "fonts") },
   { prefix: "/vendor/", dir: join(ROOT, "vendor") },
   { prefix: "/", dir: join(ROOT, "public") },
 ];

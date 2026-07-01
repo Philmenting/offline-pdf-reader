@@ -242,6 +242,19 @@ async function initEditor() {
   }
   console.log("[bootstrap] editor bundles loaded; Asc.PDFEditorApi + History present");
 
+  // CGlobalFontLoader (common/GlobalLoaders.js) hardcodes fontFilesPath to
+  // "../../../../fonts/" — a DIFFERENT path variable than Api.baseFontsPath
+  // (which only reaches the WASM engine's own font fetches). Left unpatched,
+  // every font-completion check 404s, CheckFontLoadStyles() never returns
+  // false, and the loader's 50ms poll (check_loaded_timer_id) never stops:
+  // isWorking() stays true forever, so the viewer's checkReady() never
+  // dispatches "onFileOpened" and the document never reaches real
+  // content-ready — which is also why text input never activates.
+  if (window.AscCommon && window.AscCommon.g_font_loader) {
+    window.AscCommon.g_font_loader.fontFilesPath = FONTS_PATH;
+    console.log(`[bootstrap] patched g_font_loader.fontFilesPath -> ${FONTS_PATH}`);
+  }
+
   // `AscCommon.loadSdk(name, onSuccess, onError)` is normally provided by the
   // web-apps script loader (it lazy-loads the SDK chunks). We ship the SDK as a
   // single pre-loaded bundle, so the SDK is already present. Force-install a
