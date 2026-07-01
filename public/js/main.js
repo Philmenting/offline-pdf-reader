@@ -322,7 +322,42 @@ async function initEditor() {
 
   mode = "editor";
   installFontSubstitutionPatch();
+  installInputDiagnostics();
   setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
+}
+
+// Temporary diagnostics for tracking down why typed characters don't reach
+// the document: log DOM focus changes, raw keydown events (with what currently
+// has focus), and every call into the API method that actually inserts typed
+// text (asc_enterText). Cheap, and removed once the input path is confirmed
+// working end-to-end.
+function installInputDiagnostics() {
+  document.addEventListener("focus", (e) => {
+    const t = e.target;
+    console.log(`[input-debug] DOM focus -> <${t.tagName}${t.id ? "#" + t.id : ""}> contentEditable=${t.contentEditable}`);
+  }, true);
+  document.addEventListener("blur", (e) => {
+    const t = e.target;
+    console.log(`[input-debug] DOM blur <- <${t.tagName}${t.id ? "#" + t.id : ""}>`);
+  }, true);
+  window.addEventListener("keydown", (e) => {
+    const a = document.activeElement;
+    console.log(`[input-debug] keydown key="${e.key}" activeElement=<${a && a.tagName}${a && a.id ? "#" + a.id : ""}>`);
+  }, true);
+  try {
+    const orig = editor.asc_enterText;
+    if (typeof orig === "function") {
+      editor.asc_enterText = function (codePoints, isFromPaste) {
+        console.log(`[input-debug] asc_enterText called, codePoints=`, codePoints);
+        return orig.apply(this, arguments);
+      };
+      console.log("[input-debug] instrumented asc_enterText");
+    } else {
+      console.warn("[input-debug] asc_enterText not found on editor — cannot instrument");
+    }
+  } catch (e) {
+    console.warn("[input-debug] failed to instrument asc_enterText", e);
+  }
 }
 
 function registerEditorCallbacks() {
