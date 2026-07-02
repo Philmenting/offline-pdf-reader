@@ -456,6 +456,13 @@ function installInputDiagnostics() {
     if (typeof orig === "function") {
       editor.asc_enterText = function (codePoints, isFromPaste) {
         console.log(`[input-debug] asc_enterText called, codePoints=`, codePoints);
+        // PDF subset fonts can carry a LYING cmap: it maps codepoints the
+        // subset never embedded (glyph outline stripped), so the per-glyph
+        // fallback never triggers ("font has it") and the char renders as a
+        // box. Typing must therefore never insert INTO an embedded/subset
+        // font: switch the run font to the closest bundled family first —
+        // the same behaviour desktop Word processors use for missing glyphs.
+        try { retargetEmbeddedRunFont(); } catch (e2) { console.warn("[fonts] retarget fehlgeschlagen:", e2); }
         return orig.apply(this, arguments);
       };
       console.log("[input-debug] instrumented asc_enterText");
@@ -468,18 +475,19 @@ function installInputDiagnostics() {
 
   // ── Glyph-fallback probes ─────────────────────────────────────────────
   // Trace the per-glyph substitution chain that decides between a real glyph
-  // and a .notdef box: picker ranges present? which font does the picker name
-  // per codepoint? does the measurer actually get a usable font file back?
+  // and a .notdef box. Deduplicated per (codepoint → result) so the logs stay
+  // complete AND readable — no fixed budget that silently runs out.
   try {
     const picker = window.AscFonts && window.AscFonts.FontPickerByCharacter;
     if (picker) {
       console.log(`[font-debug] picker ranges loaded: ${picker.Ranges.length}`);
-      let logged = 0;
+      const seen = new Set();
       const origGet = picker.getFontBySymbol;
       picker.getFontBySymbol = function (ch) {
         const name = origGet.call(this, ch);
-        if (logged < 40) {
-          logged++;
+        const key = `${ch}:${name}`;
+        if (!seen.has(key)) {
+          seen.add(key);
           console.log(`[font-debug] picker: U+${(ch || 0).toString(16)} -> "${name}"`);
         }
         return name;
@@ -489,13 +497,14 @@ function installInputDiagnostics() {
     }
     const tm = window.AscCommon && window.AscCommon.g_oTextMeasurer;
     if (tm && typeof tm.GetFontBySymbol === "function") {
-      let logged2 = 0;
+      const seen2 = new Set();
       const origTm = tm.GetFontBySymbol;
       tm.GetFontBySymbol = function (codePoint, oPreferredFont, isForce) {
         const res = origTm.call(this, codePoint, oPreferredFont, isForce);
-        if (logged2 < 40) {
-          logged2++;
-          const fam = res && res.Font && res.Font.m_pFaceInfo ? res.Font.m_pFaceInfo.family_name : String(res && res.Font);
+        const fam = res && res.Font && res.Font.m_pFaceInfo ? res.Font.m_pFaceInfo.family_name : String(res && res.Font);
+        const key = `${codePoint}:${fam}`;
+        if (!seen2.has(key)) {
+          seen2.add(key);
           console.log(`[font-debug] measurer: U+${(codePoint || 0).toString(16)} -> font=${fam}`);
         }
         return res;
@@ -507,6 +516,41 @@ function installInputDiagnostics() {
   } catch (e) {
     console.warn("[font-debug] Sonden-Installation fehlgeschlagen:", e);
   }
+}
+
+// Is this font name an embedded/subset PDF font? Covers the SDK's embedded
+// registry prefix ("Embedded: BAAAAA+Family HASH") and bare subset-tagged
+// names ("BAAAAA+Family").
+function isEmbeddedFontName(name) {
+  if (typeof name !== "string") return false;
+  if (name.startsWith("Embedded: ")) return true;
+  return /^[A-Z]{6}\+/.test(name);
+}
+
+// Strip embedded markers down to the underlying family name:
+// "Embedded: BAAAAA+DejaVuSerifCondensed-Bold 7A19CC…D1" → "DejaVuSerifCondensed-Bold"
+function cleanEmbeddedFontName(name) {
+  return name
+    .replace(/^Embedded: /, "")
+    .replace(/\s+[0-9A-Fa-f]{16,}$/, "")
+    .replace(/^[A-Z]{6}\+/, "");
+}
+
+// Before inserting typed text: if the cursor's run uses an embedded/subset
+// font, retarget the run to the closest bundled family via the API's own
+// put_TextPrFontName (which also loads the font). Self-limiting: after the
+// first retarget the run font no longer matches the embedded pattern.
+function retargetEmbeddedRunFont() {
+  if (typeof editor.get_TextProps !== "function" || typeof editor.put_TextPrFontName !== "function") return;
+  const props = editor.get_TextProps();
+  const textPr = props && (props.TextPr || (typeof props.get_TextPr === "function" && props.get_TextPr()));
+  const family = textPr && textPr.FontFamily && textPr.FontFamily.Name;
+  if (!family || !isEmbeddedFontName(family)) return;
+
+  const clean = cleanEmbeddedFontName(family);
+  const mapped = substituteFontName(clean) || "Liberation Sans";
+  console.log(`[fonts] neue Eingabe in Embedded-Font "${family}" — Run-Font wird auf "${mapped}" umgestellt`);
+  editor.put_TextPrFontName(mapped);
 }
 
 function registerEditorCallbacks() {
