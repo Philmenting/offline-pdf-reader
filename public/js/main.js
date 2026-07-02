@@ -323,7 +323,66 @@ async function initEditor() {
   mode = "editor";
   installFontSubstitutionPatch();
   installInputDiagnostics();
+  installLongActionWatchdog();
   setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
+}
+
+// ── Long-action watchdog ──────────────────────────────────────────────────
+// Diagnostics proved keystrokes are swallowed by onKeyDown's very first gate:
+// isLongAction() stays true because IsLongActionCurrent is stuck at 1 — some
+// sync_StartAction(BlockInteraction, …) during our offline open never gets its
+// matching sync_EndAction (that pairing normally completes through Document-
+// Server callbacks we bypass). Rather than chase each leaking action id, wrap
+// Start/End to track outstanding actions (and name the culprit in the log),
+// and force-end any BlockInteraction action that stays open although no real
+// work (font/image loading) is running anymore. This heals the whole class of
+// "stuck open action blocks all input forever" failures.
+function installLongActionWatchdog() {
+  const outstanding = new Map(); // "type:id" -> { type, id, count, since }
+  const origStart = editor.sync_StartAction.bind(editor);
+  const origEnd = editor.sync_EndAction.bind(editor);
+  const BLOCK = window.Asc && window.Asc.c_oAscAsyncActionType
+    ? window.Asc.c_oAscAsyncActionType.BlockInteraction : 1;
+
+  editor.sync_StartAction = function (type, id, actionRestriction) {
+    console.log(`[action-debug] StartAction type=${type} id=${id}`);
+    const key = `${type}:${id}`;
+    const entry = outstanding.get(key) || { type, id, count: 0, since: 0 };
+    entry.count++;
+    entry.since = Date.now();
+    outstanding.set(key, entry);
+    return origStart(type, id, actionRestriction);
+  };
+  editor.sync_EndAction = function (type, id, actionRestriction) {
+    console.log(`[action-debug] EndAction type=${type} id=${id}`);
+    const key = `${type}:${id}`;
+    const entry = outstanding.get(key);
+    if (entry && --entry.count <= 0) outstanding.delete(key);
+    return origEnd(type, id, actionRestriction);
+  };
+
+  setInterval(() => {
+    if (!editor || !editor.IsLongActionCurrent) return;
+    let busy = false;
+    try { busy = window.AscCommon.g_font_loader.isWorking(); } catch { /* ignore */ }
+    try { busy = busy || (window.AscCommon.g_image_loader && window.AscCommon.g_image_loader.bIsLoadDocumentImages); } catch { /* ignore */ }
+    if (busy) return; // genuine work still running — leave the counter alone
+
+    const now = Date.now();
+    for (const entry of [...outstanding.values()]) {
+      if (entry.type === BLOCK && now - entry.since > 4000) {
+        console.warn(`[action-debug] force-ending stuck action type=${entry.type} id=${entry.id} (open for ${((now - entry.since) / 1000) | 0}s, count=${entry.count})`);
+        while (entry.count-- > 0) { try { origEnd(entry.type, entry.id); } catch { /* ignore */ } }
+        outstanding.delete(`${entry.type}:${entry.id}`);
+      }
+    }
+    // Counter still stuck with nothing tracked (leak predates the hook or an
+    // internal path bypassed sync_EndAction): hard-reset as last resort.
+    if (editor.IsLongActionCurrent > 0 && outstanding.size === 0) {
+      console.warn(`[action-debug] IsLongActionCurrent=${editor.IsLongActionCurrent} with no tracked open actions — hard reset to 0`);
+      editor.IsLongActionCurrent = 0;
+    }
+  }, 2000);
 }
 
 // Temporary diagnostics for tracking down why typed characters don't reach
