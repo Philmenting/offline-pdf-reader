@@ -420,6 +420,48 @@ function installInputDiagnostics() {
   } catch (e) {
     console.warn("[input-debug] failed to instrument asc_enterText", e);
   }
+
+  // ── Glyph-fallback probes ─────────────────────────────────────────────
+  // Trace the per-glyph substitution chain that decides between a real glyph
+  // and a .notdef box: picker ranges present? which font does the picker name
+  // per codepoint? does the measurer actually get a usable font file back?
+  try {
+    const picker = window.AscFonts && window.AscFonts.FontPickerByCharacter;
+    if (picker) {
+      console.log(`[font-debug] picker ranges loaded: ${picker.Ranges.length}`);
+      let logged = 0;
+      const origGet = picker.getFontBySymbol;
+      picker.getFontBySymbol = function (ch) {
+        const name = origGet.call(this, ch);
+        if (logged < 40) {
+          logged++;
+          console.log(`[font-debug] picker: U+${(ch || 0).toString(16)} -> "${name}"`);
+        }
+        return name;
+      };
+    } else {
+      console.warn("[font-debug] FontPickerByCharacter fehlt");
+    }
+    const tm = window.AscCommon && window.AscCommon.g_oTextMeasurer;
+    if (tm && typeof tm.GetFontBySymbol === "function") {
+      let logged2 = 0;
+      const origTm = tm.GetFontBySymbol;
+      tm.GetFontBySymbol = function (codePoint, oPreferredFont, isForce) {
+        const res = origTm.call(this, codePoint, oPreferredFont, isForce);
+        if (logged2 < 40) {
+          logged2++;
+          const fam = res && res.Font && res.Font.m_pFaceInfo ? res.Font.m_pFaceInfo.family_name : String(res && res.Font);
+          console.log(`[font-debug] measurer: U+${(codePoint || 0).toString(16)} -> font=${fam}`);
+        }
+        return res;
+      };
+      console.log("[font-debug] instrumented g_oTextMeasurer.GetFontBySymbol");
+    } else {
+      console.warn("[font-debug] g_oTextMeasurer.GetFontBySymbol fehlt");
+    }
+  } catch (e) {
+    console.warn("[font-debug] Sonden-Installation fehlgeschlagen:", e);
+  }
 }
 
 function registerEditorCallbacks() {
@@ -446,6 +488,7 @@ function registerEditorCallbacks() {
     setStatus(`„${lastName}" geöffnet — bereit zum Bearbeiten.`);
     ensureEditorThumbnails();
     refreshHistoryButtons();
+    preloadFallbackFonts();
   });
   on("asc_onCountPages", (n) => { /* page count available */ });
   on("asc_onCurrentPage", (n) => { /* current page changed */ });
@@ -455,6 +498,32 @@ function registerEditorCallbacks() {
     // keep the toolbar's active highlight in sync if the engine toggles it off
     if (!isOn) clearActiveMarkerTools();
   });
+}
+
+// Preload the glyph-fallback fonts as soon as a document is open. The
+// per-glyph fallback (textmeasurer GetFontBySymbol → CFontLoaderBySymbol →
+// FontPickerByCharacter ranges → CFontInfo.LoadFont) only works if the target
+// font FILE is already in memory: if it isn't, the lookup returns null (at
+// best kicking an async load with no repaint hook) and the glyph stays a
+// .notdef box forever. Loading through LoadDocumentFonts2 also gives us the
+// proper end-callback → repaint pipeline.
+function preloadFallbackFonts() {
+  try {
+    const loader = window.AscCommon && window.AscCommon.g_font_loader;
+    if (!loader || typeof loader.LoadDocumentFonts2 !== "function" || loader.isWorking()) return;
+    const families = [
+      "Liberation Sans", "Liberation Serif", "Liberation Mono",
+      "DejaVu Sans", "DejaVu Serif", "FreeSans", "FreeSerif",
+      "Symbola", "Carlito", "Caladea",
+    ].map((name) => ({ name }));
+    console.log("[fonts] preloading fallback fonts …");
+    loader.LoadDocumentFonts2(families, undefined, function () {
+      console.log("[fonts] fallback fonts preloaded");
+      try { const r = editor.getDocumentRenderer(); r && r.paint && r.paint(); } catch { /* ignore */ }
+    });
+  } catch (e) {
+    console.warn("[fonts] preload fehlgeschlagen:", e);
+  }
 }
 
 // The editor's own onDocumentContentReady creates a ThumbnailsControl into
