@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
+import { buildFontRanges } from "./font-ranges.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -134,11 +135,15 @@ async function generateSlimAllFonts(fontsDir, outputPath) {
     return [name, r?.fileIndex??-1, r?.faceIndex??-1, i?.fileIndex??-1, i?.faceIndex??-1,
       b?.fileIndex??-1, b?.faceIndex??-1, bi?.fileIndex??-1, bi?.faceIndex??-1];
   });
-  // g_fonts_selection_bin must be "" (not undefined): viewer.js does
-  // `"" != g_fonts_selection_bin` and base64-decodes it, throwing on undefined.
-  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\nw["g_fonts_selection_bin"] = "";\n})(window);\n`;
+  // __fonts_ranges: character→font fallback for the picker + WASM engine;
+  // without it, typed characters missing from embedded subset fonts render
+  // as .notdef boxes. g_fonts_selection_bin must be "" (not undefined):
+  // viewer.js does `"" != g_fonts_selection_bin` and base64-decodes it,
+  // throwing on undefined.
+  const ranges = buildFontRanges(infos.map((i) => i[0]));
+  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\nw["__fonts_ranges"] = ${JSON.stringify(ranges)};\nw["g_fonts_selection_bin"] = "";\n})(window);\n`;
   await writeFile(outputPath, js, "utf8");
-  return { families: infos.length, files: fileNames.length };
+  return { families: infos.length, files: fileNames.length, ranges: ranges.length / 3 };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
