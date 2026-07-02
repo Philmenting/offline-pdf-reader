@@ -131,13 +131,57 @@ function substituteFontName(name) {
   const ps = parsePostScriptName(name);
   if (ps.family !== name && FONT_SUBS[ps.family]) return FONT_SUBS[ps.family];
   // Conservative keyword fallback for names not in the table (e.g. subset
-  // prefixes like "ABCDEF+Arial", vendor variants): pick a same-class bundled
-  // family rather than letting the manager mis-resolve to garbage.
+  // prefixes like "ABCDEF+Arial" or "BAAAAA+DejaVuSerifCondensed-Bold",
+  // vendor variants): pick a same-class bundled family rather than letting
+  // the manager mis-resolve to garbage.
   const n = name.toLowerCase();
+  if (/dejavu/.test(n)) {
+    if (/mono/.test(n)) return "DejaVu Sans Mono";
+    return /serif/.test(n) ? "DejaVu Serif" : "DejaVu Sans";
+  }
+  if (/liberation/.test(n)) {
+    if (/mono/.test(n)) return "Liberation Mono";
+    return /serif/.test(n) ? "Liberation Serif" : "Liberation Sans";
+  }
   if (/(arial|helvetica|verdana|tahoma|segoe|calibri|frutiger)/.test(n)) return "Liberation Sans";
   if (/(times|georgia|garamond|cambria|minion|book antiqua|palatino)/.test(n)) return "Liberation Serif";
   if (/(courier|consol|mono)/.test(n)) return "Liberation Mono";
+  // generic class hints last (many PS names carry Serif/Sans in the family)
+  if (/serif/.test(n)) return "Liberation Serif";
+  if (/sans/.test(n)) return "Liberation Sans";
   return null;
+}
+
+// ── Name-resolution patch (the ASCW3 fix) ────────────────────────────────
+// All JS-side font-name resolution funnels through g_fontApplication
+// .GetFontFileWeb(name): unknown names go to the selection scorer, which is
+// data-driven by g_fonts_selection_bin — EMPTY in our build — so every
+// unknown name (embedded subset names like "BAAAAA+DejaVuSerifCondensed-
+// Bold", or defaults like "Arial" that we don't bundle) resolves to ASCW3,
+// ONLYOFFICE's ~10-glyph checkbox/bullet mini-font. Text shaped with ASCW3
+// renders as .notdef boxes. Worse, the result is cached per name in
+// FontPickerMap. Redirect any ASCW3 resolution to a same-class bundled
+// family and fix the cache entry.
+function installNameResolutionPatch() {
+  const app = window.AscFonts && window.AscFonts.g_fontApplication;
+  if (!app || typeof app.GetFontFileWeb !== "function" || app.__nameResolutionPatched) return;
+
+  const orig = app.GetFontFileWeb.bind(app);
+  app.GetFontFileWeb = function (name, lStyle) {
+    let font = orig(name, lStyle);
+    if (font && font.m_wsFontName === "ASCW3" && name !== "ASCW3") {
+      const mapped = substituteFontName(name) || "Liberation Sans";
+      const better = orig(mapped, lStyle);
+      if (better && better.m_wsFontName !== "ASCW3") {
+        try { app.FontPickerMap[name] = better; } catch { /* cache fix best-effort */ }
+        console.log(`[fonts] name-resolution: "${name}" -> "${better.m_wsFontName}" (statt ASCW3)`);
+        font = better;
+      }
+    }
+    return font;
+  };
+  app.__nameResolutionPatched = true;
+  console.log("[fonts] name-resolution patch installed (GetFontFileWeb)");
 }
 
 function installFontSubstitutionPatch() {
@@ -322,6 +366,7 @@ async function initEditor() {
 
   mode = "editor";
   installFontSubstitutionPatch();
+  installNameResolutionPatch();
   installInputDiagnostics();
   installLongActionWatchdog();
   setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
