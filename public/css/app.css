@@ -71,12 +71,45 @@ body {
   justify-content: center;
 }
 .btn.ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
-.btn.tool.active {
+.btn.tool.active,
+.btn.format-toggle.active {
   background: #fff;
   color: var(--accent);
   border-color: #fff;
 }
+.btn.format-toggle {
+  font-weight: 800;
+  width: 34px;
+  padding-left: 0;
+  padding-right: 0;
+}
 .btn:disabled { opacity: 0.4; cursor: default; }
+
+.format-select,
+.format-size {
+  flex: 0 0 auto;
+  height: 31px;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+.format-select {
+  width: 158px;
+  padding: 0 8px;
+}
+.format-size {
+  width: 62px;
+  padding: 0 6px;
+}
+.format-select:disabled,
+.format-size:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 .workspace {
   flex: 1 1 auto;
