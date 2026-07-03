@@ -28,6 +28,27 @@
       <button class="btn ghost tool" data-tool="select"    title="Auswählen / Hand" disabled>Auswahl</button>
       <button class="btn ghost tool" data-tool="edit-text" title="Text bearbeiten" disabled>Text</button>
       <button class="btn ghost tool" data-tool="textbox"   title="Textfeld einfügen" disabled>Textfeld</button>
+
+      <span class="sep"></span>
+
+      <!-- Text formatting -->
+      <select class="format-select" id="text-font-family" title="Schriftart" disabled>
+        <option value="Liberation Sans">Liberation Sans</option>
+        <option value="Liberation Serif">Liberation Serif</option>
+        <option value="Liberation Mono">Liberation Mono</option>
+        <option value="DejaVu Sans">DejaVu Sans</option>
+        <option value="DejaVu Serif">DejaVu Serif</option>
+        <option value="FreeSans">FreeSans</option>
+        <option value="FreeSerif">FreeSerif</option>
+        <option value="Arial">Arial</option>
+        <option value="Times New Roman">Times New Roman</option>
+        <option value="Courier New">Courier New</option>
+      </select>
+      <input class="format-size" id="text-font-size" type="number" min="6" max="96" step="0.5" value="12" title="Schriftgröße" disabled>
+      <button class="btn ghost format-toggle" id="text-bold" type="button" title="Fett" aria-pressed="false" disabled>B</button>
+
+      <span class="sep"></span>
+
       <button class="btn ghost tool" data-tool="highlight" title="Markieren" disabled>Marker</button>
       <button class="btn ghost tool" data-tool="underline" title="Unterstreichen" disabled>U̲</button>
       <button class="btn ghost tool" data-tool="strikeout" title="Durchstreichen" disabled>S̶</button>
@@ -86,5 +107,6 @@
   <footer class="app-status" id="status">Engine wird geladen …</footer>
 
   <script src="/js/main.js" type="module"></script>
+  <script src="/js/text-format-toolbar.js"></script>
 </body>
 </html>
