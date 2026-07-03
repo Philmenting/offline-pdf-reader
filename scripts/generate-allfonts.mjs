@@ -105,10 +105,45 @@ function parseOS2Table(buf, tables) {
   const t = tables["OS/2"];
   if (!t) return null;
   const off = t.offset;
-  return {
+  const len = t.length;
+  const has = (rel, size) => rel + size <= len && off + rel + size <= buf.length;
+
+  const os2 = {
+    version: readU16BE(buf, off),
+    xAvgCharWidth: readI16BE(buf, off + 2),
     usWeightClass: readU16BE(buf, off + 4),
+    usWidthClass: readU16BE(buf, off + 6),
+    fsType: readU16BE(buf, off + 8),
+    sFamilyClass: readI16BE(buf, off + 30),
+    panose: Array.from(buf.subarray(off + 32, off + 42)),
+    ulUnicodeRange1: readU32BE(buf, off + 42),
+    ulUnicodeRange2: readU32BE(buf, off + 46),
+    ulUnicodeRange3: readU32BE(buf, off + 50),
+    ulUnicodeRange4: readU32BE(buf, off + 54),
     fsSelection: readU16BE(buf, off + 62),
+    sTypoAscender: readI16BE(buf, off + 68),
+    sTypoDescender: readI16BE(buf, off + 70),
+    sTypoLineGap: readI16BE(buf, off + 72),
+    ulCodePageRange1: 0,
+    ulCodePageRange2: 0,
+    sxHeight: 0,
+    sCapHeight: 0,
   };
+  if (os2.version >= 1 && has(78, 8)) {
+    os2.ulCodePageRange1 = readU32BE(buf, off + 78);
+    os2.ulCodePageRange2 = readU32BE(buf, off + 82);
+  }
+  if (os2.version >= 2 && has(86, 4)) {
+    os2.sxHeight = readI16BE(buf, off + 86);
+    os2.sCapHeight = readI16BE(buf, off + 88);
+  }
+  return os2;
+}
+
+function parsePostTable(buf, tables) {
+  const t = tables["post"];
+  if (!t || t.length < 16) return null;
+  return { isFixedPitch: readU32BE(buf, t.offset + 12) !== 0 };
 }
 
 function parseHeadTable(buf, tables) {
@@ -116,6 +151,7 @@ function parseHeadTable(buf, tables) {
   if (!t) return null;
   const off = t.offset;
   return {
+    unitsPerEm: readU16BE(buf, off + 18),
     macStyle: readU16BE(buf, off + 44),
   };
 }
@@ -142,6 +178,51 @@ function getFontStyle(os2, head) {
   return "regular";
 }
 
+// Font-selection metadata for one face: everything CFontSelect/CFontInfo
+// (sdkjs common/libfont/map.js fromStream v2, core ApplicationFonts.cpp
+// FromBuffer) scores fonts by. Missing tables degrade to zeros — a zeroed
+// field simply contributes no penalty discrimination.
+function buildSelectInfo(buf, tables, family, style) {
+  const os2 = parseOS2Table(buf, tables);
+  const head = parseHeadTable(buf, tables);
+  const post = parsePostTable(buf, tables);
+
+  let bold = style === "bold" || style === "bolditalic";
+  let italic = style === "italic" || style === "bolditalic";
+
+  // The engine's font scorer compares candidate metrics against dictionary
+  // records that are normalised to a 1000-unit em (e.g. Arial's dictionary
+  // entry: xAvgCharWidth 441 = 904/2048*1000). Raw font-unit values from
+  // 2048-upem fonts would add huge bogus penalties, so normalise the same way.
+  const upem = (head && head.unitsPerEm) || 1000;
+  const em1000 = (v) => Math.round((v * 1000) / upem);
+
+  return {
+    name: family,
+    italic,
+    bold,
+    fixed: post ? post.isFixedPitch : false,
+    panose: os2 ? os2.panose : new Array(10).fill(0),
+    ulUnicodeRange1: os2 ? os2.ulUnicodeRange1 : 0,
+    ulUnicodeRange2: os2 ? os2.ulUnicodeRange2 : 0,
+    ulUnicodeRange3: os2 ? os2.ulUnicodeRange3 : 0,
+    ulUnicodeRange4: os2 ? os2.ulUnicodeRange4 : 0,
+    ulCodePageRange1: os2 ? os2.ulCodePageRange1 : 0,
+    ulCodePageRange2: os2 ? os2.ulCodePageRange2 : 0,
+    usWeight: os2 ? os2.usWeightClass : (bold ? 700 : 400),
+    usWidth: os2 ? os2.usWidthClass : 5,
+    sFamilyClass: os2 ? os2.sFamilyClass : 0,
+    fontFormat: 1, // EFontFormat::fontTrueType
+    shAvgCharWidth: os2 ? em1000(os2.xAvgCharWidth) : 0,
+    shAscent: os2 ? em1000(os2.sTypoAscender) : 0,
+    shDescent: os2 ? em1000(os2.sTypoDescender) : 0,
+    shLineGap: os2 ? em1000(os2.sTypoLineGap) : 0,
+    shXHeight: os2 ? em1000(os2.sxHeight) : 0,
+    shCapHeight: os2 ? em1000(os2.sCapHeight) : 0,
+    usType: os2 ? os2.fsType : 0,
+  };
+}
+
 function parseFontFile(buf) {
   const tables = parseTTFTables(buf);
   if (!tables) return null;
@@ -157,7 +238,7 @@ function parseFontFile(buf) {
   const style = getFontStyle(os2, head);
   const fullName = names[4] || family;
 
-  return { family, style, fullName };
+  return { family, style, fullName, select: buildSelectInfo(buf, tables, family, style) };
 }
 
 // ── TTC (TrueType Collection) support ───────────────────────────────────
@@ -183,9 +264,100 @@ function parseTTC(buf) {
     const family = names[16] || names[1];
     if (!family) continue;
     const style = getFontStyle(os2, head);
-    fonts.push({ family, style, fullName: names[4] || family, faceIndex: i });
+    fonts.push({
+      family, style, fullName: names[4] || family, faceIndex: i,
+      select: buildSelectInfo(buf, tables, family, style),
+    });
   }
   return fonts;
+}
+
+// ── g_fonts_selection_bin serializer ────────────────────────────────────
+//
+// The engine's ENTIRE font-name resolution (g_fontApplication.GetFontFileWeb →
+// FD_FontDictionary.GetFontIndex → CFontSelect.GetPenalty scoring) runs over
+// CFontSelectList.List, which is populated EXCLUSIVELY from this binary. With
+// an empty bin the list contains only the engine's built-in "ASCW3" dummy
+// (a ~10-glyph checkbox mini-font), so EVERY font name — including our own
+// bundled families like "DejaVu Serif" — resolves to ASCW3 and text shaped
+// with it renders as .notdef boxes. That was the root cause of the artifact
+// boxes appearing when typing in the PDF editor.
+//
+// Format: the "font_selection.bin" v2 record layout shared by the JS side
+// (sdkjs common/libfont/map.js, CFontSelect.fromStream with
+// __all_fonts_js_version__ = 2) and the native/WASM side (core
+// DesktopEditor/fontengine/ApplicationFonts.cpp, NSFonts::FromBuffer, consumed
+// through drawingfile.js _InitializeFontsBase64). All integers little-endian:
+//
+//   int32 count
+//   per record:
+//     int32  recordLen                  (includes these 4 bytes)
+//     int32  nameLen,  utf8 name        (family name; MUST exist in
+//                                        __fonts_infos → g_map_font_index)
+//     int32  namesCount (0)
+//     int32  pathLen,  utf8 path        (basename; loader joins with fontsPath)
+//     int32  faceIndex
+//     int32  italic, int32 bold, int32 fixedPitch
+//     int32  panoseLen (10), 10 bytes panose
+//     uint32 ulUnicodeRange1..4, uint32 ulCodePageRange1..2
+//     uint16 usWeight, uint16 usWidth
+//     int16  sFamilyClass, int16 fontFormat
+//     int16  avgCharWidth, ascent, descent, lineGap, xHeight, capHeight
+//     uint16 usType
+function buildSelectionBin(faces) {
+  const chunks = [];
+  const head = Buffer.alloc(4);
+  head.writeInt32LE(faces.length, 0);
+  chunks.push(head);
+
+  for (const f of faces) {
+    const name = Buffer.from(f.select.name, "utf8");
+    const path = Buffer.from(f.path, "utf8");
+    const recordLen =
+      4 +                    // recordLen itself
+      4 + name.length +      // name
+      4 +                    // namesCount (0)
+      4 + path.length +      // path
+      4 * 4 +                // faceIndex, italic, bold, fixed
+      4 + 10 +               // panoseLen + panose
+      6 * 4 +                // unicode ranges + codepage ranges
+      2 * 2 +                // weight, width
+      2 * 2 +                // familyClass, fontFormat
+      6 * 2 +                // metrics
+      2;                     // usType
+    const b = Buffer.alloc(recordLen);
+    let o = 0;
+    o = b.writeInt32LE(recordLen, o);
+    o = b.writeInt32LE(name.length, o); o += name.copy(b, o);
+    o = b.writeInt32LE(0, o);
+    o = b.writeInt32LE(path.length, o); o += path.copy(b, o);
+    o = b.writeInt32LE(f.faceIndex, o);
+    o = b.writeInt32LE(f.select.italic ? 1 : 0, o);
+    o = b.writeInt32LE(f.select.bold ? 1 : 0, o);
+    o = b.writeInt32LE(f.select.fixed ? 1 : 0, o);
+    o = b.writeInt32LE(10, o);
+    for (let i = 0; i < 10; i++) o = b.writeUInt8(f.select.panose[i] & 0xFF, o);
+    o = b.writeUInt32LE(f.select.ulUnicodeRange1 >>> 0, o);
+    o = b.writeUInt32LE(f.select.ulUnicodeRange2 >>> 0, o);
+    o = b.writeUInt32LE(f.select.ulUnicodeRange3 >>> 0, o);
+    o = b.writeUInt32LE(f.select.ulUnicodeRange4 >>> 0, o);
+    o = b.writeUInt32LE(f.select.ulCodePageRange1 >>> 0, o);
+    o = b.writeUInt32LE(f.select.ulCodePageRange2 >>> 0, o);
+    o = b.writeUInt16LE(f.select.usWeight & 0xFFFF, o);
+    o = b.writeUInt16LE(f.select.usWidth & 0xFFFF, o);
+    o = b.writeInt16LE(f.select.sFamilyClass | 0, o);
+    o = b.writeInt16LE(f.select.fontFormat | 0, o);
+    o = b.writeInt16LE(f.select.shAvgCharWidth | 0, o);
+    o = b.writeInt16LE(f.select.shAscent | 0, o);
+    o = b.writeInt16LE(f.select.shDescent | 0, o);
+    o = b.writeInt16LE(f.select.shLineGap | 0, o);
+    o = b.writeInt16LE(f.select.shXHeight | 0, o);
+    o = b.writeInt16LE(f.select.shCapHeight | 0, o);
+    o = b.writeUInt16LE(f.select.usType & 0xFFFF, o);
+    if (o !== recordLen) throw new Error(`selection record length mismatch: ${o} != ${recordLen}`);
+    chunks.push(b);
+  }
+  return Buffer.concat(chunks);
 }
 
 // ── Download & extract ──────────────────────────────────────────────────
@@ -271,6 +443,10 @@ async function main() {
     return idx;
   }
 
+  // One entry per FACE for the selection bin (family name + style flags +
+  // OS/2 scoring data + file basename the loader resolves against fontsPath).
+  const selectionFaces = [];
+
   for (const fp of fontPaths) {
     const buf = await readFile(fp);
     const ext = extname(fp).toLowerCase();
@@ -287,6 +463,7 @@ async function main() {
         if (!fam[font.style]) {
           fam[font.style] = { fileIndex: fileIdx, faceIndex: font.faceIndex };
         }
+        selectionFaces.push({ select: font.select, path: basename(fp), faceIndex: font.faceIndex });
       }
     } else {
       const info = parseFontFile(buf);
@@ -299,19 +476,32 @@ async function main() {
       if (!fam[info.style]) {
         fam[info.style] = { fileIndex: fileIdx, faceIndex: 0 };
       }
+      selectionFaces.push({ select: info.select, path: basename(fp), faceIndex: 0 });
     }
   }
 
   console.log(`  Parsed ${families.size} font families.`);
 
-  // 4. Copy font files to vendor/fonts/ and build the file list
+  // 4. Copy font files to vendor/fonts/ and build the file list.
+  //
+  // IMPORTANT: the sdkjs web font loader (common/Drawings/Externals.js,
+  // CFontFileLoader.LoadFontArrayBuffer) unconditionally XOR-"decodes" the
+  // first 32 bytes of every fetched font with the odttf GUID — ONLYOFFICE
+  // servers always serve fonts in that obfuscated form. Serving plain TTFs
+  // therefore CORRUPTS their header on load (FT_Open_Face fails silently and
+  // every non-embedded font becomes unusable, which surfaced as typed text
+  // falling back to the current embedded subset font's empty .notdef glyph).
+  // XOR is symmetric, so store the files pre-obfuscated the same way.
+  const ODTTF_GUID = [0xA0, 0x66, 0xD6, 0x20, 0x14, 0x96, 0x47, 0xFA, 0x95, 0x69, 0xB8, 0x50, 0xB0, 0x41, 0x49, 0x48];
   await mkdir(FONTS_DIR, { recursive: true });
   const finalFileNames = []; // index-aligned with filesList
 
   for (const fp of filesList) {
     const name = basename(fp);
     const dest = join(FONTS_DIR, name);
-    await writeFile(dest, await readFile(fp));
+    const data = await readFile(fp);
+    for (let i = 0; i < Math.min(32, data.length); i++) data[i] ^= ODTTF_GUID[i % 16];
+    await writeFile(dest, data);
     finalFileNames.push(name);
   }
 
@@ -344,23 +534,32 @@ async function main() {
   // character — renders as a .notdef box.
   const ranges = buildFontRanges(infos.map((i) => i[0]));
 
+  // The font-selection table. Without it the engine's name resolution has no
+  // candidates (only the built-in ASCW3 dummy) and every font name resolves to
+  // ASCW3 → typed text renders as .notdef boxes. See buildSelectionBin().
+  const selectionBin = buildSelectionBin(selectionFaces);
+
   const jsContent = `// Generated by generate-allfonts.mjs — do not edit.
 // Font data from ONLYOFFICE/core-fonts (Apache-2.0 / OFL / GPL).
 (function(w) {
 w["__fonts_files"] = ${JSON.stringify(finalFileNames)};
 w["__fonts_infos"] = ${JSON.stringify(infos)};
 w["__fonts_ranges"] = ${JSON.stringify(ranges)};
-// The engine's viewer.js checks "" != g_fonts_selection_bin and tries to
-// base64-decode it; if left undefined that decode throws and no page renders.
-// We ship no precomputed font-selection table, so set "" for runtime fallback.
-w["g_fonts_selection_bin"] = "";
+// Record format version of g_fonts_selection_bin (v2: utf8 names + recordLen
+// framing + usType). Read by CFontSelect.fromStream in common/libfont/map.js.
+w["__all_fonts_js_version__"] = 2;
+// font_selection.bin equivalent: per-face selection records (panose, unicode/
+// codepage ranges, weight/width/metrics) that drive the engine's font-name
+// resolution and per-character fallback. Consumed by BOTH the JS side
+// (CFontSelectList.Init) and the WASM engine (_InitializeFontsBase64).
+w["g_fonts_selection_bin"] = "${selectionBin.toString("base64")}";
 })(window);
 `;
 
   await mkdir(dirname(ALLFONTS_PATH), { recursive: true });
   await writeFile(ALLFONTS_PATH, jsContent, "utf8");
 
-  console.log(`\n  Generated AllFonts.js with ${infos.length} families and ${finalFileNames.length} files.`);
+  console.log(`\n  Generated AllFonts.js with ${infos.length} families, ${finalFileNames.length} files, ${selectionFaces.length} selection records (${selectionBin.length} bytes).`);
   console.log(`  → ${ALLFONTS_PATH}`);
   console.log(`  → ${FONTS_DIR}/`);
   console.log("\nDone!");

@@ -63,167 +63,18 @@ let lastName = "document.pdf";
 let activeTool = "select";
 let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
 
+// Font-name resolution is data-driven by g_fonts_selection_bin, which our
+// generated AllFonts.js now ships with real per-face records (panose, unicode/
+// codepage ranges, metrics) for every bundled font — see
+// scripts/generate-allfonts.mjs. With that table present the engine's own
+// picker (g_fontApplication.GetFontFileWeb → penalty scoring, incl. its
+// built-in Arial→Liberation Sans style aliases) resolves any requested name to
+// a real bundled font. Earlier revisions monkey-patched pickFont /
+// GetFontFileWeb / GetFontBySymbol to work around the empty table, which only
+// treated symptoms: names the patches didn't know still fell through to the
+// engine's ASCW3 dummy mini-font and rendered as .notdef boxes.
 if (typeof window["g_fonts_selection_bin"] === "undefined") {
   window["g_fonts_selection_bin"] = "";
-}
-
-// ── Font substitution patch ──────────────────────────────────────────────
-// The engine's font manager scores fonts via g_fonts_selection_bin. We ship no
-// precomputed binary, so pickFont() mis-resolves common PDF fonts (Arial,
-// Times, …) → garbled text. We patch pickFont to map those names onto our
-// bundled Liberation/DejaVu families.
-//
-// Two builds expose different internals:
-//   • Viewer (closure-minified engine/viewer.js): AscFonts.jh/.kh name index.
-//   • Editor (concatenated common/libfont/map.js): pickFont() delegates to
-//     g_fontApplication.GetFontInfo(name, style) — no jh/kh.
-// We support both: rewrite the requested name to a bundled family, then let the
-// build's own resolution take over.
-const FONT_SUBS = {
-  "Arial": "Liberation Sans", "Arial Narrow": "Liberation Sans Narrow",
-  "Helvetica": "Liberation Sans", "Helvetica Neue": "Liberation Sans",
-  "Times New Roman": "Liberation Serif", "Times": "Liberation Serif",
-  "Times Roman": "Liberation Serif", "TimesNewRoman": "Liberation Serif",
-  "TimesNewRomanPS": "Liberation Serif", "TimesNewRomanPSMT": "Liberation Serif",
-  "ArialMT": "Liberation Sans", "Arial-BoldMT": "Liberation Sans",
-  "Arial-ItalicMT": "Liberation Sans", "Arial-BoldItalicMT": "Liberation Sans",
-  "CourierNewPSMT": "Liberation Mono", "CourierNewPS": "Liberation Mono",
-  "Courier New": "Liberation Mono", "Courier": "Liberation Mono",
-  "Calibri": "Carlito", "Cambria": "Caladea", "Verdana": "DejaVu Sans",
-  "Georgia": "DejaVu Serif", "Tahoma": "DejaVu Sans", "Trebuchet MS": "DejaVu Sans",
-  "Lucida Sans": "DejaVu Sans", "Lucida Console": "DejaVu Sans Mono",
-  "Consolas": "DejaVu Sans Mono", "Segoe UI": "DejaVu Sans",
-  "Palatino": "DejaVu Serif", "Palatino Linotype": "DejaVu Serif",
-  "Book Antiqua": "DejaVu Serif", "Garamond": "DejaVu Serif",
-  "Century": "DejaVu Serif", "Impact": "Liberation Sans",
-  "Comic Sans MS": "DejaVu Sans", "Symbol": "Symbola", "ZapfDingbats": "Symbola",
-};
-
-const STYLE_KEYWORDS = {
-  "Bold": 1, "Bd": 1, "Demi": 1, "Heavy": 1, "Black": 1,
-  "Italic": 2, "It": 2, "Oblique": 2, "Obl": 2, "Slanted": 2,
-  "BoldItalic": 3, "BoldOblique": 3, "BoldIt": 3,
-  "Roman": 0, "Regular": 0, "Book": 0, "Medium": 0, "Light": 0,
-};
-
-// "Arial-BoldMT" → {family:"Arial", styleOverride:1}; "ArialMT" → {family:"Arial"}
-function parsePostScriptName(psName) {
-  const dashIdx = psName.indexOf("-");
-  if (dashIdx >= 0) {
-    const family = psName.slice(0, dashIdx);
-    const suffix = psName.slice(dashIdx + 1).replace(/MT$/, "");
-    return { family, styleOverride: STYLE_KEYWORDS[suffix] ?? null };
-  }
-  const commaIdx = psName.indexOf(",");
-  if (commaIdx >= 0) {
-    const suffix = psName.slice(commaIdx + 1).trim();
-    return { family: psName.slice(0, commaIdx), styleOverride: STYLE_KEYWORDS[suffix] ?? null };
-  }
-  // strip a trailing "MT" (ArialMT, TimesNewRomanPSMT) to expose the base family
-  const base = psName.replace(/(PS)?MT$/, "");
-  return { family: base, styleOverride: null };
-}
-
-// Map a requested PDF font name to a bundled family name (or null if unknown).
-function substituteFontName(name) {
-  if (typeof name !== "string" || !name) return null;
-  if (FONT_SUBS[name]) return FONT_SUBS[name];
-  const ps = parsePostScriptName(name);
-  if (ps.family !== name && FONT_SUBS[ps.family]) return FONT_SUBS[ps.family];
-  // Conservative keyword fallback for names not in the table (e.g. subset
-  // prefixes like "ABCDEF+Arial" or "BAAAAA+DejaVuSerifCondensed-Bold",
-  // vendor variants): pick a same-class bundled family rather than letting
-  // the manager mis-resolve to garbage.
-  const n = name.toLowerCase();
-  if (/dejavu/.test(n)) {
-    if (/mono/.test(n)) return "DejaVu Sans Mono";
-    return /serif/.test(n) ? "DejaVu Serif" : "DejaVu Sans";
-  }
-  if (/liberation/.test(n)) {
-    if (/mono/.test(n)) return "Liberation Mono";
-    return /serif/.test(n) ? "Liberation Serif" : "Liberation Sans";
-  }
-  if (/(arial|helvetica|verdana|tahoma|segoe|calibri|frutiger)/.test(n)) return "Liberation Sans";
-  if (/(times|georgia|garamond|cambria|minion|book antiqua|palatino)/.test(n)) return "Liberation Serif";
-  if (/(courier|consol|mono)/.test(n)) return "Liberation Mono";
-  // generic class hints last (many PS names carry Serif/Sans in the family)
-  if (/serif/.test(n)) return "Liberation Serif";
-  if (/sans/.test(n)) return "Liberation Sans";
-  return null;
-}
-
-// ── Name-resolution patch (the ASCW3 fix) ────────────────────────────────
-// All JS-side font-name resolution funnels through g_fontApplication
-// .GetFontFileWeb(name): unknown names go to the selection scorer, which is
-// data-driven by g_fonts_selection_bin — EMPTY in our build — so every
-// unknown name (embedded subset names like "BAAAAA+DejaVuSerifCondensed-
-// Bold", or defaults like "Arial" that we don't bundle) resolves to ASCW3,
-// ONLYOFFICE's ~10-glyph checkbox/bullet mini-font. Text shaped with ASCW3
-// renders as .notdef boxes. Worse, the result is cached per name in
-// FontPickerMap. Redirect any ASCW3 resolution to a same-class bundled
-// family and fix the cache entry.
-function installNameResolutionPatch() {
-  const app = window.AscFonts && window.AscFonts.g_fontApplication;
-  if (!app || typeof app.GetFontFileWeb !== "function" || app.__nameResolutionPatched) return;
-
-  const orig = app.GetFontFileWeb.bind(app);
-  app.GetFontFileWeb = function (name, lStyle) {
-    let font = orig(name, lStyle);
-    if (font && font.m_wsFontName === "ASCW3" && name !== "ASCW3") {
-      const mapped = substituteFontName(name) || "Liberation Sans";
-      const better = orig(mapped, lStyle);
-      if (better && better.m_wsFontName !== "ASCW3") {
-        try { app.FontPickerMap[name] = better; } catch { /* cache fix best-effort */ }
-        console.log(`[fonts] name-resolution: "${name}" -> "${better.m_wsFontName}" (statt ASCW3)`);
-        font = better;
-      }
-    }
-    return font;
-  };
-  app.__nameResolutionPatched = true;
-  console.log("[fonts] name-resolution patch installed (GetFontFileWeb)");
-}
-
-function installFontSubstitutionPatch() {
-  const af = window.AscFonts;
-  if (!af || typeof af.pickFont !== "function" || af.__substPatched) return false;
-
-  const origPickFont = af.pickFont;
-
-  if (af.jh && af.kh) {
-    // ── Viewer build: resolve via the jh/kh name index directly. ──
-    af.pickFont = function (name, style) {
-      const kh = af.kh, jh = af.jh;
-      let resolvedName = name, effectiveStyle = style;
-      if (kh[resolvedName] === undefined) {
-        const ps = parsePostScriptName(name);
-        if (ps.styleOverride !== null) { resolvedName = ps.family; effectiveStyle = ps.styleOverride; }
-      }
-      if (kh[resolvedName] === undefined && FONT_SUBS[resolvedName]) resolvedName = FONT_SUBS[resolvedName];
-      if (kh[resolvedName] === undefined) {
-        const upper = resolvedName.toUpperCase();
-        for (const k of Object.keys(kh)) { if (k.toUpperCase() === upper) { resolvedName = k; break; } }
-      }
-      if (kh[resolvedName] === undefined && FONT_SUBS[name]) resolvedName = FONT_SUBS[name];
-      if (kh[resolvedName] !== undefined) {
-        const entry = jh[kh[resolvedName]];
-        if (entry && entry.Mn) return entry.Mn(AscCommon.je, effectiveStyle).file;
-      }
-      return origPickFont.call(this, name, style);
-    };
-    af.__substPatched = true;
-    console.log("[fonts] substitution patch installed (viewer/jh-kh build)");
-    return true;
-  }
-
-  // ── Editor build: rewrite the name, let GetFontInfo resolve the family. ──
-  af.pickFont = function (name, style) {
-    const mapped = substituteFontName(name);
-    return origPickFont.call(this, mapped !== null ? mapped : name, style);
-  };
-  af.__substPatched = true;
-  console.log("[fonts] substitution patch installed (editor/g_fontApplication build)");
-  return true;
 }
 
 function loadScript(src) {
@@ -331,6 +182,7 @@ async function initEditor() {
   if (sdkLoadError) {
     throw new Error(`Editor-SDK-Initialisierung fehlgeschlagen: ${sdkLoadError.message || sdkLoadError}`);
   }
+  window.__pdfEditor = editor; // console/debug access (main.js is a module)
   // Where the engine loads bundled TTFs from (sdkjs reads Api.baseFontsPath).
   editor.baseFontsPath = FONTS_PATH;
 
@@ -365,9 +217,7 @@ async function initEditor() {
   }
 
   mode = "editor";
-  installFontSubstitutionPatch();
-  installNameResolutionPatch();
-  installInputDiagnostics();
+  installSubsetFontNameNormalization();
   installLongActionWatchdog();
   setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
 }
@@ -390,7 +240,6 @@ function installLongActionWatchdog() {
     ? window.Asc.c_oAscAsyncActionType.BlockInteraction : 1;
 
   editor.sync_StartAction = function (type, id, actionRestriction) {
-    console.log(`[action-debug] StartAction type=${type} id=${id}`);
     const key = `${type}:${id}`;
     const entry = outstanding.get(key) || { type, id, count: 0, since: 0 };
     entry.count++;
@@ -399,7 +248,6 @@ function installLongActionWatchdog() {
     return origStart(type, id, actionRestriction);
   };
   editor.sync_EndAction = function (type, id, actionRestriction) {
-    console.log(`[action-debug] EndAction type=${type} id=${id}`);
     const key = `${type}:${id}`;
     const entry = outstanding.get(key);
     if (entry && --entry.count <= 0) outstanding.delete(key);
@@ -430,127 +278,34 @@ function installLongActionWatchdog() {
   }, 2000);
 }
 
-// Temporary diagnostics for tracking down why typed characters don't reach
-// the document: log DOM focus changes, raw keydown events (with what currently
-// has focus), and every call into the API method that actually inserts typed
-// text (asc_enterText). Cheap, and removed once the input path is confirmed
-// working end-to-end.
-function installInputDiagnostics() {
-  document.addEventListener("focus", (e) => {
-    const t = e.target;
-    console.log(`[input-debug] DOM focus -> <${t.tagName}${t.id ? "#" + t.id : ""}> contentEditable=${t.contentEditable}`);
-  }, true);
-  document.addEventListener("blur", (e) => {
-    const t = e.target;
-    console.log(`[input-debug] DOM blur <- <${t.tagName}${t.id ? "#" + t.id : ""}>`);
-  }, true);
-  window.addEventListener("keydown", (e) => {
-    const a = document.activeElement;
-    let longAction = "?", canEdit = "?";
-    try { longAction = editor.isLongAction(); } catch { /* ignore */ }
-    try { canEdit = editor.canEdit(); } catch { /* ignore */ }
-    console.log(`[input-debug] keydown key="${e.key}" activeElement=<${a && a.tagName}${a && a.id ? "#" + a.id : ""}> isLongAction=${longAction} (counter=${editor.IsLongActionCurrent}) canEdit=${canEdit}`);
-  }, true);
-  try {
-    const orig = editor.asc_enterText;
-    if (typeof orig === "function") {
-      editor.asc_enterText = function (codePoints, isFromPaste) {
-        console.log(`[input-debug] asc_enterText called, codePoints=`, codePoints);
-        // PDF subset fonts can carry a LYING cmap: it maps codepoints the
-        // subset never embedded (glyph outline stripped), so the per-glyph
-        // fallback never triggers ("font has it") and the char renders as a
-        // box. Typing must therefore never insert INTO an embedded/subset
-        // font: switch the run font to the closest bundled family first —
-        // the same behaviour desktop Word processors use for missing glyphs.
-        try { retargetEmbeddedRunFont(); } catch (e2) { console.warn("[fonts] retarget fehlgeschlagen:", e2); }
-        return orig.apply(this, arguments);
-      };
-      console.log("[input-debug] instrumented asc_enterText");
-    } else {
-      console.warn("[input-debug] asc_enterText not found on editor — cannot instrument");
+// Typing into text that uses an embedded/subset PDF font is handled by the
+// engine itself (CPdfDrawingPrototype.EnterText): characters the subset still
+// covers are inserted as GID-addressed items in the embedded font; characters
+// the subset lacks fall back to a real font resolved through
+// g_fontApplication.GetFontInfo(<subset name>). That resolution gets a raw
+// subset PostScript name like "AAAAAA+LiberationSerif-Bold 4C33…B3"
+// (tag + family + registry hash), which the penalty scorer cannot relate to
+// any bundled family — it would fall through to the default font. Normalise
+// such names to their underlying family ("LiberationSerif-Bold") before
+// scoring; the scorer's prefix matching then picks the right family.
+function installSubsetFontNameNormalization() {
+  const app = window.AscFonts && window.AscFonts.g_fontApplication;
+  if (!app || typeof app.GetFontFileWeb !== "function" || app.__subsetNamePatched) return;
+
+  const orig = app.GetFontFileWeb;
+  app.GetFontFileWeb = function (name, lStyle) {
+    if (typeof name === "string" && /^[A-Z]{6}\+/.test(name) && undefined === this.FontPickerMap[name]) {
+      const clean = name
+        .replace(/^[A-Z]{6}\+/, "")
+        .replace(/\s+[0-9A-Fa-f]{16,}$/, "");
+      const font = orig.call(this, clean, lStyle);
+      this.FontPickerMap[name] = font;
+      console.log(`[fonts] Subset-Name normalisiert: "${name}" -> "${font.m_wsFontName}"`);
+      return font;
     }
-  } catch (e) {
-    console.warn("[input-debug] failed to instrument asc_enterText", e);
-  }
-
-  // ── Glyph-fallback probes ─────────────────────────────────────────────
-  // Trace the per-glyph substitution chain that decides between a real glyph
-  // and a .notdef box. Deduplicated per (codepoint → result) so the logs stay
-  // complete AND readable — no fixed budget that silently runs out.
-  try {
-    const picker = window.AscFonts && window.AscFonts.FontPickerByCharacter;
-    if (picker) {
-      console.log(`[font-debug] picker ranges loaded: ${picker.Ranges.length}`);
-      const seen = new Set();
-      const origGet = picker.getFontBySymbol;
-      picker.getFontBySymbol = function (ch) {
-        const name = origGet.call(this, ch);
-        const key = `${ch}:${name}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          console.log(`[font-debug] picker: U+${(ch || 0).toString(16)} -> "${name}"`);
-        }
-        return name;
-      };
-    } else {
-      console.warn("[font-debug] FontPickerByCharacter fehlt");
-    }
-    const tm = window.AscCommon && window.AscCommon.g_oTextMeasurer;
-    if (tm && typeof tm.GetFontBySymbol === "function") {
-      const seen2 = new Set();
-      const origTm = tm.GetFontBySymbol;
-      tm.GetFontBySymbol = function (codePoint, oPreferredFont, isForce) {
-        const res = origTm.call(this, codePoint, oPreferredFont, isForce);
-        const fam = res && res.Font && res.Font.m_pFaceInfo ? res.Font.m_pFaceInfo.family_name : String(res && res.Font);
-        const key = `${codePoint}:${fam}`;
-        if (!seen2.has(key)) {
-          seen2.add(key);
-          console.log(`[font-debug] measurer: U+${(codePoint || 0).toString(16)} -> font=${fam}`);
-        }
-        return res;
-      };
-      console.log("[font-debug] instrumented g_oTextMeasurer.GetFontBySymbol");
-    } else {
-      console.warn("[font-debug] g_oTextMeasurer.GetFontBySymbol fehlt");
-    }
-  } catch (e) {
-    console.warn("[font-debug] Sonden-Installation fehlgeschlagen:", e);
-  }
-}
-
-// Is this font name an embedded/subset PDF font? Covers the SDK's embedded
-// registry prefix ("Embedded: BAAAAA+Family HASH") and bare subset-tagged
-// names ("BAAAAA+Family").
-function isEmbeddedFontName(name) {
-  if (typeof name !== "string") return false;
-  if (name.startsWith("Embedded: ")) return true;
-  return /^[A-Z]{6}\+/.test(name);
-}
-
-// Strip embedded markers down to the underlying family name:
-// "Embedded: BAAAAA+DejaVuSerifCondensed-Bold 7A19CC…D1" → "DejaVuSerifCondensed-Bold"
-function cleanEmbeddedFontName(name) {
-  return name
-    .replace(/^Embedded: /, "")
-    .replace(/\s+[0-9A-Fa-f]{16,}$/, "")
-    .replace(/^[A-Z]{6}\+/, "");
-}
-
-// Before inserting typed text: if the cursor's run uses an embedded/subset
-// font, retarget the run to the closest bundled family via the API's own
-// put_TextPrFontName (which also loads the font). Self-limiting: after the
-// first retarget the run font no longer matches the embedded pattern.
-function retargetEmbeddedRunFont() {
-  if (typeof editor.get_TextProps !== "function" || typeof editor.put_TextPrFontName !== "function") return;
-  const props = editor.get_TextProps();
-  const textPr = props && (props.TextPr || (typeof props.get_TextPr === "function" && props.get_TextPr()));
-  const family = textPr && textPr.FontFamily && textPr.FontFamily.Name;
-  if (!family || !isEmbeddedFontName(family)) return;
-
-  const clean = cleanEmbeddedFontName(family);
-  const mapped = substituteFontName(clean) || "Liberation Sans";
-  console.log(`[fonts] neue Eingabe in Embedded-Font "${family}" — Run-Font wird auf "${mapped}" umgestellt`);
-  editor.put_TextPrFontName(mapped);
+    return orig.call(this, name, lStyle);
+  };
+  app.__subsetNamePatched = true;
 }
 
 function registerEditorCallbacks() {
@@ -708,7 +463,6 @@ function openArrayBuffer(buf, name) {
 
   try {
     if (mode === "editor") {
-      installFontSubstitutionPatch();
       docOpen = false;
       editor.openDocument({ data: bytes });   // browser open: no server, no upload
       // Offline: there is no Document Server, so the two "wait for server" gates
@@ -729,7 +483,6 @@ function openArrayBuffer(buf, name) {
       scheduleOpenFallback(name);
     } else if (mode === "viewer") {
       viewer.open(buf);
-      installFontSubstitutionPatch();
       enableEditing(false);
       setToolEnabled("zoom-in", true); setToolEnabled("zoom-out", true);
       setToolEnabled("fit-width", true); setToolEnabled("fit-page", true);
