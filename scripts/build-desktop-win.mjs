@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
-import { buildFontRanges } from "./font-ranges.mjs";
+import { buildRegistry, renderAllFontsJs, odttfToggle } from "./fonts-lib.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -56,94 +56,30 @@ const TRIM_FILES = [
   "pdf/src/engine/drawingfile_native.js",
 ];
 
-// ── TTF parsing ─────────────────────────────────────────────────────────
-
-function readU16BE(b, o) { return (b[o] << 8) | b[o + 1]; }
-function readU32BE(b, o) { return ((b[o] << 24) | (b[o+1] << 16) | (b[o+2] << 8) | b[o+3]) >>> 0; }
-
-function parseTTF(buf) {
-  if (buf.length < 12) return null;
-  const sig = readU32BE(buf, 0);
-  if (sig !== 0x00010000 && sig !== 0x74727565 && sig !== 0x4F54544F) return null;
-  const numTables = readU16BE(buf, 4);
-  const tables = {};
-  for (let i = 0; i < numTables; i++) {
-    const off = 12 + i * 16;
-    const tag = String.fromCharCode(buf[off], buf[off+1], buf[off+2], buf[off+3]);
-    tables[tag] = { offset: readU32BE(buf, off + 8), length: readU32BE(buf, off + 12) };
-  }
-  const nt = tables["name"];
-  if (!nt) return null;
-  const noff = nt.offset;
-  const count = readU16BE(buf, noff + 2);
-  const strOff = noff + readU16BE(buf, noff + 4);
-  const names = {};
-  for (let i = 0; i < count; i++) {
-    const r = noff + 6 + i * 12;
-    const pid = readU16BE(buf, r), eid = readU16BE(buf, r+2);
-    const nid = readU16BE(buf, r+6), len = readU16BE(buf, r+8);
-    const so = strOff + readU16BE(buf, r+10);
-    if (len === 0) continue;
-    let s;
-    if (pid === 3 && eid === 1) {
-      const c = []; for (let j = 0; j < len; j += 2) c.push(readU16BE(buf, so+j));
-      s = String.fromCharCode(...c);
-    } else if (pid === 1 && eid === 0) {
-      s = ""; for (let j = 0; j < len; j++) s += String.fromCharCode(buf[so+j]);
-    } else continue;
-    if (!names[nid] || pid === 3) names[nid] = s;
-  }
-  const os2 = tables["OS/2"];
-  let bold = false, italic = false;
-  if (os2) {
-    const o = os2.offset;
-    italic = !!(readU16BE(buf, o+62) & 1);
-    bold = !!(readU16BE(buf, o+62) & 32);
-    if (!bold && readU16BE(buf, o+4) >= 700) bold = true;
-  } else if (tables["head"]) {
-    const ms = readU16BE(buf, tables["head"].offset + 44);
-    bold = !!(ms & 1); italic = !!(ms & 2);
-  }
-  const style = bold && italic ? "bolditalic" : bold ? "bold" : italic ? "italic" : "regular";
-  const family = names[16] || names[1];
-  return family ? { family, style } : null;
-}
-
+// ── Slim AllFonts.js (full-fidelity registry over the Western subset) ───
+//
+// Uses the same machinery as generate-allfonts.mjs (scripts/fonts-lib.mjs),
+// so the desktop package ships a REAL g_fonts_selection_bin. Shipping an
+// empty one would reintroduce the typed-text artifact bug: with no selection
+// records every font name resolves to the engine's built-in ASCW3 dummy font
+// and typed characters render as .notdef boxes.
+//
+// The files in vendor/fonts/ are stored odttf-obfuscated (the web font
+// loader XOR-decodes every fetched font), so de-obfuscate before parsing.
 async function generateSlimAllFonts(fontsDir, outputPath) {
   const files = (await readdir(fontsDir))
-    .filter(f => [".ttf", ".otf"].includes(extname(f).toLowerCase())).sort();
-  const families = new Map();
-  const fileNames = [];
-  const fileIdx = new Map();
+    .filter(f => [".ttf", ".otf", ".ttc"].includes(extname(f).toLowerCase())).sort();
+  const fonts = [];
   for (const f of files) {
-    const buf = await readFile(join(fontsDir, f));
-    const info = parseTTF(buf);
-    if (!info) continue;
-    let idx;
-    if (fileIdx.has(f)) idx = fileIdx.get(f);
-    else { idx = fileNames.length; fileNames.push(f); fileIdx.set(f, idx); }
-    if (!families.has(info.family)) families.set(info.family, {});
-    const fam = families.get(info.family);
-    if (!fam[info.style]) fam[info.style] = { fileIndex: idx, faceIndex: 0 };
+    fonts.push({
+      name: f,
+      data: odttfToggle(await readFile(join(fontsDir, f))),
+      ext: extname(f).toLowerCase(),
+    });
   }
-  const sorted = [...families.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const infos = sorted.map(([name, styles]) => {
-    const r = styles.regular || styles.bold || styles.italic || styles.bolditalic;
-    const i = styles.italic || r;
-    const b = styles.bold || r;
-    const bi = styles.bolditalic || styles.bold || styles.italic || r;
-    return [name, r?.fileIndex??-1, r?.faceIndex??-1, i?.fileIndex??-1, i?.faceIndex??-1,
-      b?.fileIndex??-1, b?.faceIndex??-1, bi?.fileIndex??-1, bi?.faceIndex??-1];
-  });
-  // __fonts_ranges: character→font fallback for the picker + WASM engine;
-  // without it, typed characters missing from embedded subset fonts render
-  // as .notdef boxes. g_fonts_selection_bin must be "" (not undefined):
-  // viewer.js does `"" != g_fonts_selection_bin` and base64-decodes it,
-  // throwing on undefined.
-  const ranges = buildFontRanges(infos.map((i) => i[0]));
-  const js = `(function(w) {\nw["__fonts_files"] = ${JSON.stringify(fileNames)};\nw["__fonts_infos"] = ${JSON.stringify(infos)};\nw["__fonts_ranges"] = ${JSON.stringify(ranges)};\nw["g_fonts_selection_bin"] = "";\n})(window);\n`;
-  await writeFile(outputPath, js, "utf8");
-  return { families: infos.length, files: fileNames.length, ranges: ranges.length / 3 };
+  const registry = buildRegistry(fonts);
+  await writeFile(outputPath, renderAllFontsJs(registry), "utf8");
+  return { families: registry.infos.length, files: registry.fileNames.length, records: registry.selectionFaces.length };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
