@@ -191,3 +191,15 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
+
+.format-color-wrap { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.format-color-wrap input[type="color"] {
+  width: 34px;
+  height: 31px;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  background: #fff;
+  padding: 3px;
+  cursor: pointer;
+}
+.format-color-wrap input[type="color"]:disabled { opacity: 0.4; cursor: default; }

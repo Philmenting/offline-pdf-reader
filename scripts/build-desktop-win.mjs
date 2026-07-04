@@ -153,8 +153,9 @@ async function main() {
   const APP = join(DIST, "resources", "app");
   await mkdir(APP, { recursive: true });
 
-  // electron-main.js
+  // electron-main.js + preload bridge (native save dialog)
   await cp(join(ROOT, "electron-main.js"), join(APP, "electron-main.js"));
+  await cp(join(ROOT, "preload.js"), join(APP, "preload.js"));
 
   // package.json for electron
   await writeFile(join(APP, "package.json"), JSON.stringify({

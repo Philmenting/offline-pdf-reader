@@ -308,6 +308,104 @@ function installSubsetFontNameNormalization() {
   app.__subsetNamePatched = true;
 }
 
+// ── Text formatting toolbar ───────────────────────────────────────────────
+// Wires the font/size/bold/italic/color controls to the editor's own text-
+// property API. State flows back through the engine's sync events
+// (asc_onFontFamily / asc_onFontSize / asc_onBold / asc_onItalic), so the
+// controls always reflect the text at the cursor/selection. The font list is
+// a curated set of bundled families plus common aliases (Arial, Times New
+// Roman, Courier New) that the selection table maps onto metric equivalents.
+const fmtState = { bold: false, italic: false };
+
+// Format controls (selects, color picker) take DOM focus; hand it back to the
+// editor afterwards so typing keeps working (text_input2 disables key capture
+// when focus leaves the editor).
+function refocusEditor() {
+  try { editor.asc_enableKeyEvents(true); } catch { /* best effort */ }
+}
+
+function wireFormatControls() {
+  const fontSel = el("text-font-family"), sizeInp = el("text-font-size");
+  const boldBtn = el("text-bold"), italicBtn = el("text-italic"), colorInp = el("text-color");
+  if (!fontSel) return;
+
+  fontSel.addEventListener("change", () => {
+    try { editor.put_TextPrFontName(fontSel.value); } catch (e) { console.warn("Schriftart setzen fehlgeschlagen:", e); }
+    refocusEditor();
+  });
+  sizeInp.addEventListener("change", () => {
+    const size = Math.max(6, Math.min(96, parseFloat(sizeInp.value) || 12));
+    sizeInp.value = String(size);
+    try { editor.put_TextPrFontSize(size); } catch (e) { console.warn("Schriftgröße setzen fehlgeschlagen:", e); }
+    refocusEditor();
+  });
+  boldBtn.addEventListener("click", () => {
+    try { editor.put_TextPrBold(!fmtState.bold); } catch (e) { console.warn("Fett fehlgeschlagen:", e); }
+    refocusEditor();
+  });
+  italicBtn.addEventListener("click", () => {
+    try { editor.put_TextPrItalic(!fmtState.italic); } catch (e) { console.warn("Kursiv fehlgeschlagen:", e); }
+    refocusEditor();
+  });
+  colorInp.addEventListener("change", () => {
+    try {
+      const hex = colorInp.value;
+      const color = new window.Asc.asc_CColor(
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16)
+      );
+      editor.put_TextColor(color);
+    } catch (e) { console.warn("Textfarbe fehlgeschlagen:", e); }
+    refocusEditor();
+  });
+}
+
+function setFormatEnabled(on) {
+  for (const id of ["text-font-family", "text-font-size", "text-bold", "text-italic", "text-color"]) {
+    const node = el(id);
+    if (node) node.disabled = !on;
+  }
+}
+
+function setToggleState(id, active) {
+  const btn = el(id);
+  if (!btn) return;
+  btn.classList.toggle("active", active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+}
+
+function registerFormatCallbacks(on) {
+  on("asc_onBold", (v) => {
+    fmtState.bold = !!v;
+    setToggleState("text-bold", fmtState.bold);
+  });
+  on("asc_onItalic", (v) => {
+    fmtState.italic = !!v;
+    setToggleState("text-italic", fmtState.italic);
+  });
+  on("asc_onFontFamily", (f) => {
+    const name = f && (typeof f.asc_getName === "function" ? f.asc_getName() : f.Name);
+    const fontSel = el("text-font-family");
+    if (!name || !fontSel || name.startsWith("Embedded: ") || document.activeElement === fontSel) return;
+    // fonts outside the curated list (e.g. reported by the cursor position)
+    // get an option on the fly so the dropdown can display them
+    if (![...fontSel.options].some((o) => o.value === name)) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      fontSel.appendChild(opt);
+    }
+    fontSel.value = name;
+  });
+  on("asc_onFontSize", (size) => {
+    const sizeInp = el("text-font-size");
+    if (typeof size === "number" && size > 0 && sizeInp && document.activeElement !== sizeInp) {
+      sizeInp.value = String(Math.round(size * 10) / 10);
+    }
+  });
+}
+
 function registerEditorCallbacks() {
   const on = (name, cb) => {
     try { editor.asc_registerCallback(name, cb); } catch { /* optional event */ }
@@ -333,15 +431,21 @@ function registerEditorCallbacks() {
     ensureEditorThumbnails();
     refreshHistoryButtons();
     preloadFallbackFonts();
+    markDirty(false);
+    updateTitle();
   });
   on("asc_onCountPages", (n) => { /* page count available */ });
   on("asc_onCurrentPage", (n) => { /* current page changed */ });
-  on("asc_onCanUndo", (v) => setToolEnabled("undo", docOpen && !!v));
+  on("asc_onCanUndo", (v) => {
+    setToolEnabled("undo", docOpen && !!v);
+    if (docOpen && v) markDirty(true); // any undoable change = unsaved changes
+  });
   on("asc_onCanRedo", (v) => setToolEnabled("redo", docOpen && !!v));
   on("asc_onMarkerFormatChanged", (type, isOn) => {
     // keep the toolbar's active highlight in sync if the engine toggles it off
     if (!isOn) clearActiveMarkerTools();
   });
+  registerFormatCallbacks(on);
 }
 
 // Preload the glyph-fallback fonts as soon as a document is open. The
@@ -549,7 +653,25 @@ function onFileChosen(file) {
   reader.readAsArrayBuffer(file);
 }
 
-function saveDocument() {
+// ── Dirty state ───────────────────────────────────────────────────────────
+// "Has the document been changed since the last save?" Driven by the
+// engine's asc_onCanUndo events (any undoable change marks dirty) and
+// cleared on successful save. Reflected in the window title.
+let docDirty = false;
+
+function markDirty(dirty) {
+  if (docDirty === dirty) return;
+  docDirty = dirty;
+  updateTitle();
+}
+
+function updateTitle() {
+  document.title = docOpen
+    ? `${docDirty ? "• " : ""}${lastName} — Offline PDF Editor`
+    : "Offline PDF Editor";
+}
+
+async function saveDocument() {
   if (mode !== "editor" || !docOpen) return;
   setStatus("PDF wird erzeugt …");
   try {
@@ -560,8 +682,26 @@ function saveDocument() {
       return;
     }
     const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+
+    // Desktop app (Electron): native save dialog via the preload bridge,
+    // suggesting the ORIGINAL file name. Web build: browser download with a
+    // "-bearbeitet" suffix so the original is never silently shadowed.
+    if (window.desktop && typeof window.desktop.savePdf === "function") {
+      const res = await window.desktop.savePdf(bytes, lastName);
+      if (res && res.saved) {
+        markDirty(false);
+        setStatus(`Gespeichert: ${res.path}`);
+      } else if (res && res.error) {
+        setStatus(`Speichern fehlgeschlagen: ${res.error}`);
+      } else {
+        setStatus("Speichern abgebrochen.");
+      }
+      return;
+    }
+
     const outName = lastName.replace(/\.pdf$/i, "") + "-bearbeitet.pdf";
     downloadBytes(bytes, outName);
+    markDirty(false);
     setStatus(`Gespeichert: „${outName}".`);
   } catch (e) {
     console.error("save() error:", e);
@@ -734,6 +874,7 @@ function enableEditing(on) {
     const viewerOk = ["zoom-out", "zoom-in", "fit-width", "fit-page"].includes(tool);
     setToolEnabled(tool, on && (mode === "editor" || viewerOk));
   }
+  setFormatEnabled(on && mode === "editor");
   if (on) setActiveTool("select");
 }
 
@@ -754,6 +895,7 @@ function waitFor(predicate, timeoutMs, errMsg) {
 function wireUi() {
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   el("btn-save").addEventListener("click", saveDocument);
+  wireFormatControls();
 
   // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
   // document "focus" listener: whenever DOM focus lands on an element it does
@@ -789,6 +931,42 @@ function wireUi() {
   window.addEventListener("resize", () => {
     if (mode === "editor" && editor && editor.WordControl) {
       try { editor.WordControl.OnResize(true); } catch { /* ignore */ }
+    }
+  });
+
+  // Keyboard shortcuts. Capture phase so they win over the engine's own key
+  // handling; undo/redo (Strg+Z/Y) is left to the engine.
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === "s") {
+      e.preventDefault();
+      e.stopPropagation();
+      saveDocument();
+    } else if (k === "o") {
+      e.preventDefault();
+      e.stopPropagation();
+      el("file-input").click();
+    }
+  }, true);
+
+  // Warn before closing with unsaved changes. In the browser the native
+  // beforeunload prompt handles it; in Electron (no native prompt) block the
+  // close once and ask via confirm().
+  window.addEventListener("beforeunload", (e) => {
+    if (!docDirty) return;
+    if (window.desktop) {
+      e.preventDefault();
+      e.returnValue = false;
+      setTimeout(() => {
+        if (window.confirm(`„${lastName}" hat ungespeicherte Änderungen. Trotzdem schließen?`)) {
+          docDirty = false;
+          window.close();
+        }
+      });
+    } else {
+      e.preventDefault();
+      e.returnValue = "";
     }
   });
 }

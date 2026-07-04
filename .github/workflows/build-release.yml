@@ -35,6 +35,17 @@ jobs:
       - name: Generate font registry
         run: npm run generate-fonts
 
+      # Regression gate for the typed-text artifact bug (ASCW3 / .notdef
+      # boxes): types into a subset-font PDF and asserts real glyphs come out.
+      # Runs BEFORE packaging so a broken font stack can never ship.
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Typing smoke test
+        run: npm test
+
       - name: Build Windows desktop package
         run: npm run dist:win
 

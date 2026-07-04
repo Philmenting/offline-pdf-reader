@@ -9,6 +9,7 @@
     "generate-fonts": "node scripts/generate-allfonts.mjs",
     "start": "electron .",
     "dev": "node server.mjs",
+    "test": "node test/e2e-smoke.mjs",
     "dist:win": "node scripts/build-desktop-win.mjs"
   },
   "engines": {

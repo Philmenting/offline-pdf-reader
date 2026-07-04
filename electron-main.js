@@ -1,6 +1,6 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { createServer } = require("http");
-const { readFile, stat } = require("fs/promises");
+const { readFile, stat, writeFile } = require("fs/promises");
 const { appendFileSync } = require("fs");
 const { join, posix, extname, dirname } = require("path");
 const os = require("os");
@@ -93,6 +93,25 @@ function startServer() {
 
 let mainWindow;
 
+// Native "Speichern": save dialog + direct file write. The renderer sends the
+// serialized PDF bytes (structured-clone keeps them a Uint8Array).
+ipcMain.handle("save-pdf", async (_event, bytes, suggestedName) => {
+  try {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: "PDF speichern",
+      defaultPath: suggestedName || "dokument.pdf",
+      filters: [{ name: "PDF-Dokument", extensions: ["pdf"] }],
+    });
+    if (canceled || !filePath) return { saved: false };
+    await writeFile(filePath, Buffer.from(bytes));
+    logLine(`[save] wrote ${filePath} (${bytes.length} bytes)`);
+    return { saved: true, path: filePath };
+  } catch (e) {
+    logLine(`[save] FAILED: ${e.message}`);
+    return { saved: false, error: e.message };
+  }
+});
+
 app.on("ready", async () => {
   const port = await startServer();
 
@@ -104,6 +123,7 @@ app.on("ready", async () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: join(__dirname, "preload.js"),
     },
   });
 
