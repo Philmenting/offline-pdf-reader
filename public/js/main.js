@@ -838,7 +838,6 @@ const TOOL_HANDLERS = {
   "textbox":     () => {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
     setActiveTool("textbox");
-    console.log(`[input-debug] after AddFreeTextAnnot: IsLongActionCurrent=${editor.IsLongActionCurrent}`);
   },
   "highlight":   () => setMarker("Highlight", 255, 236, 0, 1),
   "underline":   () => setMarker("Underline", 220, 30, 30, 1),

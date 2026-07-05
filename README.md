@@ -78,7 +78,30 @@ vendor/onlyoffice/      Built AGPL engine (gitignored)
 npm run build-engine   # build the ONLYOFFICE PDF engine from source (Python 3)
 npm run generate-fonts # download core-fonts + generate AllFonts.js registry
 npm start              # serve at http://localhost:3000
+npm test               # E2E typing smoke test (needs Chromium, see below)
 ```
+
+The smoke test guards the typed-text pipeline (font selection table, odttf
+obfuscation, per-character glyph fallback) and runs in CI before every
+release. Locally it uses `playwright` if installed, or `playwright-core`
+with `CHROMIUM_PATH=<path-to-chromium>`.
+
+## Features & shortcuts
+
+Text editing (page text + text boxes) with a formatting toolbar (font family,
+size, bold/italic, color), highlight/underline/strikeout markers, shapes,
+comments, images, page add/remove/rotate, undo/redo.
+
+| Shortcut | Action |
+| --- | --- |
+| `Strg+O` | PDF öffnen |
+| `Strg+S` | Speichern (Desktop-App: nativer Dialog, Web: Download) |
+| `Strg+F` | Suchen (Enter/F3 nächster, Umschalt+Enter voriger Treffer) |
+| `Strg+C` | Auswahl kopieren |
+| `Strg+Z` / `Strg+Y` | Rückgängig / Wiederholen |
+
+The desktop app shows unsaved changes as `•` in the window title and warns
+before closing.
 
 ## Host integration
 
