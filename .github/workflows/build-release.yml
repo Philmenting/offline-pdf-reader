@@ -49,10 +49,17 @@ jobs:
       - name: Build Windows desktop package
         run: npm run dist:win
 
+      - name: Build Windows installer (NSIS)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq nsis
+          npm run dist:win:installer
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Offline-PDF-Editor.zip
+          files: |
+            dist/Offline-PDF-Editor-Setup.exe
+            dist/Offline-PDF-Editor.zip
           generate_release_notes: true
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Offline PDF Editor ${{ env.RELEASE_TAG }}"

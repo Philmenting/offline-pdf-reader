@@ -75,10 +75,12 @@ vendor/onlyoffice/      Built AGPL engine (gitignored)
 ## Getting started
 
 ```bash
-npm run build-engine   # build the ONLYOFFICE PDF engine from source (Python 3)
-npm run generate-fonts # download core-fonts + generate AllFonts.js registry
-npm start              # serve at http://localhost:3000
-npm test               # E2E typing smoke test (needs Chromium, see below)
+npm run build-engine        # build the ONLYOFFICE PDF engine from source (Python 3)
+npm run generate-fonts      # download core-fonts + generate AllFonts.js registry
+npm start                   # serve at http://localhost:3000
+npm test                    # E2E typing smoke test (needs Chromium, see below)
+npm run dist:win            # bundle the Windows desktop app (ZIP)
+npm run dist:win:installer  # build the NSIS setup exe from the bundle (needs `nsis`)
 ```
 
 The smoke test guards the typed-text pipeline (font selection table, odttf

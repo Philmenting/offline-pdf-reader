@@ -157,10 +157,11 @@ async function main() {
   await cp(join(ROOT, "electron-main.js"), join(APP, "electron-main.js"));
   await cp(join(ROOT, "preload.js"), join(APP, "preload.js"));
 
-  // package.json for electron
+  // package.json for electron (version mirrors the repo's package.json)
+  const rootVersion = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")).version;
   await writeFile(join(APP, "package.json"), JSON.stringify({
     name: "offline-pdf-editor",
-    version: "0.2.0",
+    version: rootVersion,
     main: "electron-main.js",
   }, null, 2));
 
