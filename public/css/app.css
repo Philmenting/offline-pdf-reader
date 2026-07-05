@@ -203,3 +203,48 @@ body {
   cursor: pointer;
 }
 .format-color-wrap input[type="color"]:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Floating search bar (Strg+F) ─────────────────────────────────────── */
+.search-bar {
+  position: absolute;
+  top: 10px;
+  right: 26px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid #c9cdd6;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(20, 30, 60, 0.18);
+}
+.search-bar[hidden] { display: none; }
+.search-bar input[type="text"] {
+  width: 200px;
+  height: 28px;
+  border: 1px solid #c9cdd6;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+  outline: none;
+}
+.search-bar input[type="text"]:focus { border-color: var(--accent); }
+.search-count {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  color: #5a6172;
+  font-variant-numeric: tabular-nums;
+}
+.search-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #3a4256;
+  font-size: 12px;
+  cursor: pointer;
+}
+.search-btn:hover { background: #eef0f6; }

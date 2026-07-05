@@ -91,6 +91,16 @@
       <div id="thumbnails" class="thumbnails" hidden></div>
     </aside>
     <section class="viewer-host">
+      <!-- Floating search bar (Strg+F). Lives OUTSIDE #editor_sdk because the
+           editor replaces that element's innerHTML. -->
+      <div id="search-bar" class="search-bar" hidden>
+        <input id="search-input" type="text" placeholder="Suchen …" spellcheck="false">
+        <span id="search-count" class="search-count">0/0</span>
+        <button id="search-prev"  class="search-btn" title="Vorheriger Treffer (Umschalt+Enter)">▲</button>
+        <button id="search-next"  class="search-btn" title="Nächster Treffer (Enter / F3)">▼</button>
+        <button id="search-close" class="search-btn" title="Schließen (Esc)">✕</button>
+      </div>
+
       <!--
         The ONLYOFFICE PDF editor (Asc.PDFEditorApi) replaces this element's
         innerHTML with the full editor page DOM (id_main / id_viewer /

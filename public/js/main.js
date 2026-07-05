@@ -406,6 +406,89 @@ function registerFormatCallbacks(on) {
   });
 }
 
+// ── Search (Strg+F) ───────────────────────────────────────────────────────
+// Thin UI over the engine's own search: asc_findText fills the PDF search
+// engine (returns the match count, ids 0..count-1), asc_SelectSearchElement
+// jumps to a match (scroll + highlight), asc_endFindText clears everything.
+const search = { query: "", count: 0, current: -1, debounce: 0 };
+
+function updateSearchCount() {
+  el("search-count").textContent =
+    search.count > 0 ? `${search.current + 1}/${search.count}` : "0/0";
+}
+
+function runSearch(query) {
+  search.query = query;
+  if (!query) {
+    try { editor.asc_endFindText(); } catch { /* no active search */ }
+    search.count = 0;
+    search.current = -1;
+    updateSearchCount();
+    return;
+  }
+  try {
+    const props = new window.AscCommon.CSearchSettings();
+    props.put_Text(query);
+    props.put_MatchCase(false);
+    search.count = editor.asc_findText(props, true) | 0;
+    search.current = search.count > 0 ? 0 : -1;
+    if (search.count > 0) {
+      // highlight ALL matches on the page, then select the first
+      try { editor._selectSearchingResults(true); } catch { /* optional */ }
+      editor.asc_SelectSearchElement(0);
+    }
+  } catch (e) {
+    console.warn("Suche fehlgeschlagen:", e);
+    search.count = 0;
+    search.current = -1;
+  }
+  updateSearchCount();
+}
+
+function searchStep(dir) {
+  if (search.count <= 0) return;
+  search.current = (search.current + dir + search.count) % search.count;
+  try { editor.asc_SelectSearchElement(search.current); } catch (e) { console.warn("Treffer-Navigation fehlgeschlagen:", e); }
+  updateSearchCount();
+}
+
+function openSearchBar() {
+  if (mode !== "editor" || !docOpen) return;
+  el("search-bar").hidden = false;
+  const input = el("search-input");
+  input.focus();
+  input.select();
+}
+
+function closeSearchBar() {
+  el("search-bar").hidden = true;
+  runSearch("");
+  refocusEditor();
+}
+
+function wireSearchBar() {
+  const input = el("search-input");
+  input.addEventListener("input", () => {
+    clearTimeout(search.debounce);
+    search.debounce = setTimeout(() => runSearch(input.value.trim()), 300);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // fresh query typed without waiting for the debounce → search now
+      if (input.value.trim() !== search.query) runSearch(input.value.trim());
+      else searchStep(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearchBar();
+    }
+    e.stopPropagation(); // keep typed characters away from the editor
+  });
+  el("search-next").addEventListener("click", () => searchStep(1));
+  el("search-prev").addEventListener("click", () => searchStep(-1));
+  el("search-close").addEventListener("click", closeSearchBar);
+}
+
 function registerEditorCallbacks() {
   const on = (name, cb) => {
     try { editor.asc_registerCallback(name, cb); } catch { /* optional event */ }
@@ -896,6 +979,7 @@ function wireUi() {
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   el("btn-save").addEventListener("click", saveDocument);
   wireFormatControls();
+  wireSearchBar();
 
   // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
   // document "focus" listener: whenever DOM focus lands on an element it does
@@ -937,6 +1021,12 @@ function wireUi() {
   // Keyboard shortcuts. Capture phase so they win over the engine's own key
   // handling; undo/redo (Strg+Z/Y) is left to the engine.
   window.addEventListener("keydown", (e) => {
+    if (e.key === "F3") {
+      e.preventDefault();
+      e.stopPropagation();
+      searchStep(e.shiftKey ? -1 : 1);
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (k === "s") {
@@ -947,6 +1037,10 @@ function wireUi() {
       e.preventDefault();
       e.stopPropagation();
       el("file-input").click();
+    } else if (k === "f") {
+      e.preventDefault();
+      e.stopPropagation();
+      openSearchBar();
     }
   }, true);
 
