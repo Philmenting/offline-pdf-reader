@@ -175,6 +175,20 @@ async function main() {
     check("distinct characters shaped to distinct graphemes (no shared .notdef)",
       distinct.size === glyphs.length, `${distinct.size} graphemes for ${glyphs.length} chars`);
 
+    // 7. Saving must produce a real PDF. GetPagesBinary runs the WASM
+    //    serializer; viewer.Save() only returns the change-command stream —
+    //    an earlier regression shipped exactly that as ".pdf".
+    const savedHead = await page.evaluate(() => {
+      const e = window.__pdfEditor;
+      const doc = e.getPDFDoc();
+      const n = e.getCountPages() | 0;
+      const bytes = doc.GetPagesBinary(Array.from({ length: n }, (_, i) => i), false);
+      return bytes ? { head: String.fromCharCode(...bytes.slice(0, 5)), len: bytes.length } : null;
+    });
+    check("save produces a real PDF",
+      !!savedHead && savedHead.head === "%PDF-" && savedHead.len > 1000,
+      savedHead ? `${savedHead.head}… ${savedHead.len} bytes` : "no bytes");
+
     check("no page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 
     await page.close();

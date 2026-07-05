@@ -514,6 +514,7 @@ function registerEditorCallbacks() {
     ensureEditorThumbnails();
     refreshHistoryButtons();
     preloadFallbackFonts();
+    preloadFieldFonts();
     markDirty(false);
     updateTitle();
   });
@@ -550,6 +551,21 @@ function preloadFallbackFonts() {
     console.log("[fonts] preloading fallback fonts …");
     loader.LoadDocumentFonts2(families, undefined, function () {
       console.log("[fonts] fallback fonts preloaded");
+      // Also register them in the PDF document's loadedFonts list. Text entry
+      // into form fields is gated by checkFieldFont, which requires the field
+      // font PLUS every font the character picker has resolved so far
+      // (extendFonts) to be in that list — each entry it finds missing drops
+      // one keystroke while it re-registers an already-loaded font. The
+      // picker can only ever resolve to these preloaded families, so marking
+      // them here makes that gate permanently pass.
+      try {
+        const doc = editor.getPDFDoc && editor.getPDFDoc();
+        if (doc && Array.isArray(doc.loadedFonts)) {
+          for (const f of families) {
+            if (!doc.loadedFonts.includes(f.name)) doc.loadedFonts.push(f.name);
+          }
+        }
+      } catch { /* best effort */ }
       try { const r = editor.getDocumentRenderer(); r && r.paint && r.paint(); } catch { /* ignore */ }
     });
   } catch (e) {
@@ -758,10 +774,19 @@ async function saveDocument() {
   if (mode !== "editor" || !docOpen) return;
   setStatus("PDF wird erzeugt …");
   try {
-    const renderer = editor.getDocumentRenderer();
-    const result = renderer && typeof renderer.Save === "function" ? renderer.Save() : null;
-    if (!result || !result.length) {
-      setStatus("Speichern fehlgeschlagen: keine Daten von der Engine.");
+    // Serialize the COMPLETE document. CPDFDoc.GetPagesBinary(indexes) runs
+    // the changes through the WASM serializer (SplitPages + SaveForSplit)
+    // and returns a finished PDF. NOTE: viewer.Save() is NOT that — it only
+    // returns the raw change-command stream meant as serializer input; our
+    // earlier "Speichern" wrote exactly that stream into .pdf files, which
+    // no PDF reader could open.
+    const doc = editor.getPDFDoc();
+    try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
+    const pageCount = editor.getCountPages() | 0;
+    const indexes = Array.from({ length: pageCount }, (_, i) => i);
+    const result = doc.GetPagesBinary(indexes, false);
+    if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") {
+      setStatus("Speichern fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
     }
     const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
@@ -833,7 +858,8 @@ const TOOL_HANDLERS = {
   "undo":        () => { editor.Undo(); refreshHistoryButtons(); },
   "redo":        () => { editor.Redo(); refreshHistoryButtons(); },
 
-  "select":      () => { editor.SetMarkerFormat(undefined, false); setActiveTool("select"); },
+  "select":      () => { setFormFillMode(false); editor.SetMarkerFormat(undefined, false); setActiveTool("select"); },
+  "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => { if (typeof editor.asc_EditPage === "function") editor.asc_EditPage(); setActiveTool("edit-text"); },
   "textbox":     () => {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
@@ -938,6 +964,49 @@ function appendPdf() {
   input.click();
 }
 
+// Register every form field's font in the document's loadedFonts list right
+// after open. CPDFDoc.getTextController() gates text entry on
+// checkFieldFont(field): the FIRST keystroke into a field otherwise returns
+// false (and is dropped) because that very call is what populates the list —
+// even though the font files themselves are long since in memory.
+function preloadFieldFonts() {
+  try {
+    const doc = editor.getPDFDoc && editor.getPDFDoc();
+    if (!doc || !Array.isArray(doc.widgets)) return;
+    for (const field of doc.widgets) {
+      try { doc.checkFieldFont(field, function () { /* fonts registered */ }); } catch { /* per-field best effort */ }
+    }
+  } catch (e) {
+    console.warn("Formular-Fonts vorladen fehlgeschlagen:", e);
+  }
+}
+
+// ── Form fill mode ────────────────────────────────────────────────────────
+// The engine treats form widgets as DESIGN objects while canEdit() is true
+// (IsEditFieldsMode: clicking a field selects/moves it). Filling requires the
+// OnlyForms restriction: content editing is locked, fields become fillable —
+// exactly how the upstream editor separates "edit" from "fill" mode.
+function setFormFillMode(on) {
+  if (mode !== "editor" || !docOpen) return;
+  const R = window.Asc.c_oAscRestrictionType;
+  try {
+    editor.asc_setRestriction(on ? R.OnlyForms : R.None);
+  } catch (e) {
+    console.warn("Formularmodus umschalten fehlgeschlagen:", e);
+    return;
+  }
+  // tools that edit content are unavailable while filling
+  const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
+    "shape", "comment", "image", "page-add", "page-remove", "pdf-append",
+    "rotate-left", "rotate-right"];
+  for (const tool of editTools) setToolEnabled(tool, !on);
+  setFormatEnabled(!on);
+  setActiveTool(on ? "form-fill" : "select");
+  setStatus(on
+    ? "Formularmodus: Felder anklicken und ausfüllen. „Auswahl“ beendet den Modus."
+    : "Bearbeitungsmodus.");
+}
+
 function removeCurrentPage() {
   if (!docOpen || typeof editor.asc_RemovePage !== "function") return;
   const cur = editor.getCurrentPage() | 0;
@@ -986,7 +1055,7 @@ const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "comment", "image", "page-add", "page-remove",
   "pdf-append", "rotate-left", "rotate-right", "zoom-out", "zoom-in",
-  "fit-width", "fit-page",
+  "fit-width", "fit-page", "form-fill",
 ];
 
 function enableEditing(on) {
