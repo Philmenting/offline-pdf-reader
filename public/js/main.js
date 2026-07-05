@@ -848,6 +848,7 @@ const TOOL_HANDLERS = {
 
   "page-add":    () => { if (typeof editor.asc_AddPage === "function") editor.asc_AddPage((editor.getCurrentPage() | 0) + 1); },
   "page-remove": () => removeCurrentPage(),
+  "pdf-append":  () => appendPdf(),
   "rotate-left":  () => rotateCurrentPage(-90),
   "rotate-right": () => rotateCurrentPage(90),
 
@@ -899,6 +900,44 @@ function insertImage() {
   input.click();
 }
 
+// Append all pages of another PDF to the end of the open document. Uses the
+// engine's real PDF merge (CPDFDoc.MergePagesBinary → WASM MergePages), the
+// same machinery its cross-document page paste uses: pages arrive with their
+// original content, fonts and annotations, and the operation is undoable.
+function appendPdf() {
+  if (!docOpen || mode !== "editor") return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/pdf";
+  input.onchange = () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onerror = () => setStatus("Datei konnte nicht gelesen werden.");
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      if (String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") {
+        setStatus(`„${f.name}" ist keine gültige PDF-Datei.`);
+        return;
+      }
+      try {
+        const doc = editor.getPDFDoc();
+        const insertPos = editor.getCountPages() | 0;
+        doc.DoAction(function () {
+          doc.MergePagesBinary(insertPos, bytes);
+        }, window.AscDFH.historydescription_Pdf_AddPage, doc);
+        refreshHistoryButtons();
+        setStatus(`„${f.name}" angehängt — ${editor.getCountPages()} Seiten insgesamt.`);
+      } catch (e) {
+        console.error("PDF anhängen fehlgeschlagen:", e);
+        setStatus(`PDF anhängen fehlgeschlagen: ${e.message}`);
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  };
+  input.click();
+}
+
 function removeCurrentPage() {
   if (!docOpen || typeof editor.asc_RemovePage !== "function") return;
   const cur = editor.getCurrentPage() | 0;
@@ -946,7 +985,8 @@ function setToolEnabled(tool, on) {
 const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "comment", "image", "page-add", "page-remove",
-  "rotate-left", "rotate-right", "zoom-out", "zoom-in", "fit-width", "fit-page",
+  "pdf-append", "rotate-left", "rotate-right", "zoom-out", "zoom-in",
+  "fit-width", "fit-page",
 ];
 
 function enableEditing(on) {
