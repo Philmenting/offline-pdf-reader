@@ -26,8 +26,8 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
+  gap: 10px;
+  padding: 0 10px;
   min-height: 52px;
   background: var(--accent);
   color: #fff;
@@ -38,19 +38,28 @@ body {
 
 .toolbar {
   display: flex;
-  gap: 5px;
-  align-items: center;
+  flex-direction: column;   /* two deliberate rows, grouped by task */
+  gap: 3px;
   flex: 1 1 auto;
-  overflow-x: auto;
-  padding: 7px 0;
-  scrollbar-width: thin;
+  padding: 6px 0;
 }
-.toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.25); margin: 0 3px; flex: 0 0 auto; }
+.toolbar-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;          /* very narrow windows wrap further, never scroll */
+}
+.toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.25); margin: 0 2px; flex: 0 0 auto; }
+
+/* on narrow windows the brand costs a full button group */
+@media (max-width: 980px) {
+  .brand { display: none; }
+}
 
 .btn {
   display: inline-flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 6px 10px;
   background: #fff;
   color: var(--accent);
   border: 1px solid transparent;
@@ -98,8 +107,8 @@ body {
   outline: none;
 }
 .format-select {
-  width: 158px;
-  padding: 0 8px;
+  width: 132px;
+  padding: 0 6px;
 }
 .format-size {
   width: 62px;

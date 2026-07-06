@@ -42,6 +42,14 @@ function check(name, ok, detail) {
   if (!ok) failures++;
 }
 
+// Click coordinates below are calibrated for a 52px-high header at 100% zoom
+// in a 1280px viewport. The toolbar may wrap to more rows (taller header), so
+// shift all page-area Y coordinates by the actual header growth.
+async function headerYOffset(page) {
+  const h = await page.evaluate(() => document.querySelector(".app-header").getBoundingClientRect().height);
+  return Math.round(h - 52);
+}
+
 async function launchChromium() {
   let chromium;
   try { ({ chromium } = await import("playwright")); }
@@ -115,14 +123,15 @@ async function testFormRoundtrip(browser) {
   // scale 96/72): field center ~(703,238), checkbox ~(548,302)
   await page.click('[data-tool="form-fill"]');
   await page.waitForTimeout(800);
-  await page.mouse.click(703, 238);
+  const dy = await headerYOffset(page);
+  await page.mouse.click(703, 238 + dy);
   await page.waitForTimeout(1200);
   const NAME = "Philipp Holzwarth";
   await page.keyboard.type(NAME, { delay: 60 });
   await page.waitForTimeout(600);
-  await page.mouse.click(548, 302); // checkbox (commits the text field)
+  await page.mouse.click(548, 302 + dy); // checkbox (commits the text field)
   await page.waitForTimeout(1000);
-  await page.mouse.click(950, 500); // blur
+  await page.mouse.click(950, 500 + dy); // blur
   await page.waitForTimeout(800);
 
   const readValues = () => page.evaluate(() => {
@@ -239,7 +248,7 @@ async function main() {
     await page.click('[data-tool="edit-text"]');
     await page.waitForTimeout(1500);
     // double-click into the headline (fixed viewport → stable coordinates)
-    await page.mouse.dblclick(590, 111);
+    await page.mouse.dblclick(590, 111 + await headerYOffset(page));
     await page.waitForTimeout(1500);
     await page.keyboard.press("End");
 

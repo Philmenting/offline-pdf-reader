@@ -10,77 +10,82 @@
   <header class="app-header">
     <div class="brand">Offline PDF Editor</div>
 
+    <!-- Two deliberate rows instead of one overflowing strip: row 1 = file /
+         history / text tools / formatting, row 2 = annotations / pages /
+         view. Rows still wrap on very narrow windows; never scrolls. -->
     <div class="toolbar" id="toolbar">
-      <!-- File -->
-      <label class="btn" for="file-input">PDF öffnen</label>
-      <input id="file-input" type="file" accept="application/pdf" hidden>
-      <button class="btn" id="btn-save" title="Bearbeitetes PDF speichern (Strg+S)" disabled>Speichern</button>
-      <button class="btn" id="btn-print" title="Drucken (Strg+P)" disabled>Drucken</button>
+      <div class="toolbar-row">
+        <!-- File -->
+        <label class="btn" for="file-input" title="PDF öffnen (Strg+O)">Öffnen</label>
+        <input id="file-input" type="file" accept="application/pdf" hidden>
+        <button class="btn" id="btn-save" title="Bearbeitetes PDF speichern (Strg+S)" disabled>Speichern</button>
+        <button class="btn" id="btn-print" title="Drucken (Strg+P)" disabled>Drucken</button>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
 
-      <!-- History -->
-      <button class="btn ghost" data-tool="undo" title="Rückgängig" disabled>↶</button>
-      <button class="btn ghost" data-tool="redo" title="Wiederholen" disabled>↷</button>
+        <!-- History -->
+        <button class="btn ghost" data-tool="undo" title="Rückgängig" disabled>↶</button>
+        <button class="btn ghost" data-tool="redo" title="Wiederholen" disabled>↷</button>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
 
-      <!-- Edit tools (toggle group) -->
-      <button class="btn ghost tool" data-tool="select"    title="Auswählen / Hand" disabled>Auswahl</button>
-      <button class="btn ghost tool" data-tool="edit-text" title="Text bearbeiten" disabled>Text</button>
-      <button class="btn ghost tool" data-tool="textbox"   title="Textfeld einfügen" disabled>Textfeld</button>
-      <button class="btn ghost tool" data-tool="form-fill" title="Formular ausfüllen (Bearbeitung gesperrt, Felder ausfüllbar)" disabled>Ausfüllen</button>
+        <!-- Edit tools (toggle group) -->
+        <button class="btn ghost tool" data-tool="select"    title="Auswählen / Hand" disabled>Auswahl</button>
+        <button class="btn ghost tool" data-tool="edit-text" title="Text bearbeiten" disabled>Text</button>
+        <button class="btn ghost tool" data-tool="textbox"   title="Textfeld einfügen" disabled>Textfeld</button>
+        <button class="btn ghost tool" data-tool="form-fill" title="Formular ausfüllen (Bearbeitung gesperrt, Felder ausfüllbar)" disabled>Ausfüllen</button>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
 
-      <!-- Text formatting -->
-      <select class="format-select" id="text-font-family" title="Schriftart" disabled>
-        <option value="Liberation Sans">Liberation Sans</option>
-        <option value="Liberation Serif">Liberation Serif</option>
-        <option value="Liberation Mono">Liberation Mono</option>
-        <option value="DejaVu Sans">DejaVu Sans</option>
-        <option value="DejaVu Serif">DejaVu Serif</option>
-        <option value="FreeSans">FreeSans</option>
-        <option value="FreeSerif">FreeSerif</option>
-        <option value="Carlito">Carlito</option>
-        <option value="Caladea">Caladea</option>
-        <option value="Arial">Arial</option>
-        <option value="Times New Roman">Times New Roman</option>
-        <option value="Courier New">Courier New</option>
-      </select>
-      <input class="format-size" id="text-font-size" type="number" min="6" max="96" step="0.5" value="12" title="Schriftgröße" disabled>
-      <button class="btn ghost format-toggle" id="text-bold" type="button" title="Fett" aria-pressed="false" disabled>B</button>
-      <button class="btn ghost format-toggle" id="text-italic" type="button" title="Kursiv" aria-pressed="false" disabled><i>K</i></button>
-      <label class="format-color-wrap" title="Textfarbe">
-        <input type="color" id="text-color" value="#000000" disabled>
-      </label>
+        <!-- Text formatting -->
+        <select class="format-select" id="text-font-family" title="Schriftart" disabled>
+          <option value="Liberation Sans">Liberation Sans</option>
+          <option value="Liberation Serif">Liberation Serif</option>
+          <option value="Liberation Mono">Liberation Mono</option>
+          <option value="DejaVu Sans">DejaVu Sans</option>
+          <option value="DejaVu Serif">DejaVu Serif</option>
+          <option value="FreeSans">FreeSans</option>
+          <option value="FreeSerif">FreeSerif</option>
+          <option value="Carlito">Carlito</option>
+          <option value="Caladea">Caladea</option>
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+        </select>
+        <input class="format-size" id="text-font-size" type="number" min="6" max="96" step="0.5" value="12" title="Schriftgröße" disabled>
+        <button class="btn ghost format-toggle" id="text-bold" type="button" title="Fett" aria-pressed="false" disabled>B</button>
+        <button class="btn ghost format-toggle" id="text-italic" type="button" title="Kursiv" aria-pressed="false" disabled><i>K</i></button>
+        <label class="format-color-wrap" title="Textfarbe">
+          <input type="color" id="text-color" value="#000000" disabled>
+        </label>
+      </div>
 
-      <span class="sep"></span>
+      <div class="toolbar-row">
+        <!-- Annotations -->
+        <button class="btn ghost tool" data-tool="highlight" title="Markieren" disabled>Marker</button>
+        <button class="btn ghost tool" data-tool="underline" title="Unterstreichen" disabled>U̲</button>
+        <button class="btn ghost tool" data-tool="strikeout" title="Durchstreichen" disabled>S̶</button>
+        <button class="btn ghost tool" data-tool="shape"     title="Form (Rechteck)" disabled>Form</button>
+        <button class="btn ghost tool" data-tool="comment"   title="Kommentar" disabled>💬</button>
+        <button class="btn ghost tool" data-tool="image"     title="Bild einfügen" disabled>Bild</button>
 
-      <button class="btn ghost tool" data-tool="highlight" title="Markieren" disabled>Marker</button>
-      <button class="btn ghost tool" data-tool="underline" title="Unterstreichen" disabled>U̲</button>
-      <button class="btn ghost tool" data-tool="strikeout" title="Durchstreichen" disabled>S̶</button>
-      <button class="btn ghost tool" data-tool="shape"     title="Form (Rechteck)" disabled>Form</button>
-      <button class="btn ghost tool" data-tool="comment"   title="Kommentar" disabled>💬</button>
-      <button class="btn ghost tool" data-tool="image"     title="Bild einfügen" disabled>Bild</button>
+        <span class="sep"></span>
 
-      <span class="sep"></span>
+        <!-- Pages -->
+        <button class="btn ghost" data-tool="page-add"    title="Seite hinzufügen" disabled>＋Seite</button>
+        <button class="btn ghost" data-tool="page-remove" title="Seite löschen" disabled>－Seite</button>
+        <button class="btn ghost" data-tool="pdf-append"  title="Anderes PDF anhängen (Seiten ans Dokumentende)" disabled>＋PDF</button>
+        <button class="btn ghost" data-tool="rotate-left" title="Seite links drehen" disabled>↺</button>
+        <button class="btn ghost" data-tool="rotate-right" title="Seite rechts drehen" disabled>↻</button>
 
-      <!-- Pages -->
-      <button class="btn ghost" data-tool="page-add"    title="Seite hinzufügen" disabled>＋Seite</button>
-      <button class="btn ghost" data-tool="page-remove" title="Seite löschen" disabled>－Seite</button>
-      <button class="btn ghost" data-tool="pdf-append"  title="Anderes PDF anhängen (Seiten ans Dokumentende)" disabled>＋PDF</button>
-      <button class="btn ghost" data-tool="rotate-left" title="Seite links drehen" disabled>↺</button>
-      <button class="btn ghost" data-tool="rotate-right" title="Seite rechts drehen" disabled>↻</button>
+        <span class="sep"></span>
 
-      <span class="sep"></span>
-
-      <!-- View -->
-      <button class="btn ghost" data-tool="zoom-out"  title="Verkleinern" disabled>−</button>
-      <button class="btn ghost" data-tool="zoom-in"   title="Vergrößern" disabled>+</button>
-      <button class="btn ghost" data-tool="fit-width" title="An Breite anpassen" disabled>Breite</button>
-      <button class="btn ghost" data-tool="fit-page"  title="Ganze Seite" disabled>Seite</button>
-
+        <!-- View -->
+        <button class="btn ghost" data-tool="zoom-out"  title="Verkleinern" disabled>−</button>
+        <button class="btn ghost" data-tool="zoom-in"   title="Vergrößern" disabled>+</button>
+        <button class="btn ghost" data-tool="fit-width" title="An Breite anpassen" disabled>Breite</button>
+        <button class="btn ghost" data-tool="fit-page"  title="Ganze Seite" disabled>Seite</button>
+      </div>
     </div>
   </header>
 
