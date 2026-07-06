@@ -232,6 +232,7 @@ async function testAppendScrollbarSync(browser) {
       thumbPages: th.pages.length,
       thumbScrollMaxY: th.scrollMaxY,
       thumbNeedResize: th.isNeedResize(),
+      railOverflow: getComputedStyle(document.getElementById("thumbnails-list")).overflow,
     };
   });
   check("page count reflects the merge", state.pages === 16, `pages=${state.pages}`);
@@ -240,6 +241,37 @@ async function testAppendScrollbarSync(browser) {
     state.thumbScrollMaxY > 0, `thumbScrollMaxY=${state.thumbScrollMaxY}`);
   check("thumbnail sidebar isn't left with a pending resize",
     state.thumbNeedResize === false, `thumbNeedResize=${state.thumbNeedResize}`);
+  // Regression guard: the thumbnail rail must never let the BROWSER scroll it
+  // natively. The engine draws all pages onto one canvas and scrolls it
+  // itself via scrollY/scrollMaxY + its own canvas-drawn scrollbar. If the
+  // container's overflow is "auto"/"scroll" and the rendered content is ever
+  // taller than the box (seen on some real-world documents), native
+  // scrolling silently takes over: it moves what's visible without ever
+  // touching the engine's scrollY, so the engine's own scrollbar then looks
+  // frozen / out of sync with what's on screen.
+  check("thumbnail rail can't be scrolled natively by the browser",
+    state.railOverflow === "hidden", `railOverflow=${state.railOverflow}`);
+
+  // Drive a real wheel scroll over the rail and confirm it moves the
+  // engine's own scroll state (not just the DOM's native scrollTop).
+  const rail = await page.$("#thumbnails-list");
+  const railBox = await rail.boundingBox();
+  await page.mouse.move(railBox.x + railBox.width / 2, railBox.y + railBox.height / 2);
+  for (let i = 0; i < 15; i++) {
+    await page.mouse.wheel(0, 150);
+    await page.waitForTimeout(40);
+  }
+  await page.waitForTimeout(300);
+  const afterWheel = await page.evaluate(() => {
+    const th = window.__pdfEditor.getDocumentRenderer().Thumbnails;
+    const rail = document.getElementById("thumbnails-list");
+    return { scrollY: th.scrollY, scrollMaxY: th.scrollMaxY, railScrollTop: rail.scrollTop };
+  });
+  check("mouse-wheel over the thumbnail rail moves the engine's own scroll position",
+    afterWheel.scrollY > 0 && afterWheel.scrollY <= afterWheel.scrollMaxY,
+    `scrollY=${afterWheel.scrollY} scrollMaxY=${afterWheel.scrollMaxY}`);
+  check("the rail's native DOM scroll position never moves (engine owns scrolling)",
+    afterWheel.railScrollTop === 0, `railScrollTop=${afterWheel.railScrollTop}`);
 
   check("no page errors (append-scrollbar scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();

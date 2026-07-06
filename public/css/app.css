@@ -257,7 +257,17 @@ body {
   overflow: hidden;
   position: relative;
 }
-.thumbnails { position: absolute; inset: 0; overflow: auto; }
+/*
+ * overflow MUST be hidden, not auto. The ONLYOFFICE thumbnail rail manages
+ * its own virtual scrolling (scrollY/scrollMaxY) and draws its own
+ * canvas-based scrollbar; it never expects the browser to scroll this
+ * container natively. If the rendered canvas content is ever taller than
+ * this box (seen on some real-world documents/DPI configs), "auto" lets the
+ * native scrollbar take over: it moves the visible content but never
+ * touches the engine's internal scroll state, so the engine's own
+ * scrollbar then looks frozen/out of sync with what's on screen.
+ */
+.thumbnails { position: absolute; inset: 0; overflow: hidden; }
 
 .viewer-host {
   position: relative;
