@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { createServer } = require("http");
 const { readFile, stat, writeFile } = require("fs/promises");
 const { appendFileSync } = require("fs");
@@ -141,6 +141,23 @@ ipcMain.on("renderer-ready", () => {
     const p = pendingOpenPath;
     pendingOpenPath = null;
     sendOpenFile(p);
+  }
+});
+
+// Drucken: write the serialized PDF to a temp file and open it with the
+// system's default PDF application, which owns the actual print dialog.
+ipcMain.handle("print-pdf", async (_event, bytes, name) => {
+  try {
+    const safe = String(name || "dokument.pdf").replace(/[^\w.\-äöüÄÖÜß ]/g, "_");
+    const tmp = join(os.tmpdir(), `print-${Date.now()}-${safe}`);
+    await writeFile(tmp, Buffer.from(bytes));
+    const err = await shell.openPath(tmp);
+    if (err) throw new Error(err);
+    logLine(`[print] opened ${tmp} in default PDF app`);
+    return { ok: true };
+  } catch (e) {
+    logLine(`[print] FAILED: ${e.message}`);
+    return { ok: false, error: e.message };
   }
 });
 

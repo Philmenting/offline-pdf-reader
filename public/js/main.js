@@ -852,26 +852,30 @@ function updateTitle() {
     : "Offline PDF Editor";
 }
 
+// Serialize the COMPLETE document to a finished PDF. CPDFDoc.GetPagesBinary
+// runs the changes through the WASM serializer (SplitPages + SaveForSplit).
+// NOTE: viewer.Save() is NOT that — it only returns the raw change-command
+// stream meant as serializer input; an earlier "Speichern" wrote exactly that
+// stream into .pdf files, which no PDF reader could open.
+function collectPdfBytes() {
+  const doc = editor.getPDFDoc();
+  try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
+  const pageCount = editor.getCountPages() | 0;
+  const indexes = Array.from({ length: pageCount }, (_, i) => i);
+  const result = doc.GetPagesBinary(indexes, false);
+  if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") return null;
+  return result instanceof Uint8Array ? result : new Uint8Array(result);
+}
+
 async function saveDocument() {
   if (mode !== "editor" || !docOpen) return;
   setStatus("PDF wird erzeugt …");
   try {
-    // Serialize the COMPLETE document. CPDFDoc.GetPagesBinary(indexes) runs
-    // the changes through the WASM serializer (SplitPages + SaveForSplit)
-    // and returns a finished PDF. NOTE: viewer.Save() is NOT that — it only
-    // returns the raw change-command stream meant as serializer input; our
-    // earlier "Speichern" wrote exactly that stream into .pdf files, which
-    // no PDF reader could open.
-    const doc = editor.getPDFDoc();
-    try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
-    const pageCount = editor.getCountPages() | 0;
-    const indexes = Array.from({ length: pageCount }, (_, i) => i);
-    const result = doc.GetPagesBinary(indexes, false);
-    if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") {
+    const bytes = collectPdfBytes();
+    if (!bytes) {
       setStatus("Speichern fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
     }
-    const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
 
     // Desktop app (Electron): native save dialog via the preload bridge,
     // suggesting the ORIGINAL file name. Web build: browser download with a
@@ -896,6 +900,37 @@ async function saveDocument() {
   } catch (e) {
     console.error("save() error:", e);
     setStatus(`Speichern fehlgeschlagen: ${e.message}`);
+  }
+}
+
+// Drucken: the editor renders to canvases, so browser print of the page
+// itself would not paginate. Instead hand the serialized PDF to something
+// that CAN print it: desktop → temp file opened in the system's default PDF
+// app; web → blob URL in a new tab (the browser's PDF viewer has printing).
+async function printDocument() {
+  if (mode !== "editor" || !docOpen) return;
+  try {
+    const bytes = collectPdfBytes();
+    if (!bytes) {
+      setStatus("Drucken fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
+      return;
+    }
+    if (window.desktop && typeof window.desktop.printPdf === "function") {
+      const res = await window.desktop.printPdf(bytes, lastName);
+      setStatus(res && res.ok
+        ? "Zum Drucken in der Standard-PDF-Anwendung geöffnet."
+        : `Drucken fehlgeschlagen: ${(res && res.error) || "unbekannt"}`);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    const win = window.open(url, "_blank");
+    setStatus(win
+      ? "Druckansicht in neuem Tab geöffnet — dort Strg+P."
+      : "Popup blockiert — bitte Popups für diese Seite erlauben.");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    console.error("print() error:", e);
+    setStatus(`Drucken fehlgeschlagen: ${e.message}`);
   }
 }
 
@@ -1106,13 +1141,26 @@ function rotateCurrentPage(angle) {
   refreshHistoryButtons();
 }
 
+// The two renderers use different zoom units: the fallback CViewer speaks
+// PERCENT (getZoom()/setZoom(110)), the editor's CHtmlPage a FACTOR
+// (.zoom = 1.1, setZoom(1.1)). Feeding percent into CHtmlPage.setZoom zoomed
+// 110-fold and crashed the WASM rasterizer ("memory access out of bounds").
+function getZoomPercent(r) {
+  if (typeof r.getZoom === "function") return Math.round(r.getZoom());
+  return Math.round((typeof r.zoom === "number" ? r.zoom : 1) * 100);
+}
+
+function setZoomPercent(r, percent) {
+  r.setZoom(typeof r.getZoom === "function" ? percent : percent / 100);
+}
+
 function stepZoom(dir) {
   const r = renderer();
   if (!r) return;
-  const z = Math.round(r.getZoom ? r.getZoom() : 100);
+  const z = getZoomPercent(r);
   const next = dir > 0 ? ZOOM_STEPS.find((v) => v > z) : [...ZOOM_STEPS].reverse().find((v) => v < z);
-  if (next) r.setZoom(next);
-  setStatus(`Zoom: ${Math.round(r.getZoom ? r.getZoom() : z)} %`);
+  if (next) setZoomPercent(r, next);
+  setStatus(`Zoom: ${next || z} %`);
 }
 
 // ── Toolbar state ─────────────────────────────────────────────────────────
@@ -1142,6 +1190,7 @@ const EDITOR_TOOLS = [
 
 function enableEditing(on) {
   el("btn-save").disabled = !(on && mode === "editor");
+  el("btn-print").disabled = !(on && mode === "editor");
   for (const tool of EDITOR_TOOLS) {
     // in viewer fallback, only view tools are usable
     const viewerOk = ["zoom-out", "zoom-in", "fit-width", "fit-page"].includes(tool);
@@ -1168,6 +1217,7 @@ function waitFor(predicate, timeoutMs, errMsg) {
 function wireUi() {
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   el("btn-save").addEventListener("click", saveDocument);
+  el("btn-print").addEventListener("click", printDocument);
   wireFormatControls();
   wireSearchBar();
 
@@ -1196,6 +1246,17 @@ function wireUi() {
   }
 
   const host = document.querySelector(".viewer-host");
+
+  // Strg+Mausrad = Zoom (standard PDF-viewer behaviour). Capture phase +
+  // passive:false so we beat the engine's own scroll handling and may call
+  // preventDefault (which also stops the browser's page zoom).
+  host.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !docOpen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    stepZoom(e.deltaY < 0 ? 1 : -1);
+  }, { capture: true, passive: false });
+
   host.addEventListener("dragover", (e) => e.preventDefault());
   host.addEventListener("drop", (e) => {
     e.preventDefault();
@@ -1223,6 +1284,10 @@ function wireUi() {
       e.preventDefault();
       e.stopPropagation();
       saveDocument();
+    } else if (k === "p") {
+      e.preventDefault();
+      e.stopPropagation();
+      printDocument();
     } else if (k === "o") {
       e.preventDefault();
       e.stopPropagation();

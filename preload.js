@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("save-pdf", bytes, suggestedName),
 
   /**
+   * Print: write the PDF to a temp file and open it in the system's default
+   * PDF application (which has a proper print dialog).
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  printPdf: (bytes, name) => ipcRenderer.invoke("print-pdf", bytes, name),
+
+  /**
    * Receive files the OS asked us to open ("Öffnen mit" / double-click /
    * second instance). Callback gets { name, data: Uint8Array }.
    */

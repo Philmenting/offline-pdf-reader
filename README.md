@@ -98,7 +98,9 @@ comments, images, page add/remove/rotate, undo/redo.
 | --- | --- |
 | `Strg+O` | PDF öffnen |
 | `Strg+S` | Speichern (Desktop-App: nativer Dialog, Web: Download) |
+| `Strg+P` | Drucken (Desktop: Standard-PDF-App, Web: neuer Tab) |
 | `Strg+F` | Suchen (Enter/F3 nächster, Umschalt+Enter voriger Treffer) |
+| `Strg+Mausrad` | Zoomen |
 | `Strg+C` | Auswahl kopieren |
 | `Strg+Z` / `Strg+Y` | Rückgängig / Wiederholen |
 
