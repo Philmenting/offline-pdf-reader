@@ -35,7 +35,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zip unzip
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Build ONLYOFFICE PDF editor engine
         run: npm run build-engine
@@ -52,3 +52,4 @@ jobs:
           name: Offline-PDF-Editor-Windows-Zip
           path: dist/Offline-PDF-Editor.zip
           if-no-files-found: error
+          retention-days: 14
