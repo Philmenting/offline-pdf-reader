@@ -172,6 +172,79 @@ async function testFormRoundtrip(browser) {
   await page.close();
 }
 
+// Build a small multi-page PDF to append via the ＋PDF button.
+async function makeMultiPagePdf(count) {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  for (let i = 1; i <= count; i++) {
+    const page = doc.addPage([595, 842]);
+    page.drawText(`SEITE ${i}`, { x: 50, y: 780, size: 40, font });
+  }
+  return Buffer.from(await doc.save());
+}
+
+// Regression test for a scrollbar-freeze bug: the thumbnail sidebar (a
+// CDocument instance, aliased AscCommon.ThumbnailsControl) marks itself
+// dirty via setNeedResize(true) after a page-count change, but only
+// actually recomputes on the NEXT checkTasks() poll — and checkTasks()
+// SKIPS that recompute entirely while pdfDoc.fontLoader.isWorking() is
+// true. A merged PDF that pulls in fonts outside the bundled set can keep
+// the loader "working" indefinitely, so the thumbnail list's scrollbar
+// never catches up to the new page count. main.js's appendPdf() now calls
+// forceViewerResync() right after the merge (and again after a delay) to
+// bypass that gate. Verify it actually does: force isWorking() to stay
+// true (worst case) and assert the thumbnail scrollbar still reflects the
+// new page count immediately, not stuck at its pre-merge range.
+async function testAppendScrollbarSync(browser) {
+  const basePdf = await makeMultiPagePdf(1);
+  const appendedPdf = await makeMultiPagePdf(15);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "base.pdf", mimeType: "application/pdf", buffer: basePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  console.log("append-scrollbar document open");
+
+  // simulate a font load that never finishes — the worst case for the
+  // checkTasks() gate described above
+  await page.evaluate(() => {
+    window.__pdfEditor.getPDFDoc().fontLoader.isWorking = () => true;
+  });
+
+  const chooser = page.waitForEvent("filechooser", { timeout: 15000 });
+  await page.click('[data-tool="pdf-append"]');
+  await (await chooser).setFiles({ name: "many.pdf", mimeType: "application/pdf", buffer: appendedPdf });
+  await page.waitForTimeout(2500); // same order of wait a user would give it
+
+  const state = await page.evaluate(() => {
+    const th = window.__pdfEditor.getDocumentRenderer().Thumbnails;
+    return {
+      pages: window.__pdfEditor.getCountPages(),
+      thumbPages: th.pages.length,
+      thumbScrollMaxY: th.scrollMaxY,
+      thumbNeedResize: th.isNeedResize(),
+    };
+  });
+  check("page count reflects the merge", state.pages === 16, `pages=${state.pages}`);
+  check("thumbnail sidebar page list reflects the merge", state.thumbPages === 16, `thumbPages=${state.thumbPages}`);
+  check("thumbnail scrollbar range updates even while fonts are (simulated) still loading",
+    state.thumbScrollMaxY > 0, `thumbScrollMaxY=${state.thumbScrollMaxY}`);
+  check("thumbnail sidebar isn't left with a pending resize",
+    state.thumbNeedResize === false, `thumbNeedResize=${state.thumbNeedResize}`);
+
+  check("no page errors (append-scrollbar scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -308,6 +381,7 @@ async function main() {
     // Guards the fill-mode gating (OnlyForms restriction), the
     // checkFieldFont/loadedFonts first-keystroke fix and the save pipeline.
     await testFormRoundtrip(browser);
+    await testAppendScrollbarSync(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });
