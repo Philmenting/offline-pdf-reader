@@ -1,14 +1,15 @@
 // Synchronize ONLYOFFICE's thumbnail page model after page mutations.
 //
-// The thumbnail rail owns its own page array and custom scrollbar. When a PDF is
-// appended, the document page count changes before that thumbnail model is fully
-// updated. Replacing DOM nodes or forcing native scroll metrics breaks the rail
-// later while scrolling, so this keeps the existing control and asks ONLYOFFICE
-// to add/delete thumbnail pages through its own methods.
+// The thumbnail rail owns its own page array and custom scrollbar. The renderer
+// also keeps a separate file.pages array that ThumbnailsControl._addPage() reads
+// from. PDF merges can update the document page count without extending that
+// renderer-side page list, so the thumbnail scrollbar keeps its old geometry.
 (function () {
   const PAGE_CHANGE_TOOLS = new Set(["page-add", "page-remove", "pdf-append"]);
   let lastPageCount = -1;
   let syncToken = 0;
+  let patchedEditor = null;
+  let patchedDoc = null;
 
   function getEditor() {
     return window.__pdfEditor || null;
@@ -25,10 +26,28 @@
     }
   }
 
+  function getPdfDoc() {
+    const editor = getEditor();
+    try {
+      return editor && typeof editor.getPDFDoc === "function" ? editor.getPDFDoc() : null;
+    } catch {
+      return null;
+    }
+  }
+
   function getPageCount() {
     const editor = getEditor();
     if (!editor || typeof editor.getCountPages !== "function") return -1;
     try { return editor.getCountPages() | 0; } catch { return -1; }
+  }
+
+  function call(target, name, ...args) {
+    try {
+      if (target && typeof target[name] === "function") return target[name](...args);
+    } catch (e) {
+      console.debug(`[thumbnail-sync] ${name} skipped`, e);
+    }
+    return undefined;
   }
 
   function ensureThumbnails(renderer) {
@@ -52,13 +71,56 @@
     }
   }
 
-  function call(target, name, ...args) {
-    try {
-      if (target && typeof target[name] === "function") return target[name](...args);
-    } catch (e) {
-      console.debug(`[thumbnail-sync] ${name} skipped`, e);
+  function getPageObject(doc, index) {
+    return call(doc, "GetPage", index)
+      || call(doc, "getPage", index)
+      || (doc && Array.isArray(doc.pages) ? doc.pages[index] : null)
+      || (doc && Array.isArray(doc.Pages) ? doc.Pages[index] : null);
+  }
+
+  function readNumber(target, names) {
+    for (const name of names) {
+      const value = call(target, name);
+      if (Number.isFinite(value) && value > 0) return value;
+      if (target && Number.isFinite(target[name]) && target[name] > 0) return target[name];
     }
-    return undefined;
+    return 0;
+  }
+
+  function makeFilePage(doc, index, fallback) {
+    const page = getPageObject(doc, index);
+    const width = readNumber(page, ["GetWidth", "getWidth", "GetW", "getW", "W", "width"])
+      || (fallback && (fallback.W || fallback.width))
+      || 595;
+    const height = readNumber(page, ["GetHeight", "getHeight", "GetH", "getH", "H", "height"])
+      || (fallback && (fallback.H || fallback.height))
+      || 842;
+    const dpi = (fallback && (fallback.Dpi || fallback.dpi)) || 72;
+    const rotate = readNumber(page, ["GetRotate", "getRotate", "Rotate", "rotate"])
+      || (fallback && (fallback.Rotate || fallback.rotate))
+      || 0;
+
+    return {
+      Dpi: dpi,
+      W: width,
+      H: height,
+      originIndex: index,
+      Rotate: rotate,
+    };
+  }
+
+  function syncRendererFilePages(renderer, count) {
+    const file = renderer && renderer.file;
+    const doc = getPdfDoc();
+    if (!file || !Array.isArray(file.pages) || count <= 0) return;
+
+    const fallback = file.pages[file.pages.length - 1] || file.pages[0] || null;
+    while (file.pages.length < count) {
+      file.pages.push(makeFilePage(doc, file.pages.length, fallback));
+    }
+    if (file.pages.length > count) {
+      file.pages.splice(count);
+    }
   }
 
   function resizeAndRepaint(thumbs) {
@@ -94,12 +156,14 @@
     const count = getPageCount();
     if (!renderer || count <= 0) return false;
 
+    syncRendererFilePages(renderer, count);
+
     const thumbs = ensureThumbnails(renderer);
     if (!thumbs) return false;
 
     try {
       const have = Array.isArray(thumbs.pages) ? thumbs.pages.length : -1;
-      let changed = have !== count;
+      const changed = have !== count;
 
       if (have >= 0 && have < count && typeof thumbs._addPage === "function") {
         for (let index = have; index < count; index += 1) {
@@ -115,12 +179,16 @@
 
       resizeAndRepaint(thumbs);
       clampCustomScrollbar(thumbs);
+      lastPageCount = count;
       console.debug(`[thumbnail-sync] synced after ${reason || "page-count-change"}: ${have} -> ${count}`);
       return true;
     } catch (e) {
       console.warn("[thumbnail-sync] sync failed; trying init()", e);
       try {
-        return rebuildFromViewer(thumbs);
+        syncRendererFilePages(renderer, count);
+        const ok = rebuildFromViewer(thumbs);
+        if (ok) lastPageCount = count;
+        return ok;
       } catch (fallbackError) {
         console.warn("[thumbnail-sync] fallback init failed", fallbackError);
         return false;
@@ -130,7 +198,7 @@
 
   function scheduleSync(reason) {
     const token = ++syncToken;
-    for (const delay of [80, 250, 600, 1200]) {
+    for (const delay of [0, 80, 250, 600, 1200, 2000]) {
       setTimeout(() => {
         if (token !== syncToken) return;
         syncThumbnails(reason);
@@ -138,24 +206,65 @@
     }
   }
 
+  function wrapMethod(target, name, reason) {
+    if (!target || typeof target[name] !== "function" || target[name].__thumbnailSyncWrapped) return;
+    const original = target[name];
+    target[name] = function (...args) {
+      const result = original.apply(this, args);
+      scheduleSync(reason || name);
+      return result;
+    };
+    target[name].__thumbnailSyncWrapped = true;
+  }
+
+  function installHooks() {
+    const editor = getEditor();
+    if (editor && editor !== patchedEditor) {
+      patchedEditor = editor;
+      wrapMethod(editor, "asc_AddPage", "asc_AddPage");
+      wrapMethod(editor, "asc_RemovePage", "asc_RemovePage");
+    }
+
+    const doc = getPdfDoc();
+    if (doc && doc !== patchedDoc) {
+      patchedDoc = doc;
+      wrapMethod(doc, "MergePagesBinary", "MergePagesBinary");
+      wrapMethod(doc, "AddPage", "AddPage");
+      wrapMethod(doc, "RemovePage", "RemovePage");
+      wrapMethod(doc, "RemovePages", "RemovePages");
+    }
+  }
+
+  window.__syncOnlyOfficeThumbnails = scheduleSync;
+
   document.addEventListener("click", (event) => {
     const btn = event.target && event.target.closest && event.target.closest("[data-tool]");
     if (!btn || !PAGE_CHANGE_TOOLS.has(btn.getAttribute("data-tool"))) return;
+    installHooks();
     scheduleSync(btn.getAttribute("data-tool"));
   }, true);
 
   setInterval(() => {
+    installHooks();
     const count = getPageCount();
     if (count <= 0) return;
 
     if (lastPageCount === -1) {
       lastPageCount = count;
+      syncThumbnails("initial-count");
       return;
     }
 
-    if (count !== lastPageCount) {
-      lastPageCount = count;
-      scheduleSync("page-count-change");
+    const renderer = getRenderer();
+    const filePages = renderer && renderer.file && Array.isArray(renderer.file.pages)
+      ? renderer.file.pages.length
+      : count;
+    const thumbPages = renderer && renderer.Thumbnails && Array.isArray(renderer.Thumbnails.pages)
+      ? renderer.Thumbnails.pages.length
+      : count;
+
+    if (count !== lastPageCount || filePages !== count || thumbPages !== count) {
+      scheduleSync("page-model-drift");
     }
   }, 500);
 })();
