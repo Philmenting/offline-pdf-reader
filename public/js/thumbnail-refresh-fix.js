@@ -15,6 +15,7 @@
   const SPACER_ID = "thumbnail-scroll-height-spacer";
   let lastPageCount = -1;
   let scheduleToken = 0;
+  let wheelSyncInstalled = false;
 
   function getEditor() {
     return window.__pdfEditor || null;
@@ -113,6 +114,7 @@
     rail.style.setProperty("overflow-y", "auto", "important");
     rail.style.setProperty("scrollbar-gutter", "stable", "important");
     hideEngineThumbnailScrollbars();
+    installWheelSync(rail);
 
     spacer.style.height = "0px";
     if (pageCount <= 0) return;
@@ -122,6 +124,37 @@
 
     const missingHeight = Math.max(0, desiredHeight - rail.scrollHeight);
     spacer.style.height = `${missingHeight}px`;
+  }
+
+  function installWheelSync(rail) {
+    if (wheelSyncInstalled) return;
+    wheelSyncInstalled = true;
+
+    rail.addEventListener("wheel", (event) => {
+      const maxY = Math.max(0, rail.scrollHeight - rail.clientHeight);
+      const maxX = Math.max(0, rail.scrollWidth - rail.clientWidth);
+      if (maxY <= 0 && maxX <= 0) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const beforeY = rail.scrollTop;
+      const beforeX = rail.scrollLeft;
+      const lineHeight = 40;
+      const pageHeight = Math.max(rail.clientHeight * 0.85, lineHeight);
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? lineHeight
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? pageHeight
+          : 1;
+
+      rail.scrollTop = Math.max(0, Math.min(maxY, beforeY + event.deltaY * unit));
+      rail.scrollLeft = Math.max(0, Math.min(maxX, beforeX + event.deltaX * unit));
+
+      if (rail.scrollTop !== beforeY || rail.scrollLeft !== beforeX) {
+        requestAnimationFrame(syncNativeScrollRange);
+      }
+    }, { capture: true, passive: false });
   }
 
   function pulseEditorResize() {
