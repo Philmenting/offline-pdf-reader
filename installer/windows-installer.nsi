@@ -44,6 +44,13 @@ Section "Install"
   CreateShortCut "$SMPROGRAMS\${APPNAME}\${APPNAME} deinstallieren.lnk" "$INSTDIR\Uninstall.exe"
   CreateShortCut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${EXENAME}"
 
+  ; Register as a PDF handler for the "Öffnen mit" menu (per-user, does NOT
+  ; take over the .pdf default association).
+  WriteRegStr HKCU "Software\Classes\Applications\${EXENAME}\shell\open\command" "" '"$INSTDIR\${EXENAME}" "%1"'
+  WriteRegStr HKCU "Software\Classes\Applications\${EXENAME}\SupportedTypes" ".pdf" ""
+  WriteRegStr HKCU "Software\Classes\Applications\${EXENAME}" "FriendlyAppName" "${APPNAME}"
+  WriteRegStr HKCU "Software\Classes\.pdf\OpenWithList\${EXENAME}" "" ""
+
   ; Apps & Features entry (per-user)
   WriteRegStr   HKCU "${UNINSTKEY}" "DisplayName" "${APPNAME}"
   WriteRegStr   HKCU "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
@@ -65,5 +72,7 @@ Section "Uninstall"
   RMDir  "$SMPROGRAMS\${APPNAME}"
   Delete "$DESKTOP\${APPNAME}.lnk"
 
+  DeleteRegKey HKCU "Software\Classes\Applications\${EXENAME}"
+  DeleteRegKey HKCU "Software\Classes\.pdf\OpenWithList\${EXENAME}"
   DeleteRegKey HKCU "${UNINSTKEY}"
 SectionEnd

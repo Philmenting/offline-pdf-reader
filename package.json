@@ -17,6 +17,6 @@
     "node": ">=18"
   },
   "devDependencies": {
-    "electron": "^42.5.0"
+    "electron": "^42.6.0"
   }
 }

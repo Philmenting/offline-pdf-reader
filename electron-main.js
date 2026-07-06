@@ -92,6 +92,57 @@ function startServer() {
 }
 
 let mainWindow;
+let rendererReady = false;
+let pendingOpenPath = null;
+
+// "Öffnen mit" / double-click: a PDF path may arrive on the command line
+// (first launch) or from a second instance (single-instance lock below).
+function pdfPathFromArgv(argv) {
+  // packaged: [exe, ...args]; dev: [electron, ., ...args]
+  const args = argv.slice(app.isPackaged ? 1 : 2);
+  return args.find((a) => /\.pdf$/i.test(a) && !a.startsWith("-")) || null;
+}
+
+async function sendOpenFile(filePath) {
+  if (!filePath) return;
+  if (!mainWindow || !rendererReady) {
+    pendingOpenPath = filePath; // delivered once the renderer says it's ready
+    return;
+  }
+  try {
+    const data = await readFile(filePath);
+    const name = filePath.replace(/^.*[\\/]/, "");
+    mainWindow.webContents.send("open-file", { name, data });
+    logLine(`[open-with] sent ${filePath} (${data.length} bytes)`);
+  } catch (e) {
+    logLine(`[open-with] FAILED to read ${filePath}: ${e.message}`);
+  }
+}
+
+// Single instance: double-clicking another PDF focuses the existing window
+// and opens the file there instead of spawning a second app.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_e, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+    sendOpenFile(pdfPathFromArgv(argv));
+  });
+}
+
+// Renderer announces it can accept files (editor initialised).
+ipcMain.on("renderer-ready", () => {
+  rendererReady = true;
+  if (pendingOpenPath) {
+    const p = pendingOpenPath;
+    pendingOpenPath = null;
+    sendOpenFile(p);
+  }
+});
 
 // Native "Speichern": save dialog + direct file write. The renderer sends the
 // serialized PDF bytes (structured-clone keeps them a Uint8Array).
@@ -153,6 +204,13 @@ app.on("ready", async () => {
 
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
   mainWindow.on("closed", () => { mainWindow = null; });
+
+  // PDF passed on the command line ("Öffnen mit" / double-click)
+  const argvPdf = pdfPathFromArgv(process.argv);
+  if (argvPdf) {
+    logLine(`[open-with] argv file: ${argvPdf}`);
+    pendingOpenPath = argvPdf; // delivered on renderer-ready
+  }
 });
 
 app.on("window-all-closed", () => app.quit());

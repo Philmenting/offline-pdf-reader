@@ -220,6 +220,26 @@ async function initEditor() {
   installSubsetFontNameNormalization();
   installLongActionWatchdog();
   setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
+
+  // Desktop only: accept files from "Öffnen mit"/double-click (delivered by
+  // the main process once we signal readiness).
+  if (window.desktop && typeof window.desktop.onOpenFile === "function") {
+    window.desktop.onOpenFile((payload) => {
+      if (payload && payload.data && payload.data.buffer) {
+        // slice the exact view: IPC buffers can be pooled/offset
+        const d = payload.data;
+        const buf = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+        openArrayBuffer(buf, payload.name || "dokument.pdf");
+      }
+    });
+    if (typeof window.desktop.rendererReady === "function") window.desktop.rendererReady();
+  }
+
+  // a document handed over by a pre-reload session (second file opened)
+  const pending = await takePendingOpen();
+  if (pending && pending.bytes) {
+    openArrayBuffer(pending.bytes.buffer, pending.name || "dokument.pdf");
+  }
 }
 
 // ── Long-action watchdog ──────────────────────────────────────────────────
@@ -654,11 +674,73 @@ async function initViewerFallback() {
 }
 
 // ── Open / Save ───────────────────────────────────────────────────────────
+
+// Opening a SECOND document into a live editor is not supported by the
+// engine's own pipeline (content-ready never re-fires; upstream creates a
+// fresh editor instance per document). Instead: stash the bytes in IndexedDB,
+// reload the page (the beforeunload guard still protects unsaved changes)
+// and open them in the fresh editor. Used by the file picker, drag&drop and
+// the desktop "Öffnen mit" path alike.
+const PENDING_DB = "offline-pdf-editor";
+const PENDING_STORE = "pending-open";
+
+function pendingDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(PENDING_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(PENDING_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function stashPendingOpenAndReload(bytes, name) {
+  if (docDirty && !window.confirm(
+    `„${lastName}" hat ungespeicherte Änderungen. Trotzdem „${name}" öffnen?`)) {
+    return;
+  }
+  markDirty(false); // decision made — don't let the beforeunload guard interfere
+  try {
+    const db = await pendingDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PENDING_STORE, "readwrite");
+      tx.objectStore(PENDING_STORE).put({ name, bytes }, "file");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    location.reload();
+  } catch (e) {
+    console.error("Zweites Dokument konnte nicht übergeben werden:", e);
+    setStatus(`„${name}" konnte nicht geöffnet werden — bitte Seite neu laden.`);
+  }
+}
+
+async function takePendingOpen() {
+  try {
+    const db = await pendingDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(PENDING_STORE, "readwrite");
+      const store = tx.objectStore(PENDING_STORE);
+      const get = store.get("file");
+      get.onsuccess = () => {
+        store.delete("file");
+        resolve(get.result || null);
+      };
+      get.onerror = () => reject(get.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
 function openArrayBuffer(buf, name) {
   const bytes = new Uint8Array(buf);
   const magic = String.fromCharCode(...bytes.slice(0, 5));
   if (magic !== "%PDF-") {
     setStatus(`„${name}" ist keine gültige PDF-Datei.`);
+    return;
+  }
+  if (docOpen && mode === "editor") {
+    stashPendingOpenAndReload(bytes, name);
     return;
   }
   lastName = name;

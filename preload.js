@@ -13,4 +13,15 @@ contextBridge.exposeInMainWorld("desktop", {
    */
   savePdf: (bytes, suggestedName) =>
     ipcRenderer.invoke("save-pdf", bytes, suggestedName),
+
+  /**
+   * Receive files the OS asked us to open ("Öffnen mit" / double-click /
+   * second instance). Callback gets { name, data: Uint8Array }.
+   */
+  onOpenFile: (callback) => {
+    ipcRenderer.on("open-file", (_event, payload) => callback(payload));
+  },
+
+  /** Tell the main process the editor can accept files now. */
+  rendererReady: () => ipcRenderer.send("renderer-ready"),
 });

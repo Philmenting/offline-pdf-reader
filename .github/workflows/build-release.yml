@@ -40,7 +40,7 @@ jobs:
       # Runs BEFORE packaging so a broken font stack can never ship.
       - name: Install Playwright Chromium
         run: |
-          npm install --no-save playwright
+          npm install --no-save playwright pdf-lib
           npx playwright install --with-deps chromium
 
       - name: Typing smoke test

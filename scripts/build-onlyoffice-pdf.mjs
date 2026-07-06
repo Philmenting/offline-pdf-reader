@@ -75,6 +75,36 @@ async function exists(p) {
  * We patch the early-return so it still initialises the base path and symbol
  * ranges even when there is no selection-bin data.
  */
+/**
+ * Harden CTextShaper.FlushWord against a null font file (word/sdk-all.js).
+ *
+ * When a paragraph is shaped while its font FILE is not yet in memory
+ * (SetFontInternal returned null — e.g. a saved form's DA references the
+ * serializer's "dummy__noop" placeholder font right after open), FlushWord
+ * dereferences this.FontId.m_pFaceInfo and throws, aborting the WHOLE page
+ * recalculation: the document opens blank. Skipping the word instead is
+ * safe — the async font load completes moments later and the follow-up
+ * repaint shapes it correctly.
+ */
+async function patchTextShaper() {
+  const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
+  if (!(await exists(file))) return;
+  let src = await readFile(file, "utf8");
+
+  const needle = "\t\tlet oFontInfo = this.GetFontInfo(this.FontSlot);\n" +
+    "\t\tlet nFontId   = AscCommon.FontNameMap.GetId(this.FontId.m_pFaceInfo.family_name);";
+  const guard = "\t\tif (!this.FontId || !this.FontId.m_pFaceInfo)\n" +
+    "\t\t\treturn this.ClearBuffer(); // font file not in memory yet — repaint after load reshapes\n";
+
+  if (!src.includes(needle)) {
+    console.warn("  ! patchTextShaper: FlushWord signature not found — upstream changed, patch skipped");
+    return;
+  }
+  src = src.replace(needle, guard + needle);
+  await writeFile(file, src);
+  console.log("→ patched sdk-all.js: FlushWord null-font guard");
+}
+
 async function patchDrawingFile() {
   const file = join(VENDOR, "sdkjs", "pdf", "src", "engine", "drawingfile.js");
   if (!(await exists(file))) return;
@@ -225,6 +255,7 @@ async function main() {
 
   console.log("→ patching engine for standalone-viewer compatibility ...");
   await patchDrawingFile();
+  await patchTextShaper();
 
   await writeFile(
     join(VENDOR, "PROVENANCE.json"),

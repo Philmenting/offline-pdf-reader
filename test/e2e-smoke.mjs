@@ -63,6 +63,106 @@ async function waitForServer(url, timeoutMs = 15000) {
   throw new Error(`server at ${url} did not come up`);
 }
 
+// Build a single-page AcroForm PDF (text field "name" + checkbox
+// "einverstanden") with known geometry, so screen coordinates are stable at
+// 100% zoom in a 1280x900 viewport.
+async function makeFormPdf() {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595, 842]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  page.drawText("Antragsformular", { x: 50, y: 780, size: 24, font });
+  page.drawText("Name:", { x: 50, y: 720, size: 12, font });
+  page.drawText("Einverstanden:", { x: 50, y: 670, size: 12, font });
+  const form = doc.getForm();
+  form.createTextField("name").addToPage(page, { x: 150, y: 705, width: 250, height: 24 });
+  form.createCheckBox("einverstanden").addToPage(page, { x: 150, y: 660, width: 18, height: 18 });
+  return Buffer.from(await doc.save());
+}
+
+async function testFormRoundtrip(browser) {
+  const formPdf = await makeFormPdf();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  // reopening with unsaved changes asks for confirmation — accept it
+  page.on("dialog", (d) => d.accept());
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  const openBytes = async (buffer, name) => {
+    await (await page.$("#file-input")).setInputFiles({ name, mimeType: "application/pdf", buffer });
+    // opening a second document reloads the page (fresh editor); the wait
+    // must survive that navigation
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.waitForFunction(
+          () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+          null, { timeout: 90000 });
+        break;
+      } catch (e) {
+        if (!/Execution context was destroyed|navigat/i.test(String(e))) throw e;
+      }
+    }
+    await page.waitForTimeout(2000);
+  };
+  await openBytes(formPdf, "form.pdf");
+  console.log("form document open");
+
+  // fill mode: text field at PDF pts (150..400, 705..729), checkbox at
+  // (150..168, 660..678) → screen at 100% zoom (page top-left ~336/72,
+  // scale 96/72): field center ~(703,238), checkbox ~(548,302)
+  await page.click('[data-tool="form-fill"]');
+  await page.waitForTimeout(800);
+  await page.mouse.click(703, 238);
+  await page.waitForTimeout(1200);
+  const NAME = "Philipp Holzwarth";
+  await page.keyboard.type(NAME, { delay: 60 });
+  await page.waitForTimeout(600);
+  await page.mouse.click(548, 302); // checkbox (commits the text field)
+  await page.waitForTimeout(1000);
+  await page.mouse.click(950, 500); // blur
+  await page.waitForTimeout(800);
+
+  const readValues = () => page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const out = {};
+    for (const f of doc.widgets) {
+      out[f.GetFullName()] = f.IsChecked ? { v: f.GetValue(), c: f.IsChecked() } : { v: f.GetValue() };
+    }
+    return out;
+  });
+
+  const filled = await readValues();
+  check("text field holds the full typed value (no dropped first key)",
+    filled.name && filled.name.v === NAME, JSON.stringify(filled.name));
+  check("checkbox toggled on", !!(filled.einverstanden && filled.einverstanden.c),
+    JSON.stringify(filled.einverstanden));
+
+  // save through the real serializer and reopen the bytes
+  const saved = await page.evaluate(() => {
+    const e = window.__pdfEditor;
+    const doc = e.getPDFDoc();
+    const n = e.getCountPages() | 0;
+    const bytes = doc.GetPagesBinary(Array.from({ length: n }, (_, i) => i), false);
+    return bytes ? Array.from(bytes) : null;
+  });
+  check("form save produces a real PDF",
+    !!saved && String.fromCharCode(...saved.slice(0, 5)) === "%PDF-" && saved.length > 1000,
+    saved ? `${saved.length} bytes` : "no bytes");
+
+  await openBytes(Buffer.from(saved), "form-saved.pdf");
+  const reopened = await readValues();
+  check("reopened PDF keeps the text value",
+    reopened.name && reopened.name.v === NAME, JSON.stringify(reopened.name));
+  check("reopened PDF keeps the checkbox state",
+    !!(reopened.einverstanden && reopened.einverstanden.c), JSON.stringify(reopened.einverstanden));
+
+  check("no page errors (form scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -192,6 +292,13 @@ async function main() {
     check("no page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 
     await page.close();
+
+    // ── Scenario 2: form fill round-trip ─────────────────────────────────
+    // Fill an AcroForm (text field + checkbox) in fill mode, save through
+    // the real serializer, reopen the produced bytes and verify the values.
+    // Guards the fill-mode gating (OnlyForms restriction), the
+    // checkFieldFont/loadedFonts first-keystroke fix and the save pipeline.
+    await testFormRoundtrip(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });
