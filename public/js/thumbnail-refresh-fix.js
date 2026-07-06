@@ -1,9 +1,11 @@
 // Keep the ONLYOFFICE thumbnail rail scrollable after page mutations.
 //
-// Do not call arbitrary thumbnail internals here. Some methods in sdk-all.js
-// expect a callback and throw "callback is not a function" when invoked with a
-// boolean. A plain resize pulse is enough to make the editor recalculate its
-// thumbnail strip after MergePagesBinary while leaving the merge path untouched.
+// ONLYOFFICE also creates its own thumbnail scrollbars (#id_*_scroll_th). After
+// pages are appended through MergePagesBinary their thumb size/track can stay at
+// the old page count. We hide only those thumbnail-specific engine scrollbars
+// and let the real #thumbnails-list element provide native scrolling instead.
+// Do not call arbitrary thumbnail internals here: some sdk-all.js methods expect
+// callbacks and throw "callback is not a function" when invoked defensively.
 (function () {
   const PAGE_CHANGE_TOOLS = new Set(["page-add", "page-remove", "pdf-append"]);
   let lastPageCount = -1;
@@ -19,11 +21,22 @@
     try { return editor.getCountPages() | 0; } catch { return -1; }
   }
 
+  function hideEngineThumbnailScrollbars() {
+    for (const id of ["id_vertical_scroll_th", "id_horizontal_scroll_th"]) {
+      const node = document.getElementById(id);
+      if (!node) continue;
+      node.style.setProperty("display", "none", "important");
+      node.style.setProperty("pointer-events", "none", "important");
+    }
+  }
+
   function keepNativeRailScrollable() {
     const rail = document.getElementById("thumbnails-list");
     if (!rail) return;
-    rail.style.overflow = "auto";
-    rail.style.overflowY = "auto";
+    rail.style.setProperty("overflow", "auto", "important");
+    rail.style.setProperty("overflow-y", "auto", "important");
+    rail.style.setProperty("scrollbar-gutter", "stable", "important");
+    hideEngineThumbnailScrollbars();
   }
 
   function pulseEditorResize() {
@@ -37,8 +50,6 @@
     } catch (e) {
       console.debug("[thumbnail-refresh] WordControl resize skipped", e);
     }
-
-    try { window.dispatchEvent(new Event("resize")); } catch { /* best effort */ }
   }
 
   function scheduleRefresh(reason) {
