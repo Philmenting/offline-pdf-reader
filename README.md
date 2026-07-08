@@ -94,6 +94,14 @@ Text editing (page text + text boxes) with a formatting toolbar (font family,
 size, bold/italic, color), highlight/underline/strikeout markers, shapes,
 comments, images, page add/remove/rotate, undo/redo.
 
+Page tools (Stirling-PDF/PDFSam-style, fully offline):
+- **+ PDF** — merge another PDF's pages onto the end of the current document.
+- **Teilen** — extract a page range (e.g. `1-3,5`) into a standalone new PDF
+  file, without modifying the open document.
+- **Entfernen** — delete a page range (e.g. `2-4,7`) at once; undoable.
+- **Alle drehen** — rotate every page in the document 90° in one click (for
+  sideways scans).
+
 | Shortcut | Action |
 | --- | --- |
 | `Strg+O` | PDF öffnen |
