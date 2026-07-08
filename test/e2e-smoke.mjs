@@ -335,6 +335,42 @@ async function testExtractPages(browser) {
   await page.close();
 }
 
+// "Alle drehen": Stirling-PDF's batch "Rotate PDF" equivalent. One click must
+// rotate every page in the document, not just the current one.
+async function testRotateAll(browser) {
+  const sourcePdf = await makeMultiPagePdf(4);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "four.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("rotate-all document open");
+
+  const getRotations = () => page.evaluate(() =>
+    window.__pdfEditor.getDocumentRenderer().pagesInfo.pages.map((p) => p.GetRotate()));
+
+  const before = await getRotations();
+  check("all pages start unrotated", before.every((r) => r === 0), `before=${JSON.stringify(before)}`);
+
+  await page.click('[data-tool="rotate-all"]');
+  await page.waitForTimeout(500);
+
+  const after = await getRotations();
+  check("rotate-all rotates every page, not just the current one",
+    after.length === 4 && after.every((r) => r === 90), `after=${JSON.stringify(after)}`);
+
+  check("no page errors (rotate-all scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -473,6 +509,7 @@ async function main() {
     await testFormRoundtrip(browser);
     await testAppendScrollbarSync(browser);
     await testExtractPages(browser);
+    await testRotateAll(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });

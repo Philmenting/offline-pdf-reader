@@ -995,6 +995,7 @@ const TOOL_HANDLERS = {
   "pdf-extract": () => extractPages(),
   "rotate-left":  () => rotateCurrentPage(-90),
   "rotate-right": () => rotateCurrentPage(90),
+  "rotate-all":   () => rotateAllPages(90),
 
   "zoom-out":    () => stepZoom(-1),
   "zoom-in":     () => stepZoom(1),
@@ -1185,7 +1186,7 @@ function setFormFillMode(on) {
   // tools that edit content are unavailable while filling
   const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
     "shape", "comment", "image", "page-add", "page-remove", "pdf-append",
-    "rotate-left", "rotate-right"];
+    "rotate-left", "rotate-right", "rotate-all"];
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
   setActiveTool(on ? "form-fill" : "select");
@@ -1209,6 +1210,18 @@ function rotateCurrentPage(angle) {
   if (!docOpen || typeof editor.asc_RotatePage !== "function") return;
   editor.asc_RotatePage(angle, [editor.getCurrentPage() | 0]);
   refreshHistoryButtons();
+}
+
+// Batch page rotation (Stirling-PDF's "Rotate PDF" equivalent): rotate every
+// page in the document at once, e.g. for scans that all came in sideways.
+function rotateAllPages(angle) {
+  if (!docOpen || typeof editor.asc_RotatePage !== "function") return;
+  const pageCount = editor.getCountPages() | 0;
+  if (!pageCount) return;
+  const allIndexes = Array.from({ length: pageCount }, (_, i) => i);
+  editor.asc_RotatePage(angle, allIndexes);
+  refreshHistoryButtons();
+  setStatus(`Alle ${pageCount} Seiten um ${angle}° gedreht.`);
 }
 
 // The two renderers use different zoom units: the fallback CViewer speaks
@@ -1254,7 +1267,7 @@ function setToolEnabled(tool, on) {
 const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "comment", "image", "page-add", "page-remove",
-  "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "zoom-out", "zoom-in",
+  "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill",
 ];
 
