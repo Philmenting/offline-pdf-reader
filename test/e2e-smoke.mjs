@@ -277,6 +277,64 @@ async function testAppendScrollbarSync(browser) {
   await page.close();
 }
 
+// "Teilen"/extract: Stirling-PDF and PDFSam's split-by-range equivalent.
+// CPDFDoc.GetPagesBinary(indexes, false) must return a standalone PDF
+// containing exactly the requested pages, in order, without mutating the
+// open document (no undo entry, page count unchanged afterwards).
+async function testExtractPages(browser) {
+  const sourcePdf = await makeMultiPagePdf(10);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", async (d) => { await d.accept("2-4"); });
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "ten.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("extract-pages document open");
+
+  const pageCountBefore = await page.evaluate(() => window.__pdfEditor.getCountPages());
+
+  const downloadPromise = page.waitForEvent("download", { timeout: 15000 });
+  await page.click('[data-tool="pdf-extract"]');
+  const download = await downloadPromise.catch(() => null);
+  check("extracting pages produced a download", !!download);
+
+  if (download) {
+    const path = await download.path();
+    const bytes = await (await import("node:fs/promises")).readFile(path);
+    check("extracted file is a real PDF", bytes.slice(0, 5).toString("latin1") === "%PDF-",
+      bytes.slice(0, 8).toString("latin1"));
+
+    const page2 = await browser.newPage();
+    page2.on("pageerror", (e) => pageErrors.push(e.message));
+    await page2.goto(BASE);
+    await page2.waitForFunction(
+      () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    await (await page2.$("#file-input")).setInputFiles({ name: "extracted.pdf", mimeType: "application/pdf", buffer: bytes });
+    await page2.waitForFunction(
+      () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+      null, { timeout: 90000 });
+    await page2.waitForTimeout(1000);
+    const extractedCount = await page2.evaluate(() => window.__pdfEditor.getCountPages());
+    check("extracted PDF contains exactly the requested page range (2-4 → 3 pages)", extractedCount === 3, `pages=${extractedCount}`);
+    await page2.close();
+  }
+
+  const pageCountAfter = await page.evaluate(() => window.__pdfEditor.getCountPages());
+  check("extracting pages never mutates the open document",
+    pageCountAfter === pageCountBefore, `before=${pageCountBefore} after=${pageCountAfter}`);
+
+  check("no page errors (extract-pages scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -414,6 +472,7 @@ async function main() {
     // checkFieldFont/loadedFonts first-keystroke fix and the save pipeline.
     await testFormRoundtrip(browser);
     await testAppendScrollbarSync(browser);
+    await testExtractPages(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });

@@ -992,6 +992,7 @@ const TOOL_HANDLERS = {
   "page-add":    () => { if (typeof editor.asc_AddPage === "function") editor.asc_AddPage((editor.getCurrentPage() | 0) + 1); },
   "page-remove": () => removeCurrentPage(),
   "pdf-append":  () => appendPdf(),
+  "pdf-extract": () => extractPages(),
   "rotate-left":  () => rotateCurrentPage(-90),
   "rotate-right": () => rotateCurrentPage(90),
 
@@ -1079,6 +1080,75 @@ function appendPdf() {
     reader.readAsArrayBuffer(f);
   };
   input.click();
+}
+
+// Parse a Stirling-PDF/PDFSam-style page range spec ("1-3,5,7-9") into a
+// sorted, de-duplicated array of 0-based page indexes, validated against the
+// document's actual page count.
+function parsePageRangeSpec(spec, pageCount) {
+  const indexes = new Set();
+  for (const part of spec.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const m = part.match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) throw new Error(`Ungültiger Bereich: „${part}"`);
+    const start = parseInt(m[1], 10);
+    const end = m[2] !== undefined ? parseInt(m[2], 10) : start;
+    if (start < 1 || end < start || end > pageCount) {
+      throw new Error(`Seite außerhalb des gültigen Bereichs (1–${pageCount}): „${part}"`);
+    }
+    for (let p = start; p <= end; p++) indexes.add(p - 1);
+  }
+  if (!indexes.size) throw new Error("Kein gültiger Seitenbereich angegeben.");
+  return Array.from(indexes).sort((a, b) => a - b);
+}
+
+// Extract a page range into a standalone PDF file (Stirling-PDF/PDFSam
+// "split"/"extract pages" equivalent). Uses CPDFDoc.GetPagesBinary, the same
+// WASM serializer collectPdfBytes() uses for "Speichern" — but restricted to
+// the chosen page indexes. This reads the document, it never mutates it, so
+// there's nothing to undo afterwards.
+async function extractPages() {
+  if (!docOpen || mode !== "editor") return;
+  const pageCount = editor.getCountPages() | 0;
+  const spec = window.prompt(
+    `Welche Seiten sollen als neue PDF-Datei exportiert werden?\nz.B. "1-3,5" — Dokument hat ${pageCount} Seite(n).`,
+    `1-${pageCount}`
+  );
+  if (!spec) return;
+
+  let indexes;
+  try {
+    indexes = parsePageRangeSpec(spec, pageCount);
+  } catch (e) {
+    setStatus(`Extrahieren fehlgeschlagen: ${e.message}`);
+    return;
+  }
+
+  setStatus("PDF wird erzeugt …");
+  try {
+    const doc = editor.getPDFDoc();
+    try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
+    const result = doc.GetPagesBinary(indexes, false);
+    if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") {
+      setStatus("Extrahieren fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
+      return;
+    }
+    const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+    const suffix = indexes.length === pageCount ? "alle-Seiten" : `Seiten-${spec.replace(/[^0-9,-]/g, "")}`;
+    const outName = lastName.replace(/\.pdf$/i, "") + `-${suffix}.pdf`;
+
+    if (window.desktop && typeof window.desktop.savePdf === "function") {
+      const res = await window.desktop.savePdf(bytes, outName);
+      setStatus(res && res.saved
+        ? `Gespeichert: ${res.path}`
+        : (res && res.error ? `Speichern fehlgeschlagen: ${res.error}` : "Speichern abgebrochen."));
+      return;
+    }
+    downloadBytes(bytes, outName);
+    setStatus(`„${outName}" erzeugt — ${indexes.length} Seite(n).`);
+  } catch (e) {
+    console.error("Seiten extrahieren fehlgeschlagen:", e);
+    setStatus(`Extrahieren fehlgeschlagen: ${e.message}`);
+  }
 }
 
 // Register every form field's font in the document's loadedFonts list right
@@ -1184,7 +1254,7 @@ function setToolEnabled(tool, on) {
 const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "comment", "image", "page-add", "page-remove",
-  "pdf-append", "rotate-left", "rotate-right", "zoom-out", "zoom-in",
+  "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill",
 ];
 
