@@ -150,6 +150,28 @@ async function initEditor() {
     console.log(`[bootstrap] patched g_font_loader.fontFilesPath -> ${FONTS_PATH}`);
   }
 
+  // AscCommon.sendImgUrls ships a build meant for either a collaborative
+  // Document Server (wordcopypaste.js) or the native desktop shell
+  // (Local/common.js, calling window.AscDesktopEditor.LocalFileGetImageUrl).
+  // We're neither: a bare Electron/browser page with no server and no
+  // AscDesktopEditor global. Left as-is, the Local/common.js version would
+  // throw (AscDesktopEditor is undefined) or — depending on load order — a
+  // stub silently never calls its callback. Either way, CPDFDoc.EditPage()
+  // (entered via "Text" mode) calls this for every inline data:-URI picture
+  // on the page and awaits the callback before registering that image with
+  // the loader that actually paints it; since the callback never fires, the
+  // picture never gets registered and permanently renders as an empty
+  // placeholder box with just its shape name (e.g. a logo showing only its
+  // alt-text). Our images are always already-self-contained data: URIs, so
+  // there's nothing to upload/resolve — answer synchronously with the same
+  // URI as both fields, exactly the shape the callers expect back.
+  if (window.AscCommon) {
+    window.AscCommon.sendImgUrls = function (api, images, callback) {
+      callback(images.map((src) => ({ url: src, path: src })));
+    };
+    console.log("[bootstrap] patched AscCommon.sendImgUrls -> synchronous offline passthrough");
+  }
+
   // `AscCommon.loadSdk(name, onSuccess, onError)` is normally provided by the
   // web-apps script loader (it lazy-loads the SDK chunks). We ship the SDK as a
   // single pre-loaded bundle, so the SDK is already present. Force-install a

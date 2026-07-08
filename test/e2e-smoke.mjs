@@ -184,6 +184,68 @@ async function makeMultiPagePdf(count) {
   return Buffer.from(await doc.save());
 }
 
+// Build a one-page PDF with an embedded raster image, to exercise
+// CPDFDoc.EditPage()'s inline data:-URI picture path.
+async function makeImagePdf() {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const pngB64 = "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAF0lEQVR42mNk+M9QzwAEjIiIQQwYo6EBAKr9BAvXBGvzAAAAAElFTkSuQmCC";
+  const png = await doc.embedPng(Buffer.from(pngB64, "base64"));
+  const page = doc.addPage([595, 842]);
+  page.drawText("Seite mit eingebettetem Bild", { x: 50, y: 780, size: 20, font });
+  page.drawImage(png, { x: 450, y: 750, width: 80, height: 80 });
+  return Buffer.from(await doc.save());
+}
+
+// Regression test for a missing-logo bug: CPDFDoc.EditPage() (entered via
+// "Text" mode) routes every inline data:-URI picture on the page through
+// AscCommon.sendImgUrls, expecting a callback with resolved URLs before the
+// picture gets registered with the image loader that actually paints it.
+// The stock implementations target either a collaborative Document Server
+// or the native desktop shell's window.AscDesktopEditor — neither exists in
+// this offline Electron/browser app, so the callback never fired and the
+// picture rendered as a permanent placeholder box showing only its shape
+// name (reported by a real user as their government-document letterhead
+// logo vanishing). main.js patches AscCommon.sendImgUrls to answer
+// synchronously since these images are already self-contained data: URIs.
+async function testEditPageImageRendering(browser) {
+  const imagePdf = await makeImagePdf();
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "image.pdf", mimeType: "application/pdf", buffer: imagePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("edit-page-image document open");
+
+  await page.click('[data-tool="edit-text"]');
+  await page.waitForTimeout(800);
+
+  const info = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const list = doc.Viewer.pagesInfo.pages[0].drawings;
+    const imgDrawing = list.find((d) => d.constructor && d.constructor.name === "CImageShape");
+    if (!imgDrawing) return { found: false };
+    const url = imgDrawing.getBlipFill().RasterImageId;
+    const entry = window.AscCommon.g_image_loader.map_image_index[url];
+    return { found: true, registered: !!entry, status: entry ? entry.Status : null };
+  });
+  check("entering text-edit mode finds the page's picture drawing", info.found, JSON.stringify(info));
+  check("the picture's image gets registered with the loader that paints it (not stuck as a name-only placeholder)",
+    info.registered && info.status === 1, JSON.stringify(info));
+
+  check("no page errors (edit-page-image scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 // Regression test for a scrollbar-freeze bug: the thumbnail sidebar (a
 // CDocument instance, aliased AscCommon.ThumbnailsControl) marks itself
 // dirty via setNeedResize(true) after a page-count change, but only
@@ -546,6 +608,7 @@ async function main() {
     await testExtractPages(browser);
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
+    await testEditPageImageRendering(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });
