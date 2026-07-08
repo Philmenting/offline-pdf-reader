@@ -255,9 +255,12 @@ async function testEditPageImageRendering(browser) {
   await page.close();
 }
 
-// "Wasserzeichen": a text watermark on every page, at a fixed centered
-// position (CPDFDoc.AddAnnotByProps + a page-index loop wrapped in one
-// DoAction, bypassing the interactive/currentPage-only public wrappers).
+// "Wasserzeichen": a Word-style diagonal text watermark, BAKED into the page
+// content with pdf-lib (annotations can't rotate freely, drawings don't
+// survive the split-based save at all). The flow serializes the current
+// document, stamps every page, and reloads the editor with the new bytes —
+// so the test must ride through a page reload, then verify grey watermark
+// pixels actually render in the page centre.
 async function testWatermark(browser) {
   const sourcePdf = await makeMultiPagePdf(3);
 
@@ -276,31 +279,108 @@ async function testWatermark(browser) {
   console.log("watermark document open");
 
   await page.click('[data-tool="watermark"]');
-  await fillPromptDialog(page, "VERTRAULICH");
-  await page.waitForTimeout(500);
+  await page.waitForSelector("#prompt-dialog:not([hidden])", { timeout: 10000 });
+  await page.fill("#prompt-input", "VERTRAULICH");
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "load", timeout: 90000 }), // the tool reloads with the stamped bytes
+    page.click("#prompt-ok"),
+  ]);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1500);
 
-  const counts = await page.evaluate(() => {
-    const doc = window.__pdfEditor.getPDFDoc();
-    const n = doc.GetPagesCount();
-    const out = [];
-    for (let i = 0; i < n; i++) out.push(doc.GetPageInfo(i).annots.length);
-    return out;
+  const state = await page.evaluate(() => {
+    const file = window.__pdfEditor.getDocumentRenderer().file;
+    const pages = window.__pdfEditor.getCountPages();
+    // raw page render (no annotations): baked-in grey pixels must show up
+    const canvas = file.getPage(0, 400, 566);
+    const d = canvas.getContext("2d").getImageData(150, 233, 100, 100).data;
+    let grey = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      if (r > 180 && r < 245 && Math.abs(r - g) < 12 && Math.abs(g - b) < 12) grey++;
+    }
+    return { pages, grey };
   });
-  check("watermark adds one annotation to every page", counts.length === 3 && counts.every((c) => c === 1), JSON.stringify(counts));
-
-  await page.click('[data-tool="undo"]');
-  await page.waitForTimeout(400);
-  const countsAfterUndo = await page.evaluate(() => {
-    const doc = window.__pdfEditor.getPDFDoc();
-    const n = doc.GetPagesCount();
-    const out = [];
-    for (let i = 0; i < n; i++) out.push(doc.GetPageInfo(i).annots.length);
-    return out;
-  });
-  check("watermark insertion on all pages is a single undoable step", countsAfterUndo.every((c) => c === 0), JSON.stringify(countsAfterUndo));
+  check("watermarked document keeps its page count", state.pages === 3, `pages=${state.pages}`);
+  check("diagonal watermark is baked into the page content (grey pixels at page centre)",
+    state.grey > 500, `greyPixels=${state.grey}`);
 
   check("no page errors (watermark scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
+}
+
+// Regression: opening a page in text-edit mode ("Text" → EditPage marks it
+// isRecognized) then saving must NOT blank the page. Upstream's split-save
+// emitted ctPageClear for recognized pages but can't re-serialize their
+// drawings (no WASM support), erasing the page. patchSaveNoPageClear in
+// build-onlyoffice-pdf.mjs keeps the original content instead.
+async function testTextModeSaveKeepsContent(browser) {
+  const sourcePdf = await makeMultiPagePdf(2);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "two.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("text-mode-save document open");
+
+  await page.click('[data-tool="edit-text"]');
+  await page.waitForTimeout(1500);
+  const recognized = await page.evaluate(() =>
+    window.__pdfEditor.getPDFDoc().Viewer.file.pages[0].isRecognized);
+  check("entering text mode recognizes the page", recognized === true, `isRecognized=${recognized}`);
+
+  const savedB64 = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    try { doc.BlurActiveObject(); } catch { /* no active object */ }
+    const n = window.__pdfEditor.getCountPages() | 0;
+    const idx = Array.from({ length: n }, (_, i) => i);
+    const r = doc.GetPagesBinary(idx, false);
+    const arr = new Uint8Array(r);
+    let s = "";
+    for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+    return btoa(s);
+  });
+  const savedBytes = Buffer.from(savedB64, "base64");
+  check("saving after text mode produces a real PDF", savedBytes.slice(0, 5).toString("latin1") === "%PDF-",
+    `${savedBytes.length} bytes`);
+
+  const page2 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page2.on("pageerror", (e) => pageErrors.push(e.message));
+  await page2.goto(BASE);
+  await page2.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page2.$("#file-input")).setInputFiles({ name: "reopened.pdf", mimeType: "application/pdf", buffer: savedBytes });
+  await page2.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page2.waitForTimeout(1200);
+
+  const darkPixels = await page2.evaluate(() => {
+    const file = window.__pdfEditor.getDocumentRenderer().file;
+    const canvas = file.getPage(0, 400, 566);
+    const d = canvas.getContext("2d").getImageData(0, 0, 400, 566).data;
+    let dark = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] < 100 && d[i + 1] < 100 && d[i + 2] < 100) dark++;
+    }
+    return dark;
+  });
+  check("the text-edited page is NOT blanked by saving (page text still renders)",
+    darkPixels > 200, `darkPixels=${darkPixels}`);
+
+  check("no page errors (text-mode-save scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+  await page2.close();
 }
 
 // "Seitenzahlen": same page-loop/annotation mechanism as the watermark, with
@@ -813,6 +893,7 @@ async function main() {
     await testRemovePagesByRange(browser);
     await testEditPageImageRendering(browser);
     await testWatermark(browser);
+    await testTextModeSaveKeepsContent(browser);
     await testPageNumbers(browser);
     await testExtractEmbeddedImages(browser);
     await testExtractEmbeddedImagesNone(browser);

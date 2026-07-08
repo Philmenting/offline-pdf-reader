@@ -23,6 +23,11 @@ the SDK bundle:
   XRegExp  — https://xregexp.com — Copyright Steven Levithan,
              licensed under the MIT License.
 
+The watermark feature additionally bundles (public/js/vendor/):
+
+  pdf-lib  — https://pdf-lib.js.org — Copyright Andrew Dillon,
+             licensed under the MIT License.
+
 Because this project links and distributes AGPL-3.0 code, the project as a
 whole is distributed under the GNU Affero General Public License v3.0. See the
 LICENSE file for the full license text.

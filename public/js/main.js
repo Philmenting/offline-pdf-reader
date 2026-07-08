@@ -1355,7 +1355,10 @@ function addPageFreeText(doc, nPage, pageW, pageH, rotAngle, text, opts) {
     modDate: now, creationDate: now, contents: text, hidden: false,
   });
   oAnnot.SetRotate(rotAngle);
-  oAnnot.SetFillColor([1, 1, 1]);
+  // undefined → CreateNoFillUniFill (fully transparent, no box behind the
+  // text). NOT [] — an empty array falls through GetRGBColor's default and
+  // yields solid white.
+  oAnnot.SetFillColor(undefined);
   oAnnot.SetBorderWidth(0);
   oAnnot.SetOpacity(opts.opacity != null ? opts.opacity : 1);
   oAnnot.SetAlign(window.AscPDF.ALIGN_TYPE.center);
@@ -1377,21 +1380,65 @@ function downloadDataUrl(dataUrl, name) {
   a.remove();
 }
 
-// Stirling-PDF-style text watermark on every page, at a fixed centered
-// position (rotation-invariant — see addPageFreeText).
+// Lazy-load the vendored pdf-lib bundle (MIT; public/js/vendor/pdf-lib.min.js).
+let pdfLibPromise = null;
+function loadPdfLib() {
+  if (!pdfLibPromise) {
+    pdfLibPromise = window.PDFLib ? Promise.resolve() : loadScript("/js/vendor/pdf-lib.min.js");
+  }
+  return pdfLibPromise;
+}
+
+// Word-style text watermark: diagonal across the page centre, light grey,
+// translucent, on every page — BAKED into the page content with pdf-lib.
+//
+// Why not an engine object? A FreeText annotation can't rotate freely (its
+// SetRotate only implements 0/90/180/270 as text-direction flips), and
+// drawings (CPdfShape, which CAN rotate arbitrarily) don't survive saving at
+// all: the engine's split-based save stream (SaveForSplit → WASM SplitPages)
+// has no drawing serialization — the WASM writer traps on shape commands.
+// Baking the watermark into the PDF bytes (what Stirling-PDF does too) works
+// in every viewer and can't get lost. Trade-off: it's applied permanently
+// (the document reloads; no Strg+Z), which the prompt text makes clear.
 async function addWatermark() {
   if (!docOpen || mode !== "editor") return;
-  const text = await showPromptDialog("Wasserzeichen-Text (wird auf allen Seiten eingefügt):");
+  const text = await showPromptDialog(
+    "Wasserzeichen-Text (wird dauerhaft auf allen Seiten eingebettet):");
   if (!text) return;
+  setStatus("Wasserzeichen wird eingefügt …");
   try {
-    forEachPageInTransaction((doc, nPage, pageW, pageH, rotAngle) => {
-      addPageFreeText(doc, nPage, pageW, pageH, rotAngle, text, {
-        width: Math.min(pageW * 0.7, 400), height: 60, anchor: "center",
-        fontSize: 36, color: [0.75, 0.75, 0.75], opacity: 0.4,
+    await loadPdfLib();
+    const bytes = collectPdfBytes(); // carries all edits made so far
+    if (!bytes) {
+      setStatus("Wasserzeichen fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
+      return;
+    }
+    const { PDFDocument, StandardFonts, rgb, degrees } = window.PDFLib;
+    const pdf = await PDFDocument.load(bytes);
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const angleDeg = 45; // ascending bottom-left → top-right, like Word
+    const rad = angleDeg * Math.PI / 180;
+    for (const page of pdf.getPages()) {
+      const { width, height } = page.getSize();
+      const diag = Math.sqrt(width * width + height * height);
+      // font size such that the text spans ~60% of the page diagonal
+      const size = Math.max(20, Math.min(140, (diag * 0.6) / font.widthOfTextAtSize(text, 1)));
+      const len = font.widthOfTextAtSize(text, size);
+      const capH = font.heightAtSize(size) * 0.7;
+      // drawText rotates counterclockwise around the baseline start — place
+      // that origin so the rotated text's centre lands on the page centre
+      const x = width / 2 - (len / 2) * Math.cos(rad) + (capH / 2) * Math.sin(rad);
+      const y = height / 2 - (len / 2) * Math.sin(rad) - (capH / 2) * Math.cos(rad);
+      page.drawText(text, {
+        x, y, size, font,
+        color: rgb(0.75, 0.75, 0.75), opacity: 0.4, rotate: degrees(angleDeg),
       });
-    });
-    refreshHistoryButtons();
-    setStatus(`Wasserzeichen „${text}" auf ${editor.getCountPages()} Seite(n) eingefügt.`);
+    }
+    const outBytes = await pdf.save();
+    // the new bytes contain the full current state — skip the reopen confirm
+    markDirty(false);
+    setStatus(`Wasserzeichen „${text}" dauerhaft auf ${pdf.getPageCount()} Seite(n) eingebettet.`);
+    openArrayBuffer(outBytes.buffer, lastName);
   } catch (e) {
     console.error("Wasserzeichen fehlgeschlagen:", e);
     setStatus(`Wasserzeichen fehlgeschlagen: ${e.message}`);

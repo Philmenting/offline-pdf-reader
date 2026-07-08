@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Vendored ONLYOFFICE engine + generated fonts (built via scripts)
-vendor/
+# Vendored ONLYOFFICE engine + generated fonts (built via scripts; root only —
+# public/js/vendor/ holds small committed runtime libs like pdf-lib)
+/vendor/
 
 # Build workspace (downloaded sdkjs source + tarball cache)
 .build/

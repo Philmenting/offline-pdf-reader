@@ -105,6 +105,42 @@ async function patchTextShaper() {
   console.log("→ patched sdk-all.js: FlushWord null-font guard");
 }
 
+/**
+ * Stop the save pipeline from BLANKING pages that were opened in text-edit
+ * mode ("Text" tool → CPDFDoc.EditPage() marks the page isRecognized).
+ *
+ * Both change-stream writers (CHtmlPage.Save and CHtmlPage.SaveForSplit)
+ * emit a ctPageClear command for recognized pages, expecting the page's
+ * drawings to be re-serialized afterwards. But SaveForSplit — the ONLY
+ * writer this app can use, via nativeFile.SplitPages (there is no other
+ * PDF-producing WASM entry point) — never writes drawings, and the WASM
+ * split writer has no code path for shape commands anyway (feeding it
+ * Save()'s drawing frames traps with "null function or function signature
+ * mismatch"). Net effect upstream: open a PDF, click "Text", save → the
+ * page is cleared and nothing is written back. Silent, total data loss.
+ *
+ * Never clearing keeps the ORIGINAL page content in the saved file. The
+ * trade-off: text-mode edits themselves still can't be persisted by this
+ * standalone build (an engine/WASM limitation), but saving no longer
+ * destroys pages.
+ */
+async function patchSaveNoPageClear() {
+  const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
+  if (!(await exists(file))) return;
+  let src = await readFile(file, "utf8");
+
+  const needle = "let bClearPage = !!oFile.pages[curIndex].isRecognized;";
+  const count = src.split(needle).length - 1;
+  if (count !== 2) {
+    console.warn(`  ! patchSaveNoPageClear: expected 2 occurrences, found ${count} — upstream changed, patch skipped`);
+    return;
+  }
+  src = src.replaceAll(needle,
+    "let bClearPage = false; // patched: split-save can't rewrite drawings, so never clear (see build script)");
+  await writeFile(file, src);
+  console.log("→ patched sdk-all.js: save no longer clears text-edited pages");
+}
+
 async function patchDrawingFile() {
   const file = join(VENDOR, "sdkjs", "pdf", "src", "engine", "drawingfile.js");
   if (!(await exists(file))) return;
@@ -256,6 +292,7 @@ async function main() {
   console.log("→ patching engine for standalone-viewer compatibility ...");
   await patchDrawingFile();
   await patchTextShaper();
+  await patchSaveNoPageClear();
 
   await writeFile(
     join(VENDOR, "PROVENANCE.json"),
