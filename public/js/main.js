@@ -1020,6 +1020,11 @@ const TOOL_HANDLERS = {
   "rotate-right": () => rotateCurrentPage(90),
   "rotate-all":   () => rotateAllPages(90),
 
+  "watermark":     () => addWatermark(),
+  "page-numbers":  () => addPageNumbers(),
+  "extract-images": () => extractEmbeddedImages(),
+  "pages-to-images": () => exportPagesAsImages(),
+
   "zoom-out":    () => stepZoom(-1),
   "zoom-in":     () => stepZoom(1),
   "fit-width":   () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Width); },
@@ -1209,7 +1214,7 @@ function setFormFillMode(on) {
   // tools that edit content are unavailable while filling
   const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
     "shape", "comment", "image", "page-add", "page-remove", "page-remove-range", "pdf-append",
-    "rotate-left", "rotate-right", "rotate-all"];
+    "rotate-left", "rotate-right", "rotate-all", "watermark", "page-numbers"];
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
   setActiveTool(on ? "form-fill" : "select");
@@ -1275,6 +1280,211 @@ function rotateAllPages(angle) {
   setStatus(`Alle ${pageCount} Seiten um ${angle}° gedreht.`);
 }
 
+// Runs fn(doc, nPage, pageW, pageH, rotAngle) once per page inside a single
+// DoAction transaction, so the whole batch is one undo step.
+function forEachPageInTransaction(fn) {
+  const doc = editor.getPDFDoc();
+  const pageCount = doc.GetPagesCount();
+  doc.DoAction(function () {
+    for (let nPage = 0; nPage < pageCount; nPage++) {
+      const rotAngle = doc.Viewer.getPageRotate(nPage);
+      fn(doc, nPage, doc.GetPageWidth(nPage), doc.GetPageHeight(nPage), rotAngle);
+    }
+  }, window.AscDFH.historydescription_Pdf_AddAnnot, doc);
+}
+
+// Adds a FreeText annotation on page nPage at a fixed position (not tied to
+// the current viewport/mouse, unlike the interactive AddFreeTextAnnot the
+// "Textfeld" tool uses). anchor "center" is rotation-invariant (a page's
+// center point doesn't move when the page rotates around it); "bottom-center"
+// anchors in unrotated page space, which is only exactly correct for
+// rotAngle === 0 — an accepted simplification for page numbers on the common
+// case, not a crash risk on rotated pages (worst case: wrong edge visually).
+function addPageFreeText(doc, nPage, pageW, pageH, rotAngle, text, opts) {
+  const extX = opts.width, extY = opts.height;
+  const cx = pageW / 2;
+  // rect's Y axis grows downward (screen-space), not PDF's bottom-up native
+  // space, so "bottom" of the page is the LARGE Y end, near pageH.
+  const cy = opts.anchor === "bottom-center" ? pageH - (opts.margin || 24) : pageH / 2;
+  const X1 = cx - extX / 2, Y1 = cy - extY / 2, X2 = X1 + extX, Y2 = Y1 + extY;
+  const now = Date.now();
+  const oAnnot = doc.AddAnnotByProps({
+    rect: [X1, Y1, X2, Y2],
+    page: nPage,
+    name: window.AscCommon.CreateGUID(),
+    type: annotType("FreeText"),
+    author: (editor.User && editor.User.asc_getUserName()) || "PDF Editor",
+    modDate: now, creationDate: now, contents: text, hidden: false,
+  });
+  oAnnot.SetRotate(rotAngle);
+  oAnnot.SetFillColor([1, 1, 1]);
+  oAnnot.SetBorderWidth(0);
+  oAnnot.SetOpacity(opts.opacity != null ? opts.opacity : 1);
+  oAnnot.SetAlign(window.AscPDF.ALIGN_TYPE.center);
+  oAnnot.SetRichContents([{
+    text, size: opts.fontSize || 24, color: opts.color || [0, 0, 0],
+    bold: false, italic: false, underlined: false, strikethrough: false,
+    alignment: window.AscPDF.ALIGN_TYPE.center,
+  }]);
+  return oAnnot;
+}
+
+// data: URL variant of downloadBytes(), for images already base64-encoded.
+function downloadDataUrl(dataUrl, name) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// Stirling-PDF-style text watermark on every page, at a fixed centered
+// position (rotation-invariant — see addPageFreeText).
+function addWatermark() {
+  if (!docOpen || mode !== "editor") return;
+  const text = window.prompt("Wasserzeichen-Text (wird auf allen Seiten eingefügt):");
+  if (!text) return;
+  try {
+    forEachPageInTransaction((doc, nPage, pageW, pageH, rotAngle) => {
+      addPageFreeText(doc, nPage, pageW, pageH, rotAngle, text, {
+        width: Math.min(pageW * 0.7, 400), height: 60, anchor: "center",
+        fontSize: 36, color: [0.75, 0.75, 0.75], opacity: 0.4,
+      });
+    });
+    refreshHistoryButtons();
+    setStatus(`Wasserzeichen „${text}" auf ${editor.getCountPages()} Seite(n) eingefügt.`);
+  } catch (e) {
+    console.error("Wasserzeichen fehlgeschlagen:", e);
+    setStatus(`Wasserzeichen fehlgeschlagen: ${e.message}`);
+  }
+}
+
+// Automatic page numbers ("N / total"), bottom-center on every page.
+function addPageNumbers() {
+  if (!docOpen || mode !== "editor") return;
+  try {
+    const pageCount = editor.getCountPages() | 0;
+    forEachPageInTransaction((doc, nPage, pageW, pageH, rotAngle) => {
+      addPageFreeText(doc, nPage, pageW, pageH, rotAngle, `${nPage + 1} / ${pageCount}`, {
+        width: 90, height: 24, anchor: "bottom-center", fontSize: 10, color: [0, 0, 0], opacity: 1,
+      });
+    });
+    refreshHistoryButtons();
+    setStatus(`Seitenzahlen auf ${pageCount} Seite(n) eingefügt.`);
+  } catch (e) {
+    console.error("Seitenzahlen fehlgeschlagen:", e);
+    setStatus(`Seitenzahlen fehlgeschlagen: ${e.message}`);
+  }
+}
+
+// Stirling-PDF/OmniTools "extract images": pull every embedded picture out of
+// the document as its own file, de-duplicating identical images (e.g. a logo
+// repeated on every page).
+//
+// A page's pictures only show up in GetPageInfo(nPage).drawings once that
+// page has been "recognized" — the same lazy conversion the "Text" tool
+// triggers via CPDFDoc.EditPage() (scans the raw page content into editable
+// drawing objects). A freshly opened PDF has no page recognized yet, so this
+// force-recognizes every not-yet-recognized page first (same effect as
+// clicking "Text" once per page) — undoable like any other edit, same as
+// clicking through pages manually would be.
+function extractEmbeddedImages() {
+  if (!docOpen || mode !== "editor") return;
+  try {
+    const doc = editor.getPDFDoc();
+    const pageCount = doc.GetPagesCount();
+    const allIndexes = Array.from({ length: pageCount }, (_, i) => i);
+
+    // 4th arg (Additional) is required here: Document_Is_SelectionLocked's
+    // historydescription_Pdf_EditPage case reads it straight as the page
+    // index list to lock-check (CheckPages(fn, aSelectedPagesIdx)) — omitting
+    // it crashes reading .length of undefined before the action even runs.
+    doc.DoAction(function () {
+      for (let nPage = 0; nPage < pageCount; nPage++) {
+        if (!doc.Viewer.file.pages[nPage].isRecognized) {
+          doc.EditPage(nPage);
+        }
+      }
+    }, window.AscDFH.historydescription_Pdf_EditPage, doc, allIndexes);
+    refreshHistoryButtons();
+
+    const seen = new Set();
+    const images = [];
+    for (let nPage = 0; nPage < pageCount; nPage++) {
+      const pageInfo = doc.GetPageInfo(nPage);
+      if (!pageInfo || !Array.isArray(pageInfo.drawings)) continue;
+      for (const drawing of pageInfo.drawings) {
+        if (!drawing.IsImage || !drawing.IsImage()) continue;
+        const blipFill = drawing.getBlipFill && drawing.getBlipFill();
+        const dataUrl = blipFill && blipFill.getBase64RasterImageId(false, true);
+        if (!dataUrl || seen.has(dataUrl)) continue;
+        seen.add(dataUrl);
+        images.push(dataUrl);
+      }
+    }
+    if (!images.length) {
+      setStatus("Keine eingebetteten Bilder in diesem Dokument gefunden.");
+      return;
+    }
+    const base = lastName.replace(/\.pdf$/i, "");
+    images.forEach((dataUrl, i) => {
+      const ext = (dataUrl.match(/^data:image\/(\w+);/) || [, "png"])[1];
+      downloadDataUrl(dataUrl, `${base}-Bild-${i + 1}.${ext}`);
+    });
+    setStatus(`${images.length} Bild(er) extrahiert.`);
+  } catch (e) {
+    console.error("Bilder extrahieren fehlgeschlagen:", e);
+    setStatus(`Bilder extrahieren fehlgeschlagen: ${e.message}`);
+  }
+}
+
+// Stirling-PDF "PDF to Image": render a chosen page range to standalone PNG
+// files at a chosen DPI, via the same offscreen renderer the app already uses
+// for print (GetPrintPage renders any page without navigating to it first).
+async function exportPagesAsImages() {
+  if (!docOpen || mode !== "editor") return;
+  const pageCount = editor.getCountPages() | 0;
+  const spec = window.prompt(
+    `Welche Seiten sollen als Bilder exportiert werden?\nz.B. "1-3,5" — Dokument hat ${pageCount} Seite(n).`,
+    `1-${pageCount}`
+  );
+  if (!spec) return;
+
+  let indexes;
+  try {
+    indexes = parsePageRangeSpec(spec, pageCount);
+  } catch (e) {
+    setStatus(`Bildexport fehlgeschlagen: ${e.message}`);
+    return;
+  }
+
+  const dpiStr = window.prompt("Auflösung in DPI (z.B. 150):", "150");
+  const dpi = Math.max(50, Math.min(600, parseInt(dpiStr, 10) || 150));
+
+  try {
+    const doc = editor.getPDFDoc();
+    const r = renderer();
+    if (!r || typeof r.GetPrintPage !== "function") {
+      setStatus("Bildexport nicht verfügbar (Renderer fehlt).");
+      return;
+    }
+    const base = lastName.replace(/\.pdf$/i, "");
+    setStatus(`Erzeuge ${indexes.length} Bild(er) …`);
+    for (const nPage of indexes) {
+      const widthPx = Math.round(doc.GetPageWidthMM(nPage) / 25.4 * dpi);
+      const heightPx = Math.round(doc.GetPageHeightMM(nPage) / 25.4 * dpi);
+      const canvas = r.GetPrintPage(nPage, widthPx, heightPx, window.AscPDF.PRINT_CONTENT_TYPES.docAndMarkups);
+      downloadDataUrl(canvas.toDataURL("image/png"), `${base}-Seite-${nPage + 1}.png`);
+      await new Promise((res) => setTimeout(res, 60));
+    }
+    setStatus(`${indexes.length} Seite(n) als PNG exportiert.`);
+  } catch (e) {
+    console.error("Bildexport fehlgeschlagen:", e);
+    setStatus(`Bildexport fehlgeschlagen: ${e.message}`);
+  }
+}
+
 // The two renderers use different zoom units: the fallback CViewer speaks
 // PERCENT (getZoom()/setZoom(110)), the editor's CHtmlPage a FACTOR
 // (.zoom = 1.1, setZoom(1.1)). Feeding percent into CHtmlPage.setZoom zoomed
@@ -1319,7 +1529,7 @@ const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "comment", "image", "page-add", "page-remove", "page-remove-range",
   "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
-  "fit-width", "fit-page", "form-fill",
+  "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images", "pages-to-images",
 ];
 
 function enableEditing(on) {

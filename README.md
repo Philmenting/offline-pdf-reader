@@ -102,6 +102,15 @@ Page tools (Stirling-PDF/PDFSam-style, fully offline):
 - **Alle drehen** — rotate every page in the document 90° in one click (for
   sideways scans).
 
+Document tools (Stirling-PDF/OmniTools-style, fully offline):
+- **Wasserzeichen** — insert a text watermark centered on every page.
+- **Seitenzahlen** — insert automatic "N / total" page numbers, bottom-center
+  on every page.
+- **Bilder extrahieren** — pull every embedded picture out of the PDF as its
+  own file, de-duplicating a logo repeated across pages.
+- **Als Bilder** — export a page range as standalone PNG images at a chosen
+  DPI, without navigating to each page first.
+
 | Shortcut | Action |
 | --- | --- |
 | `Strg+O` | PDF öffnen |

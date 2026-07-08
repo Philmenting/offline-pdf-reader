@@ -246,6 +246,202 @@ async function testEditPageImageRendering(browser) {
   await page.close();
 }
 
+// "Wasserzeichen": a text watermark on every page, at a fixed centered
+// position (CPDFDoc.AddAnnotByProps + a page-index loop wrapped in one
+// DoAction, bypassing the interactive/currentPage-only public wrappers).
+async function testWatermark(browser) {
+  const sourcePdf = await makeMultiPagePdf(3);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", async (d) => { await d.accept("VERTRAULICH"); });
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("watermark document open");
+
+  await page.click('[data-tool="watermark"]');
+  await page.waitForTimeout(500);
+
+  const counts = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const n = doc.GetPagesCount();
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(doc.GetPageInfo(i).annots.length);
+    return out;
+  });
+  check("watermark adds one annotation to every page", counts.length === 3 && counts.every((c) => c === 1), JSON.stringify(counts));
+
+  await page.click('[data-tool="undo"]');
+  await page.waitForTimeout(400);
+  const countsAfterUndo = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const n = doc.GetPagesCount();
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(doc.GetPageInfo(i).annots.length);
+    return out;
+  });
+  check("watermark insertion on all pages is a single undoable step", countsAfterUndo.every((c) => c === 0), JSON.stringify(countsAfterUndo));
+
+  check("no page errors (watermark scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
+// "Seitenzahlen": same page-loop/annotation mechanism as the watermark, with
+// per-page computed bottom-center rect and "N / total" content.
+async function testPageNumbers(browser) {
+  const sourcePdf = await makeMultiPagePdf(3);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("page-numbers document open");
+
+  await page.click('[data-tool="page-numbers"]');
+  await page.waitForTimeout(500);
+
+  const contents = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const n = doc.GetPagesCount();
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const annots = doc.GetPageInfo(i).annots;
+      out.push(annots.length ? annots[annots.length - 1].GetContents() : null);
+    }
+    return out;
+  });
+  check("page numbers show the correct N / total on every page",
+    JSON.stringify(contents) === JSON.stringify(["1 / 3", "2 / 3", "3 / 3"]), JSON.stringify(contents));
+
+  check("no page errors (page-numbers scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
+// "Bilder extrahieren": pull every embedded picture out as its own download,
+// de-duplicating a logo repeated across pages, and force-recognizing
+// not-yet-"Text"-edited pages first (their pictures don't show up in
+// GetPageInfo().drawings until CPDFDoc.EditPage() has run for that page).
+async function testExtractEmbeddedImages(browser) {
+  const { PDFDocument } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const pngB64 = "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAF0lEQVR42mNk+M9QzwAEjIiIQQwYo6EBAKr9BAvXBGvzAAAAAElFTkSuQmCC";
+  const png = await doc.embedPng(Buffer.from(pngB64, "base64"));
+  const p1 = doc.addPage([300, 300]); p1.drawImage(png, { x: 50, y: 50, width: 100, height: 100 });
+  const p2 = doc.addPage([300, 300]); p2.drawImage(png, { x: 50, y: 50, width: 100, height: 100 }); // same image again
+  doc.addPage([300, 300]); // page with no image at all
+  const bytes = Buffer.from(await doc.save());
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "images.pdf", mimeType: "application/pdf", buffer: bytes });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("extract-embedded-images document open");
+
+  const downloads = [];
+  page.on("download", (d) => downloads.push(d));
+  await page.click('[data-tool="extract-images"]');
+  await page.waitForTimeout(1500);
+  check("extracting images de-duplicates the repeated logo (exactly 1 download)", downloads.length === 1, `count=${downloads.length}`);
+  if (downloads.length) {
+    const path = await downloads[0].path();
+    const fileBytes = await (await import("node:fs/promises")).readFile(path);
+    check("extracted image is a real PNG", fileBytes.slice(1, 4).toString("latin1") === "PNG", fileBytes.slice(0, 8).toString("hex"));
+  }
+
+  check("no page errors (extract-embedded-images scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
+async function testExtractEmbeddedImagesNone(browser) {
+  const sourcePdf = await makeMultiPagePdf(2);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "noimg.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+
+  await page.click('[data-tool="extract-images"]');
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Keine eingebetteten Bilder"),
+    null, { timeout: 5000 }).then(
+    () => check("no-images case shows a clear status message", true),
+    () => check("no-images case shows a clear status message", false));
+
+  check("no page errors (extract-embedded-images-none scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
+// "Als Bilder": export a page range to standalone PNGs at a chosen DPI via
+// the offscreen print-page renderer (no navigation to the page required).
+async function testExportPagesAsImages(browser) {
+  const sourcePdf = await makeMultiPagePdf(3);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", async (d) => {
+    if (d.message().includes("Seitenbereich") || d.message().includes("Seiten sollen als Bilder")) await d.accept("1-2");
+    else await d.accept("100"); // DPI prompt, kept low for test speed
+  });
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("export-pages-as-images document open");
+
+  const downloads = [];
+  page.on("download", (d) => downloads.push(d));
+  await page.click('[data-tool="pages-to-images"]');
+  await page.waitForTimeout(3000);
+
+  check("exporting a 2-page range produces 2 image downloads", downloads.length === 2, `count=${downloads.length}`);
+  if (downloads.length) {
+    const path = await downloads[0].path();
+    const fileBytes = await (await import("node:fs/promises")).readFile(path);
+    check("exported file is a real PNG", fileBytes.slice(1, 4).toString("latin1") === "PNG", fileBytes.slice(0, 8).toString("hex"));
+  }
+
+  check("no page errors (export-pages-as-images scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 // Regression test for a scrollbar-freeze bug: the thumbnail sidebar (a
 // CDocument instance, aliased AscCommon.ThumbnailsControl) marks itself
 // dirty via setNeedResize(true) after a page-count change, but only
@@ -609,6 +805,11 @@ async function main() {
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
     await testEditPageImageRendering(browser);
+    await testWatermark(browser);
+    await testPageNumbers(browser);
+    await testExtractEmbeddedImages(browser);
+    await testExtractEmbeddedImagesNone(browser);
+    await testExportPagesAsImages(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });
