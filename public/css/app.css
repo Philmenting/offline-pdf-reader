@@ -378,3 +378,34 @@ body {
   cursor: pointer;
 }
 .search-btn:hover { background: #eef0f6; }
+
+/* ── Reusable prompt dialog (replaces window.prompt()) ───────────────────── */
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* above .search-bar's z-index: 50 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 30, 60, 0.28);
+}
+.prompt-backdrop[hidden] { display: none; }
+
+.prompt-panel {
+  width: min(420px, calc(100vw - 48px));
+  background: #fff;
+  border: 1px solid #c9cdd6;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(20, 30, 60, 0.18);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.prompt-message { margin: 0; font-size: 13px; color: var(--text); white-space: pre-line; }
+.prompt-input {
+  width: 100%; height: 28px; border: 1px solid #c9cdd6; border-radius: 6px;
+  padding: 0 8px; font-size: 13px; outline: none; box-sizing: border-box;
+}
+.prompt-input:focus { border-color: #86a7d6; box-shadow: 0 0 0 2px rgba(134, 167, 214, 0.25); }
+.prompt-actions { display: flex; justify-content: flex-end; gap: 8px; }

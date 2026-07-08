@@ -42,6 +42,15 @@ function check(name, ok, detail) {
   if (!ok) failures++;
 }
 
+// main.js's showPromptDialog() replaces window.prompt() (unsupported in
+// Electron's BrowserWindow) with an in-page modal — drive it like a normal
+// form control instead of Playwright's native page.on("dialog").
+async function fillPromptDialog(page, value) {
+  await page.waitForSelector("#prompt-dialog:not([hidden])", { timeout: 10000 });
+  await page.fill("#prompt-input", value);
+  await page.click("#prompt-ok");
+}
+
 // Click coordinates below are calibrated for a 52px-high header at 100% zoom
 // in a 1280px viewport. The toolbar may wrap to more rows (taller header), so
 // shift all page-area Y coordinates by the actual header growth.
@@ -255,7 +264,6 @@ async function testWatermark(browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  page.on("dialog", async (d) => { await d.accept("VERTRAULICH"); });
 
   await page.goto(BASE);
   await page.waitForFunction(
@@ -268,6 +276,7 @@ async function testWatermark(browser) {
   console.log("watermark document open");
 
   await page.click('[data-tool="watermark"]');
+  await fillPromptDialog(page, "VERTRAULICH");
   await page.waitForTimeout(500);
 
   const counts = await page.evaluate(() => {
@@ -411,10 +420,6 @@ async function testExportPagesAsImages(browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  page.on("dialog", async (d) => {
-    if (d.message().includes("Seitenbereich") || d.message().includes("Seiten sollen als Bilder")) await d.accept("1-2");
-    else await d.accept("100"); // DPI prompt, kept low for test speed
-  });
 
   await page.goto(BASE);
   await page.waitForFunction(
@@ -429,6 +434,8 @@ async function testExportPagesAsImages(browser) {
   const downloads = [];
   page.on("download", (d) => downloads.push(d));
   await page.click('[data-tool="pages-to-images"]');
+  await fillPromptDialog(page, "1-2");   // page-range modal
+  await fillPromptDialog(page, "100");   // DPI modal, kept low for test speed
   await page.waitForTimeout(3000);
 
   check("exporting a 2-page range produces 2 image downloads", downloads.length === 2, `count=${downloads.length}`);
@@ -545,7 +552,6 @@ async function testExtractPages(browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  page.on("dialog", async (d) => { await d.accept("2-4"); });
 
   await page.goto(BASE);
   await page.waitForFunction(
@@ -561,6 +567,7 @@ async function testExtractPages(browser) {
 
   const downloadPromise = page.waitForEvent("download", { timeout: 15000 });
   await page.click('[data-tool="pdf-extract"]');
+  await fillPromptDialog(page, "2-4");
   const download = await downloadPromise.catch(() => null);
   check("extracting pages produced a download", !!download);
 
@@ -638,7 +645,6 @@ async function testRemovePagesByRange(browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  page.on("dialog", async (d) => { await d.accept("2-3"); });
 
   await page.goto(BASE);
   await page.waitForFunction(
@@ -651,6 +657,7 @@ async function testRemovePagesByRange(browser) {
   console.log("remove-pages-range document open");
 
   await page.click('[data-tool="page-remove-range"]');
+  await fillPromptDialog(page, "2-3");
   await page.waitForTimeout(500);
   const afterRemove = await page.evaluate(() => window.__pdfEditor.getCountPages());
   check("removing range 2-3 leaves the right page count (6 - 2 = 4)", afterRemove === 4, `pages=${afterRemove}`);

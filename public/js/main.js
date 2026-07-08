@@ -531,6 +531,44 @@ function wireSearchBar() {
   el("search-close").addEventListener("click", closeSearchBar);
 }
 
+// ── Reusable prompt dialog (replaces window.prompt(), unsupported in
+// Electron's BrowserWindow — it throws "Error: prompt() is not supported") ──
+let promptResolve = null;
+
+function showPromptDialog(message, defaultValue) {
+  return new Promise((resolve) => {
+    promptResolve = resolve;
+    el("prompt-message").textContent = message;
+    const input = el("prompt-input");
+    input.value = defaultValue != null ? defaultValue : "";
+    el("prompt-dialog").hidden = false;
+    input.focus();
+    input.select();
+  });
+}
+
+function closePromptDialog(result) {
+  el("prompt-dialog").hidden = true;
+  refocusEditor();
+  const resolve = promptResolve;
+  promptResolve = null;
+  if (resolve) resolve(result);
+}
+
+function wirePromptDialog() {
+  const input = el("prompt-input");
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); closePromptDialog(input.value); }
+    else if (e.key === "Escape") { e.preventDefault(); closePromptDialog(null); }
+    e.stopPropagation(); // keep typed characters away from the editor
+  });
+  el("prompt-ok").addEventListener("click", () => closePromptDialog(input.value));
+  el("prompt-cancel").addEventListener("click", () => closePromptDialog(null));
+  el("prompt-dialog").addEventListener("click", (e) => {
+    if (e.target === el("prompt-dialog")) closePromptDialog(null); // backdrop click cancels
+  });
+}
+
 function registerEditorCallbacks() {
   const on = (name, cb) => {
     try { editor.asc_registerCallback(name, cb); } catch { /* optional event */ }
@@ -1031,9 +1069,9 @@ const TOOL_HANDLERS = {
   "fit-page":    () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Page); },
 };
 
-function addComment() {
+async function addComment() {
   if (!docOpen) return;
-  const text = window.prompt("Kommentartext:");
+  const text = await showPromptDialog("Kommentartext:");
   if (!text) return;
   try {
     const data = new window.Asc.asc_CCommentData();
@@ -1138,7 +1176,7 @@ function parsePageRangeSpec(spec, pageCount) {
 async function extractPages() {
   if (!docOpen || mode !== "editor") return;
   const pageCount = editor.getCountPages() | 0;
-  const spec = window.prompt(
+  const spec = await showPromptDialog(
     `Welche Seiten sollen als neue PDF-Datei exportiert werden?\nz.B. "1-3,5" — Dokument hat ${pageCount} Seite(n).`,
     `1-${pageCount}`
   );
@@ -1237,10 +1275,10 @@ function removeCurrentPage() {
 // Stirling-PDF/PDFSam-style "remove pages by range" ("2-4,7"), reusing the
 // same range spec parser as "Teilen"/extract. asc_RemovePage already accepts
 // a list of page indexes and is undoable (Strg+Z restores them all).
-function removePagesByRange() {
+async function removePagesByRange() {
   if (!docOpen || typeof editor.asc_RemovePage !== "function") return;
   const pageCount = editor.getCountPages() | 0;
-  const spec = window.prompt(
+  const spec = await showPromptDialog(
     `Welche Seiten sollen gelöscht werden?\nz.B. "2-4,7" — Dokument hat ${pageCount} Seite(n).`
   );
   if (!spec) return;
@@ -1341,9 +1379,9 @@ function downloadDataUrl(dataUrl, name) {
 
 // Stirling-PDF-style text watermark on every page, at a fixed centered
 // position (rotation-invariant — see addPageFreeText).
-function addWatermark() {
+async function addWatermark() {
   if (!docOpen || mode !== "editor") return;
-  const text = window.prompt("Wasserzeichen-Text (wird auf allen Seiten eingefügt):");
+  const text = await showPromptDialog("Wasserzeichen-Text (wird auf allen Seiten eingefügt):");
   if (!text) return;
   try {
     forEachPageInTransaction((doc, nPage, pageW, pageH, rotAngle) => {
@@ -1445,7 +1483,7 @@ function extractEmbeddedImages() {
 async function exportPagesAsImages() {
   if (!docOpen || mode !== "editor") return;
   const pageCount = editor.getCountPages() | 0;
-  const spec = window.prompt(
+  const spec = await showPromptDialog(
     `Welche Seiten sollen als Bilder exportiert werden?\nz.B. "1-3,5" — Dokument hat ${pageCount} Seite(n).`,
     `1-${pageCount}`
   );
@@ -1459,7 +1497,7 @@ async function exportPagesAsImages() {
     return;
   }
 
-  const dpiStr = window.prompt("Auflösung in DPI (z.B. 150):", "150");
+  const dpiStr = await showPromptDialog("Auflösung in DPI (z.B. 150):", "150");
   const dpi = Math.max(50, Math.min(600, parseInt(dpiStr, 10) || 150));
 
   try {
@@ -1564,6 +1602,7 @@ function wireUi() {
   el("btn-print").addEventListener("click", printDocument);
   wireFormatControls();
   wireSearchBar();
+  wirePromptDialog();
 
   // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
   // document "focus" listener: whenever DOM focus lands on an element it does

@@ -154,6 +154,20 @@
         <button id="search-close" class="search-btn" title="Schließen (Esc)">✕</button>
       </div>
 
+      <!-- Reusable in-page prompt dialog (replaces window.prompt(), which
+           Electron's BrowserWindow does not implement). Lives OUTSIDE
+           #editor_sdk for the same reason as #search-bar. -->
+      <div id="prompt-dialog" class="prompt-backdrop" hidden>
+        <div class="prompt-panel" role="dialog" aria-modal="true" aria-labelledby="prompt-message">
+          <p id="prompt-message" class="prompt-message"></p>
+          <input id="prompt-input" type="text" class="prompt-input" spellcheck="false">
+          <div class="prompt-actions">
+            <button id="prompt-cancel" class="btn" type="button">Abbrechen</button>
+            <button id="prompt-ok" class="btn primary-action" type="button">OK</button>
+          </div>
+        </div>
+      </div>
+
       <!--
         The ONLYOFFICE PDF editor (Asc.PDFEditorApi) replaces this element's
         innerHTML with the full editor page DOM (id_main / id_viewer /
