@@ -991,6 +991,7 @@ const TOOL_HANDLERS = {
 
   "page-add":    () => { if (typeof editor.asc_AddPage === "function") editor.asc_AddPage((editor.getCurrentPage() | 0) + 1); },
   "page-remove": () => removeCurrentPage(),
+  "page-remove-range": () => removePagesByRange(),
   "pdf-append":  () => appendPdf(),
   "pdf-extract": () => extractPages(),
   "rotate-left":  () => rotateCurrentPage(-90),
@@ -1185,7 +1186,7 @@ function setFormFillMode(on) {
   }
   // tools that edit content are unavailable while filling
   const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
-    "shape", "comment", "image", "page-add", "page-remove", "pdf-append",
+    "shape", "comment", "image", "page-add", "page-remove", "page-remove-range", "pdf-append",
     "rotate-left", "rotate-right", "rotate-all"];
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
@@ -1204,6 +1205,34 @@ function removeCurrentPage() {
   }
   editor.asc_RemovePage([cur]);
   refreshHistoryButtons();
+}
+
+// Stirling-PDF/PDFSam-style "remove pages by range" ("2-4,7"), reusing the
+// same range spec parser as "Teilen"/extract. asc_RemovePage already accepts
+// a list of page indexes and is undoable (Strg+Z restores them all).
+function removePagesByRange() {
+  if (!docOpen || typeof editor.asc_RemovePage !== "function") return;
+  const pageCount = editor.getCountPages() | 0;
+  const spec = window.prompt(
+    `Welche Seiten sollen gelöscht werden?\nz.B. "2-4,7" — Dokument hat ${pageCount} Seite(n).`
+  );
+  if (!spec) return;
+
+  let indexes;
+  try {
+    indexes = parsePageRangeSpec(spec, pageCount);
+  } catch (e) {
+    setStatus(`Entfernen fehlgeschlagen: ${e.message}`);
+    return;
+  }
+  if (indexes.length >= pageCount) {
+    setStatus("Es kann nicht das gesamte Dokument gelöscht werden — mindestens eine Seite muss bleiben.");
+    return;
+  }
+
+  editor.asc_RemovePage(indexes);
+  refreshHistoryButtons();
+  setStatus(`${indexes.length} Seite(n) entfernt — ${editor.getCountPages()} verbleiben.`);
 }
 
 function rotateCurrentPage(angle) {
@@ -1266,7 +1295,7 @@ function setToolEnabled(tool, on) {
 // Tools available once a document is open in editor mode.
 const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
-  "strikeout", "shape", "comment", "image", "page-add", "page-remove",
+  "strikeout", "shape", "comment", "image", "page-add", "page-remove", "page-remove-range",
   "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill",
 ];

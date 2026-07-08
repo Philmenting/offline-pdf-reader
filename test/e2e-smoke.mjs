@@ -371,6 +371,41 @@ async function testRotateAll(browser) {
   await page.close();
 }
 
+// "Entfernen": Stirling-PDF/PDFSam's "remove pages by range" ("2-4,7"),
+// distinct from the existing single-current-page delete. Must remove exactly
+// the requested pages and stay undoable (Strg+Z restores them all).
+async function testRemovePagesByRange(browser) {
+  const sourcePdf = await makeMultiPagePdf(6);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", async (d) => { await d.accept("2-3"); });
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "six.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("remove-pages-range document open");
+
+  await page.click('[data-tool="page-remove-range"]');
+  await page.waitForTimeout(500);
+  const afterRemove = await page.evaluate(() => window.__pdfEditor.getCountPages());
+  check("removing range 2-3 leaves the right page count (6 - 2 = 4)", afterRemove === 4, `pages=${afterRemove}`);
+
+  await page.click('[data-tool="undo"]');
+  await page.waitForTimeout(500);
+  const afterUndo = await page.evaluate(() => window.__pdfEditor.getCountPages());
+  check("removing a page range is undoable", afterUndo === 6, `pages=${afterUndo}`);
+
+  check("no page errors (remove-pages-range scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -510,6 +545,7 @@ async function main() {
     await testAppendScrollbarSync(browser);
     await testExtractPages(browser);
     await testRotateAll(browser);
+    await testRemovePagesByRange(browser);
   } finally {
     await browser.close();
     await rm(work, { recursive: true, force: true });
