@@ -90,26 +90,30 @@ with `CHROMIUM_PATH=<path-to-chromium>`.
 
 ## Features & shortcuts
 
-Text editing (page text + text boxes) with a formatting toolbar (font family,
+Text editing (page text + text boxes) with a formatting bar (font family,
 size, bold/italic, color), highlight/underline/strikeout markers, shapes,
-comments, images, page add/remove/rotate, undo/redo.
+comments, images, page add/remove/rotate, undo/redo. The top toolbar is a
+single icon row; page management and document tools live in the **Seiten**
+and **Extras** dropdown menus.
 
-Page tools (Stirling-PDF/PDFSam-style, fully offline):
-- **+ PDF** — merge another PDF's pages onto the end of the current document.
-- **Teilen** — extract a page range (e.g. `1-3,5`) into a standalone new PDF
-  file, without modifying the open document.
-- **Entfernen** — delete a page range (e.g. `2-4,7`) at once; undoable.
-- **Alle drehen** — rotate every page in the document 90° in one click (for
-  sideways scans).
+**Seiten** menu (Stirling-PDF/PDFSam-style, fully offline):
+- **PDF anhängen** — merge another PDF's pages onto the end of the current
+  document.
+- **Seiten extrahieren (Teilen)** — extract a page range (e.g. `1-3,5`) into a
+  standalone new PDF file, without modifying the open document.
+- **Seitenbereich entfernen** — delete a page range (e.g. `2-4,7`) at once;
+  undoable.
+- **Alle Seiten drehen** — rotate every page in the document 90° in one click
+  (for sideways scans), plus single-page rotate left/right.
 
-Document tools (Stirling-PDF/OmniTools-style, fully offline):
+**Extras** menu (Stirling-PDF/OmniTools-style, fully offline):
 - **Wasserzeichen** — insert a text watermark centered on every page.
 - **Seitenzahlen** — insert automatic "N / total" page numbers, bottom-center
   on every page.
 - **Bilder extrahieren** — pull every embedded picture out of the PDF as its
   own file, de-duplicating a logo repeated across pages.
-- **Als Bilder** — export a page range as standalone PNG images at a chosen
-  DPI, without navigating to each page first.
+- **Seiten als Bilder exportieren** — export a page range as standalone PNG
+  images at a chosen DPI, without navigating to each page first.
 
 | Shortcut | Action |
 | --- | --- |

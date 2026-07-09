@@ -59,6 +59,21 @@ async function headerYOffset(page) {
   return Math.round(h - 52);
 }
 
+// Some tools live inside the toolbar's "Seiten"/"Extras" dropdown menus
+// (<details class="menu">). Their buttons are unclickable while the menu is
+// closed, so open the owning menu first when there is one.
+async function clickTool(page, tool) {
+  const sel = `[data-tool="${tool}"]`;
+  const menuId = await page.evaluate((s) => {
+    const btn = document.querySelector(s);
+    const menu = btn && btn.closest("details.menu");
+    if (menu) menu.open = true;
+    return menu ? menu.id : null;
+  }, sel);
+  await page.click(sel);
+  if (menuId) await page.evaluate((id) => { document.getElementById(id).open = false; }, menuId);
+}
+
 async function launchChromium() {
   let chromium;
   try { ({ chromium } = await import("playwright")); }
@@ -130,7 +145,7 @@ async function testFormRoundtrip(browser) {
   // fill mode: text field at PDF pts (150..400, 705..729), checkbox at
   // (150..168, 660..678) → screen at 100% zoom (page top-left ~336/72,
   // scale 96/72): field center ~(703,238), checkbox ~(548,302)
-  await page.click('[data-tool="form-fill"]');
+  await clickTool(page, "form-fill");
   await page.waitForTimeout(800);
   const dy = await headerYOffset(page);
   await page.mouse.click(703, 238 + dy);
@@ -235,7 +250,7 @@ async function testEditPageImageRendering(browser) {
   await page.waitForTimeout(1200);
   console.log("edit-page-image document open");
 
-  await page.click('[data-tool="edit-text"]');
+  await clickTool(page, "edit-text");
   await page.waitForTimeout(800);
 
   const info = await page.evaluate(() => {
@@ -278,7 +293,7 @@ async function testWatermark(browser) {
   await page.waitForTimeout(1200);
   console.log("watermark document open");
 
-  await page.click('[data-tool="watermark"]');
+  await clickTool(page, "watermark");
   await page.waitForSelector("#prompt-dialog:not([hidden])", { timeout: 10000 });
   await page.fill("#prompt-input", "VERTRAULICH");
   await Promise.all([
@@ -333,7 +348,7 @@ async function testTextModeSaveKeepsContent(browser) {
   await page.waitForTimeout(1200);
   console.log("text-mode-save document open");
 
-  await page.click('[data-tool="edit-text"]');
+  await clickTool(page, "edit-text");
   await page.waitForTimeout(1500);
   const recognized = await page.evaluate(() =>
     window.__pdfEditor.getPDFDoc().Viewer.file.pages[0].isRecognized);
@@ -402,7 +417,7 @@ async function testPageNumbers(browser) {
   await page.waitForTimeout(1200);
   console.log("page-numbers document open");
 
-  await page.click('[data-tool="page-numbers"]');
+  await clickTool(page, "page-numbers");
   await page.waitForTimeout(500);
 
   const contents = await page.evaluate(() => {
@@ -452,7 +467,7 @@ async function testExtractEmbeddedImages(browser) {
 
   const downloads = [];
   page.on("download", (d) => downloads.push(d));
-  await page.click('[data-tool="extract-images"]');
+  await clickTool(page, "extract-images");
   await page.waitForTimeout(1500);
   check("extracting images de-duplicates the repeated logo (exactly 1 download)", downloads.length === 1, `count=${downloads.length}`);
   if (downloads.length) {
@@ -481,7 +496,7 @@ async function testExtractEmbeddedImagesNone(browser) {
     null, { timeout: 90000 });
   await page.waitForTimeout(1200);
 
-  await page.click('[data-tool="extract-images"]');
+  await clickTool(page, "extract-images");
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("Keine eingebetteten Bilder"),
     null, { timeout: 5000 }).then(
@@ -513,7 +528,7 @@ async function testExportPagesAsImages(browser) {
 
   const downloads = [];
   page.on("download", (d) => downloads.push(d));
-  await page.click('[data-tool="pages-to-images"]');
+  await clickTool(page, "pages-to-images");
   await fillPromptDialog(page, "1-2");   // page-range modal
   await fillPromptDialog(page, "100");   // DPI modal, kept low for test speed
   await page.waitForTimeout(3000);
@@ -566,7 +581,7 @@ async function testAppendScrollbarSync(browser) {
   });
 
   const chooser = page.waitForEvent("filechooser", { timeout: 15000 });
-  await page.click('[data-tool="pdf-append"]');
+  await clickTool(page, "pdf-append");
   await (await chooser).setFiles({ name: "many.pdf", mimeType: "application/pdf", buffer: appendedPdf });
   await page.waitForTimeout(2500); // same order of wait a user would give it
 
@@ -646,7 +661,7 @@ async function testExtractPages(browser) {
   const pageCountBefore = await page.evaluate(() => window.__pdfEditor.getCountPages());
 
   const downloadPromise = page.waitForEvent("download", { timeout: 15000 });
-  await page.click('[data-tool="pdf-extract"]');
+  await clickTool(page, "pdf-extract");
   await fillPromptDialog(page, "2-4");
   const download = await downloadPromise.catch(() => null);
   check("extracting pages produced a download", !!download);
@@ -705,7 +720,7 @@ async function testRotateAll(browser) {
   const before = await getRotations();
   check("all pages start unrotated", before.every((r) => r === 0), `before=${JSON.stringify(before)}`);
 
-  await page.click('[data-tool="rotate-all"]');
+  await clickTool(page, "rotate-all");
   await page.waitForTimeout(500);
 
   const after = await getRotations();
@@ -736,13 +751,13 @@ async function testRemovePagesByRange(browser) {
   await page.waitForTimeout(1200);
   console.log("remove-pages-range document open");
 
-  await page.click('[data-tool="page-remove-range"]');
+  await clickTool(page, "page-remove-range");
   await fillPromptDialog(page, "2-3");
   await page.waitForTimeout(500);
   const afterRemove = await page.evaluate(() => window.__pdfEditor.getCountPages());
   check("removing range 2-3 leaves the right page count (6 - 2 = 4)", afterRemove === 4, `pages=${afterRemove}`);
 
-  await page.click('[data-tool="undo"]');
+  await clickTool(page, "undo");
   await page.waitForTimeout(500);
   const afterUndo = await page.evaluate(() => window.__pdfEditor.getCountPages());
   check("removing a page range is undoable", afterUndo === 6, `pages=${afterUndo}`);
@@ -824,7 +839,7 @@ async function main() {
     console.log("document open");
     await page.waitForTimeout(2000);
 
-    await page.click('[data-tool="edit-text"]');
+    await clickTool(page, "edit-text");
     await page.waitForTimeout(1500);
     // double-click into the headline (fixed viewport → stable coordinates)
     await page.mouse.dblclick(590, 111 + await headerYOffset(page));

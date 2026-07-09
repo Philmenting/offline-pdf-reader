@@ -1660,7 +1660,7 @@ function wireUi() {
   // Standard fix (every WYSIWYG toolbar does this): stop the click's implicit
   // focus shift on mousedown. The click event itself still fires normally.
   el("toolbar").addEventListener("mousedown", (e) => {
-    if (e.target.closest("button")) e.preventDefault();
+    if (e.target.closest("button, summary")) e.preventDefault();
   });
 
   for (const btn of document.querySelectorAll("[data-tool]")) {
