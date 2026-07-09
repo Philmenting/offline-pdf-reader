@@ -11,28 +11,18 @@
   let patchedEditor = null;
   let patchedDoc = null;
 
-  function getEditor() {
-    return window.__pdfEditor || null;
-  }
+  function getEditor() { return window.__pdfEditor || null; }
 
   function getRenderer() {
     const editor = getEditor();
-    try {
-      return editor && typeof editor.getDocumentRenderer === "function"
-        ? editor.getDocumentRenderer()
-        : null;
-    } catch {
-      return null;
-    }
+    try { return editor && typeof editor.getDocumentRenderer === "function" ? editor.getDocumentRenderer() : null; }
+    catch { return null; }
   }
 
   function getPdfDoc() {
     const editor = getEditor();
-    try {
-      return editor && typeof editor.getPDFDoc === "function" ? editor.getPDFDoc() : null;
-    } catch {
-      return null;
-    }
+    try { return editor && typeof editor.getPDFDoc === "function" ? editor.getPDFDoc() : null; }
+    catch { return null; }
   }
 
   function getPageCount() {
@@ -42,28 +32,21 @@
   }
 
   function call(target, name, ...args) {
-    try {
-      if (target && typeof target[name] === "function") return target[name](...args);
-    } catch (e) {
-      console.debug(`[thumbnail-sync] ${name} skipped`, e);
-    }
+    try { if (target && typeof target[name] === "function") return target[name](...args); }
+    catch (e) { console.debug(`[thumbnail-sync] ${name} skipped`, e); }
     return undefined;
   }
 
   function ensureThumbnails(renderer) {
     if (renderer && renderer.Thumbnails) return renderer.Thumbnails;
-    if (!renderer || !window.AscCommon || typeof window.AscCommon.ThumbnailsControl !== "function") {
-      return null;
-    }
+    if (!renderer || !window.AscCommon || typeof window.AscCommon.ThumbnailsControl !== "function") return null;
 
     const rail = document.getElementById("thumbnails-list");
     if (!rail) return null;
 
     try {
       renderer.Thumbnails = new window.AscCommon.ThumbnailsControl("thumbnails-list");
-      if (typeof renderer.setThumbnailsControl === "function") {
-        renderer.setThumbnailsControl(renderer.Thumbnails);
-      }
+      if (typeof renderer.setThumbnailsControl === "function") renderer.setThumbnailsControl(renderer.Thumbnails);
       return renderer.Thumbnails;
     } catch (e) {
       console.warn("[thumbnail-sync] create failed", e);
@@ -90,23 +73,14 @@
   function makeFilePage(doc, index, fallback) {
     const page = getPageObject(doc, index);
     const width = readNumber(page, ["GetWidth", "getWidth", "GetW", "getW", "W", "width"])
-      || (fallback && (fallback.W || fallback.width))
-      || 595;
+      || (fallback && (fallback.W || fallback.width)) || 595;
     const height = readNumber(page, ["GetHeight", "getHeight", "GetH", "getH", "H", "height"])
-      || (fallback && (fallback.H || fallback.height))
-      || 842;
+      || (fallback && (fallback.H || fallback.height)) || 842;
     const dpi = (fallback && (fallback.Dpi || fallback.dpi)) || 72;
     const rotate = readNumber(page, ["GetRotate", "getRotate", "Rotate", "rotate"])
-      || (fallback && (fallback.Rotate || fallback.rotate))
-      || 0;
+      || (fallback && (fallback.Rotate || fallback.rotate)) || 0;
 
-    return {
-      Dpi: dpi,
-      W: width,
-      H: height,
-      originIndex: index,
-      Rotate: rotate,
-    };
+    return { Dpi: dpi, W: width, H: height, originIndex: index, Rotate: rotate };
   }
 
   function syncRendererFilePages(renderer, count) {
@@ -115,29 +89,19 @@
     if (!file || !Array.isArray(file.pages) || count <= 0) return;
 
     const fallback = file.pages[file.pages.length - 1] || file.pages[0] || null;
-    while (file.pages.length < count) {
-      file.pages.push(makeFilePage(doc, file.pages.length, fallback));
-    }
-    if (file.pages.length > count) {
-      file.pages.splice(count);
-    }
+    while (file.pages.length < count) file.pages.push(makeFilePage(doc, file.pages.length, fallback));
+    if (file.pages.length > count) file.pages.splice(count);
   }
 
   function resizeAndRepaint(thumbs) {
     call(thumbs, "setNeedResize", true);
-    if (typeof thumbs.resize === "function") {
-      call(thumbs, "resize", false);
-    } else {
-      call(thumbs, "Resize", false);
-    }
+    if (typeof thumbs.resize === "function") call(thumbs, "resize", false);
+    else call(thumbs, "Resize", false);
     call(thumbs, "repaint");
   }
 
   function clampCustomScrollbar(thumbs) {
-    if (!thumbs || !thumbs.m_oScrollVerApi || typeof thumbs.m_oScrollVerApi.scrollToY !== "function") {
-      return;
-    }
-
+    if (!thumbs || !thumbs.m_oScrollVerApi || typeof thumbs.m_oScrollVerApi.scrollToY !== "function") return;
     const maxY = Number.isFinite(thumbs.scrollMaxY) ? thumbs.scrollMaxY : 0;
     const currentY = Number.isFinite(thumbs.scrollY) ? thumbs.scrollY : 0;
     thumbs.m_oScrollVerApi.scrollToY(Math.max(0, Math.min(currentY, maxY)));
@@ -157,7 +121,6 @@
     if (!renderer || count <= 0) return false;
 
     syncRendererFilePages(renderer, count);
-
     const thumbs = ensureThumbnails(renderer);
     if (!thumbs) return false;
 
@@ -166,13 +129,9 @@
       const changed = have !== count;
 
       if (have >= 0 && have < count && typeof thumbs._addPage === "function") {
-        for (let index = have; index < count; index += 1) {
-          thumbs._addPage(index);
-        }
+        for (let index = have; index < count; index += 1) thumbs._addPage(index);
       } else if (have >= 0 && have > count && typeof thumbs._deletePage === "function") {
-        for (let index = have - 1; index >= count; index -= 1) {
-          thumbs._deletePage(index);
-        }
+        for (let index = have - 1; index >= count; index -= 1) thumbs._deletePage(index);
       } else if (changed && !rebuildFromViewer(thumbs)) {
         return false;
       }
@@ -199,10 +158,7 @@
   function scheduleSync(reason) {
     const token = ++syncToken;
     for (const delay of [0, 80, 250, 600, 1200, 2000]) {
-      setTimeout(() => {
-        if (token !== syncToken) return;
-        syncThumbnails(reason);
-      }, delay);
+      setTimeout(() => { if (token === syncToken) syncThumbnails(reason); }, delay);
     }
   }
 
@@ -256,41 +212,28 @@
     }
 
     const renderer = getRenderer();
-    const filePages = renderer && renderer.file && Array.isArray(renderer.file.pages)
-      ? renderer.file.pages.length
-      : count;
-    const thumbPages = renderer && renderer.Thumbnails && Array.isArray(renderer.Thumbnails.pages)
-      ? renderer.Thumbnails.pages.length
-      : count;
-
-    if (count !== lastPageCount || filePages !== count || thumbPages !== count) {
-      scheduleSync("page-model-drift");
-    }
+    const filePages = renderer && renderer.file && Array.isArray(renderer.file.pages) ? renderer.file.pages.length : count;
+    const thumbPages = renderer && renderer.Thumbnails && Array.isArray(renderer.Thumbnails.pages) ? renderer.Thumbnails.pages.length : count;
+    if (count !== lastPageCount || filePages !== count || thumbPages !== count) scheduleSync("page-model-drift");
   }, 500);
 })();
 
 // Fix the PDF comment toolbar action for editor bundles that expose the
 // comment payload as asc_CCommentDataWord instead of asc_CCommentData.
 (function () {
-  function getEditor() {
-    return window.__pdfEditor || null;
-  }
+  function getEditor() { return window.__pdfEditor || null; }
 
   function createCommentData(text) {
     const asc = window.Asc || {};
     const Ctor = asc.asc_CCommentDataWord || asc.asc_CCommentData;
-    if (typeof Ctor !== "function") {
-      throw new Error("Kommentar-Datenklasse ist in diesem ONLYOFFICE-Build nicht verfügbar.");
-    }
+    if (typeof Ctor !== "function") throw new Error("Kommentar-Datenklasse ist in diesem ONLYOFFICE-Build nicht verfügbar.");
 
     const data = new Ctor(null);
     if (typeof data.asc_putText === "function") data.asc_putText(text);
     else data.m_sText = text;
 
     const editor = getEditor();
-    const userName = editor && editor.User && typeof editor.User.asc_getUserName === "function"
-      ? editor.User.asc_getUserName()
-      : "Offline";
+    const userName = editor && editor.User && typeof editor.User.asc_getUserName === "function" ? editor.User.asc_getUserName() : "Offline";
     const userId = editor && editor.documentUserId ? editor.documentUserId : "offline-user";
 
     if (typeof data.asc_putUserName === "function") data.asc_putUserName(userName);
@@ -307,19 +250,54 @@
     if (status) status.textContent = message;
   }
 
-  function readPromptMessage() {
-    const input = window.prompt("Kommentartext:");
-    return input && input.trim() ? input.trim() : "";
+  function showInAppPrompt(message) {
+    const dialog = document.getElementById("prompt-dialog");
+    const msg = document.getElementById("prompt-message");
+    const input = document.getElementById("prompt-input");
+    const ok = document.getElementById("prompt-ok");
+    const cancel = document.getElementById("prompt-cancel");
+
+    if (!dialog || !msg || !input || !ok || !cancel) {
+      const fallback = typeof window.prompt === "function" ? window.prompt(message) : "";
+      return Promise.resolve(fallback || "");
+    }
+
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        dialog.hidden = true;
+        ok.removeEventListener("click", onOk);
+        cancel.removeEventListener("click", onCancel);
+        input.removeEventListener("keydown", onKeyDown);
+        resolve(value || "");
+      };
+      const onOk = () => finish(input.value.trim());
+      const onCancel = () => finish("");
+      const onKeyDown = (event) => {
+        if (event.key === "Enter") onOk();
+        else if (event.key === "Escape") onCancel();
+      };
+
+      msg.textContent = message;
+      input.value = "";
+      dialog.hidden = false;
+      ok.addEventListener("click", onOk);
+      cancel.addEventListener("click", onCancel);
+      input.addEventListener("keydown", onKeyDown);
+      setTimeout(() => input.focus(), 0);
+    });
   }
 
-  function addComment() {
+  async function addComment() {
     const editor = getEditor();
     if (!editor || typeof editor.asc_addComment !== "function") {
       setStatus("Kommentar konnte nicht hinzugefügt werden: Editor ist noch nicht bereit.");
       return;
     }
 
-    const text = readPromptMessage();
+    const text = await showInAppPrompt("Kommentartext:");
     if (!text) return;
 
     try {
