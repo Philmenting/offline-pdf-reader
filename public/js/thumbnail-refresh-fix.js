@@ -221,6 +221,8 @@
 // Fix the PDF comment toolbar action for editor bundles that expose the
 // comment payload as asc_CCommentDataWord instead of asc_CCommentData.
 (function () {
+  let lastCommentText = "";
+
   function getEditor() { return window.__pdfEditor || null; }
 
   function createCommentData(text) {
@@ -248,6 +250,137 @@
   function setStatus(message) {
     const status = document.getElementById("status");
     if (status) status.textContent = message;
+  }
+
+  function ensureCommentPreviewStyles() {
+    if (document.getElementById("comment-preview-styles")) return;
+
+    const style = document.createElement("style");
+    style.id = "comment-preview-styles";
+    style.textContent = `
+      .comment-preview-popover {
+        position: absolute;
+        z-index: 50;
+        width: min(320px, calc(100% - 32px));
+        min-height: 72px;
+        padding: 12px 14px 14px;
+        border: 1px solid #d0a600;
+        border-radius: 8px;
+        background: #fff4a8;
+        color: #1f2937;
+        box-shadow: 0 14px 32px rgba(15, 23, 42, 0.22);
+        font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space: pre-wrap;
+      }
+      .comment-preview-popover[hidden] { display: none; }
+      .comment-preview-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-weight: 700;
+        color: #111827;
+      }
+      .comment-preview-close {
+        border: 0;
+        border-radius: 6px;
+        background: rgba(17, 24, 39, 0.08);
+        color: #111827;
+        cursor: pointer;
+        font: inherit;
+        line-height: 1;
+        padding: 4px 7px;
+      }
+      .comment-preview-close:hover { background: rgba(17, 24, 39, 0.14); }
+      .comment-preview-text { overflow-wrap: anywhere; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function getPreviewHost() {
+    return document.querySelector(".viewer-host") || document.body;
+  }
+
+  function createPreviewPopover() {
+    let popover = document.getElementById("comment-preview-popover");
+    if (popover) return popover;
+
+    popover = document.createElement("div");
+    popover.id = "comment-preview-popover";
+    popover.className = "comment-preview-popover";
+    popover.hidden = true;
+    popover.innerHTML = `
+      <div class="comment-preview-title">
+        <span>Kommentar</span>
+        <button class="comment-preview-close" type="button" aria-label="Kommentar ausblenden">×</button>
+      </div>
+      <div class="comment-preview-text"></div>
+    `;
+    popover.querySelector(".comment-preview-close").addEventListener("click", () => { popover.hidden = true; });
+    getPreviewHost().appendChild(popover);
+    return popover;
+  }
+
+  function positionPreview(popover) {
+    const host = getPreviewHost();
+    if (popover.parentElement !== host) host.appendChild(popover);
+
+    const hostRect = host.getBoundingClientRect();
+    const width = Math.min(320, Math.max(220, hostRect.width - 32));
+    const left = Math.max(16, Math.min(hostRect.width - width - 16, hostRect.width * 0.62));
+    const top = Math.max(16, Math.min(hostRect.height - 120, hostRect.height * 0.32));
+
+    popover.style.width = `${width}px`;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  }
+
+  function showCommentPreview(text) {
+    if (!text) return;
+
+    ensureCommentPreviewStyles();
+    const popover = createPreviewPopover();
+    const textNode = popover.querySelector(".comment-preview-text");
+    textNode.textContent = text;
+    positionPreview(popover);
+    popover.hidden = false;
+  }
+
+  function readCommentId(value) {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
+    try {
+      if (typeof value.GetId === "function") return value.GetId();
+      if (typeof value.getId === "function") return value.getId();
+    } catch {}
+    return value.Id || value.id || value.m_sUserData || "";
+  }
+
+  function tryNativeShowComment(editor, result, data) {
+    const id = readCommentId(result) || readCommentId(data);
+    if (!id) return;
+
+    setTimeout(() => {
+      const doc = editor && typeof editor.getPDFDoc === "function" ? editor.getPDFDoc() : null;
+      const calls = [
+        [doc, "ShowComment", [[id]]],
+        [doc, "showComment", [[id]]],
+        [editor, "asc_ShowComment", [id]],
+        [editor, "asc_showComment", [id]],
+        [editor, "sync_ShowComment", [id]],
+        [editor, "sync_showComment", [id]]
+      ];
+
+      for (const [target, name, args] of calls) {
+        try {
+          if (target && typeof target[name] === "function") target[name](...args);
+        } catch (error) {
+          console.debug(`[comment-fix] ${name} skipped`, error);
+        }
+      }
+    }, 80);
   }
 
   function showInAppPrompt(message) {
@@ -301,8 +434,12 @@
     if (!text) return;
 
     try {
-      editor.asc_addComment(createCommentData(text));
-      setStatus("Kommentar hinzugefügt.");
+      const data = createCommentData(text);
+      const result = editor.asc_addComment(data);
+      lastCommentText = text;
+      tryNativeShowComment(editor, result, data);
+      showCommentPreview(text);
+      setStatus("Kommentar hinzugefügt und angezeigt.");
     } catch (error) {
       console.error("Kommentar fehlgeschlagen:", error);
       setStatus("Kommentar konnte nicht hinzugefügt werden (Text markieren oder Position wählen).");
@@ -316,5 +453,21 @@
     event.preventDefault();
     event.stopImmediatePropagation();
     addComment();
+  }, true);
+
+  window.addEventListener("resize", () => {
+    const popover = document.getElementById("comment-preview-popover");
+    if (popover && !popover.hidden) positionPreview(popover);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const popover = document.getElementById("comment-preview-popover");
+    if (popover && !popover.hidden) popover.hidden = true;
+  });
+
+  document.addEventListener("dblclick", (event) => {
+    if (!lastCommentText || !event.target || !event.target.closest("#editor_sdk")) return;
+    showCommentPreview(lastCommentText);
   }, true);
 })();
