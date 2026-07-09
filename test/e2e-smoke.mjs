@@ -841,6 +841,35 @@ async function testUiAndNewTools(browser) {
   check("ink annotation serialized into the saved PDF (/Ink)",
     Buffer.from(savedBytes).includes("/Ink"));
 
+  // highlighter: drag over page text must create a visible Highlight
+  // annotation. Regression: (a) the viewer opens in hand/pan mode which
+  // blocks drag-select (markers silently did nothing), (b) marker opacity is
+  // 0-100 in the engine — passing 1 made highlights invisible (1%).
+  await clickTool(page, "highlight");
+  await page.waitForTimeout(300);
+  await page.mouse.move(400, 120 + dy);
+  await page.mouse.down();
+  await page.mouse.move(800, 120 + dy, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const highlight = await page.evaluate(() => {
+    const d = window.__pdfEditor.getPDFDoc();
+    const annots = (d.annots || []).filter((a) => a.GetType && a.GetType() === window.AscPDF.ANNOTATIONS_TYPES.Highlight);
+    return {
+      count: annots.length,
+      opacity: annots.length ? annots[annots.length - 1].GetOpacity() : null,
+      stillArmed: window.__pdfEditor.isMarkerFormat === true,
+    };
+  });
+  check("highlighter drag creates a Highlight annotation",
+    highlight.count > 0, JSON.stringify(highlight));
+  check("highlight is visible (opacity ~0.5, not 1%)",
+    highlight.opacity !== null && highlight.opacity > 0.2 && highlight.opacity <= 1,
+    `opacity=${highlight.opacity}`);
+  check("marker stays armed for repeated use", highlight.stillArmed);
+  await clickTool(page, "select");
+  await page.waitForTimeout(300);
+
   // signature pad: Shift+click opens it even with a stored signature
   await page.keyboard.down("Shift");
   await page.click('[data-tool="signature"]');

@@ -474,6 +474,9 @@ function registerEditorCallbacks() {
     preloadFieldFonts();
     markDirty(false);
     updateTitle();
+    // default to text selection (the engine's open path forces hand/pan
+    // mode, which blocks drag-select and with it markers and Strg+C)
+    setViewerTargetType("select");
     updatePageCount(editor.getCountPages ? editor.getCountPages() : 0);
     updateCurrentPage(editor.getCurrentPage ? editor.getCurrentPage() : 0);
     try { updateZoomDisplay(getZoomPercent(renderer())); } catch { /* not ready */ }
@@ -885,6 +888,16 @@ function renderer() {
 }
 function annotType(name) { return (window.AscPDF && window.AscPDF.ANNOTATIONS_TYPES) ? window.AscPDF.ANNOTATIONS_TYPES[name] : undefined; }
 
+// The viewer starts every document in HAND mode (setMouseLockMode(true) in
+// its open path), and the engine's drag-to-select-text handler is explicitly
+// gated on hand mode being OFF. The markers apply themselves to the text
+// selection made while dragging — with hand mode on, that selection never
+// happens, so the marker silently did nothing. Upstream's UI switches the
+// "viewer target type" when tools change; do the same.
+function setViewerTargetType(type) {
+  try { editor.asc_setViewerTargetType(type); } catch { /* viewer not ready */ }
+}
+
 function setMarker(typeName, r, g, b, opacity) {
   if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
   const type = annotType(typeName);
@@ -892,6 +905,7 @@ function setMarker(typeName, r, g, b, opacity) {
   // turn any current marker off first
   editor.SetMarkerFormat(undefined, false);
   if (turningOn) {
+    setViewerTargetType("select"); // drag must select text for the marker to apply
     editor.SetMarkerFormat(type, true, opacity, r, g, b);
     setActiveTool("marker:" + typeName);
   } else {
@@ -911,6 +925,7 @@ const TOOL_HANDLERS = {
     setFormFillMode(false);
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
+    setViewerTargetType("select");
     setActiveTool("select");
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
@@ -919,9 +934,9 @@ const TOOL_HANDLERS = {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
     setActiveTool("textbox");
   },
-  "highlight":   () => setMarker("Highlight", 255, 236, 0, 1),
-  "underline":   () => setMarker("Underline", 220, 30, 30, 1),
-  "strikeout":   () => setMarker("Strikeout", 220, 30, 30, 1),
+  "highlight":   () => setMarker("Highlight", 255, 236, 0, 50),
+  "underline":   () => setMarker("Underline", 220, 30, 30, 100),
+  "strikeout":   () => setMarker("Strikeout", 220, 30, 30, 100),
   "shape":         () => startShape("shape", "rect"),
   "shape-ellipse": () => startShape("shape-ellipse", "ellipse"),
   "shape-line":    () => startShape("shape-line", "line"),
