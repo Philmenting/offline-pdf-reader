@@ -47,12 +47,17 @@ const OPTIONAL_LIBS = [
   `${SDKJS_PATH}/vendor/polyfill.js`,
 ];
 
+import { el, setStatus, loadScript, downloadBytes, downloadDataUrl } from "./modules/dom.js";
+import { showPromptDialog, wirePromptDialog } from "./modules/prompt-dialog.js";
+import { wireSearchBar, openSearchBar, searchStep } from "./modules/search.js";
+import { wireStatusBar, updatePageCount, updateCurrentPage, updateZoomDisplay, setStatusControlsVisible } from "./modules/statusbar.js";
+import { initRecovery, offerRecovery, clearRecoverySnapshot } from "./modules/recovery.js";
+import { renderRecentFiles } from "./modules/recent-files.js";
+import { wireSignatureDialog, insertSignature, openSignaturePad } from "./modules/signature.js";
+import { initOcr, recognizeText } from "./modules/ocr.js";
+
 const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
 const ZOOM_MODE  = { Custom: 0, Width: 1, Page: 2 };
-
-const el = (id) => document.getElementById(id);
-const statusEl = el("status");
-const setStatus = (msg) => { statusEl.textContent = msg; };
 
 let editor = null;       // Asc.PDFEditorApi instance (editor mode)
 let viewer = null;       // AscViewer.CViewer instance (fallback mode)
@@ -75,17 +80,6 @@ let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
 // engine's ASCW3 dummy mini-font and rendered as .notdef boxes.
 if (typeof window["g_fonts_selection_bin"] === "undefined") {
   window["g_fonts_selection_bin"] = "";
-}
-
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = src;
-    s.async = false;
-    s.onload = () => resolve(src);
-    s.onerror = () => reject(new Error(`Konnte ${src} nicht laden`));
-    document.head.appendChild(s);
-  });
 }
 
 // Pin the engine asset base URL so the renderer fetches drawingfile.js/.wasm and
@@ -262,6 +256,10 @@ async function initEditor() {
   if (pending && pending.bytes) {
     openArrayBuffer(pending.bytes.buffer, pending.name || "dokument.pdf");
   }
+
+  // Crash recovery: if nothing opened by itself (pending doc, "Öffnen mit"
+  // argv file), offer a leftover unsaved-session snapshot.
+  setTimeout(() => { if (!docOpen) offerRecovery(); }, 1500);
 }
 
 // ── Long-action watchdog ──────────────────────────────────────────────────
@@ -448,127 +446,6 @@ function registerFormatCallbacks(on) {
   });
 }
 
-// ── Search (Strg+F) ───────────────────────────────────────────────────────
-// Thin UI over the engine's own search: asc_findText fills the PDF search
-// engine (returns the match count, ids 0..count-1), asc_SelectSearchElement
-// jumps to a match (scroll + highlight), asc_endFindText clears everything.
-const search = { query: "", count: 0, current: -1, debounce: 0 };
-
-function updateSearchCount() {
-  el("search-count").textContent =
-    search.count > 0 ? `${search.current + 1}/${search.count}` : "0/0";
-}
-
-function runSearch(query) {
-  search.query = query;
-  if (!query) {
-    try { editor.asc_endFindText(); } catch { /* no active search */ }
-    search.count = 0;
-    search.current = -1;
-    updateSearchCount();
-    return;
-  }
-  try {
-    const props = new window.AscCommon.CSearchSettings();
-    props.put_Text(query);
-    props.put_MatchCase(false);
-    search.count = editor.asc_findText(props, true) | 0;
-    search.current = search.count > 0 ? 0 : -1;
-    if (search.count > 0) {
-      // highlight ALL matches on the page, then select the first
-      try { editor._selectSearchingResults(true); } catch { /* optional */ }
-      editor.asc_SelectSearchElement(0);
-    }
-  } catch (e) {
-    console.warn("Suche fehlgeschlagen:", e);
-    search.count = 0;
-    search.current = -1;
-  }
-  updateSearchCount();
-}
-
-function searchStep(dir) {
-  if (search.count <= 0) return;
-  search.current = (search.current + dir + search.count) % search.count;
-  try { editor.asc_SelectSearchElement(search.current); } catch (e) { console.warn("Treffer-Navigation fehlgeschlagen:", e); }
-  updateSearchCount();
-}
-
-function openSearchBar() {
-  if (mode !== "editor" || !docOpen) return;
-  el("search-bar").hidden = false;
-  const input = el("search-input");
-  input.focus();
-  input.select();
-}
-
-function closeSearchBar() {
-  el("search-bar").hidden = true;
-  runSearch("");
-  refocusEditor();
-}
-
-function wireSearchBar() {
-  const input = el("search-input");
-  input.addEventListener("input", () => {
-    clearTimeout(search.debounce);
-    search.debounce = setTimeout(() => runSearch(input.value.trim()), 300);
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      // fresh query typed without waiting for the debounce → search now
-      if (input.value.trim() !== search.query) runSearch(input.value.trim());
-      else searchStep(e.shiftKey ? -1 : 1);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closeSearchBar();
-    }
-    e.stopPropagation(); // keep typed characters away from the editor
-  });
-  el("search-next").addEventListener("click", () => searchStep(1));
-  el("search-prev").addEventListener("click", () => searchStep(-1));
-  el("search-close").addEventListener("click", closeSearchBar);
-}
-
-// ── Reusable prompt dialog (replaces window.prompt(), unsupported in
-// Electron's BrowserWindow — it throws "Error: prompt() is not supported") ──
-let promptResolve = null;
-
-function showPromptDialog(message, defaultValue) {
-  return new Promise((resolve) => {
-    promptResolve = resolve;
-    el("prompt-message").textContent = message;
-    const input = el("prompt-input");
-    input.value = defaultValue != null ? defaultValue : "";
-    el("prompt-dialog").hidden = false;
-    input.focus();
-    input.select();
-  });
-}
-
-function closePromptDialog(result) {
-  el("prompt-dialog").hidden = true;
-  refocusEditor();
-  const resolve = promptResolve;
-  promptResolve = null;
-  if (resolve) resolve(result);
-}
-
-function wirePromptDialog() {
-  const input = el("prompt-input");
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); closePromptDialog(input.value); }
-    else if (e.key === "Escape") { e.preventDefault(); closePromptDialog(null); }
-    e.stopPropagation(); // keep typed characters away from the editor
-  });
-  el("prompt-ok").addEventListener("click", () => closePromptDialog(input.value));
-  el("prompt-cancel").addEventListener("click", () => closePromptDialog(null));
-  el("prompt-dialog").addEventListener("click", (e) => {
-    if (e.target === el("prompt-dialog")) closePromptDialog(null); // backdrop click cancels
-  });
-}
-
 function registerEditorCallbacks() {
   const on = (name, cb) => {
     try { editor.asc_registerCallback(name, cb); } catch { /* optional event */ }
@@ -597,9 +474,14 @@ function registerEditorCallbacks() {
     preloadFieldFonts();
     markDirty(false);
     updateTitle();
+    updatePageCount(editor.getCountPages ? editor.getCountPages() : 0);
+    updateCurrentPage(editor.getCurrentPage ? editor.getCurrentPage() : 0);
+    try { updateZoomDisplay(getZoomPercent(renderer())); } catch { /* not ready */ }
+    setStatusControlsVisible(true);
   });
-  on("asc_onCountPages", (n) => { /* page count available */ });
-  on("asc_onCurrentPage", (n) => { /* current page changed */ });
+  on("asc_onCountPages", (n) => updatePageCount(n));
+  on("asc_onCurrentPage", (n) => updateCurrentPage(n));
+  on("asc_onZoomChange", (percent) => updateZoomDisplay(percent));
   on("asc_onCanUndo", (v) => {
     setToolEnabled("undo", docOpen && !!v);
     if (docOpen && v) markDirty(true); // any undoable change = unsaved changes
@@ -944,6 +826,7 @@ async function saveDocument() {
       const res = await window.desktop.savePdf(bytes, lastName);
       if (res && res.saved) {
         markDirty(false);
+        clearRecoverySnapshot();
         setStatus(`Gespeichert: ${res.path}`);
       } else if (res && res.error) {
         setStatus(`Speichern fehlgeschlagen: ${res.error}`);
@@ -956,6 +839,7 @@ async function saveDocument() {
     const outName = lastName.replace(/\.pdf$/i, "") + "-bearbeitet.pdf";
     downloadBytes(bytes, outName);
     markDirty(false);
+    clearRecoverySnapshot();
     setStatus(`Gespeichert: „${outName}".`);
   } catch (e) {
     console.error("save() error:", e);
@@ -994,18 +878,6 @@ async function printDocument() {
   }
 }
 
-function downloadBytes(bytes, name) {
-  const blob = new Blob([bytes], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
 // ── Editing tools ─────────────────────────────────────────────────────────
 function renderer() {
   if (mode === "editor" && editor && editor.getDocumentRenderer) return editor.getDocumentRenderer();
@@ -1035,7 +907,12 @@ const TOOL_HANDLERS = {
   "undo":        () => { editor.Undo(); refreshHistoryButtons(); },
   "redo":        () => { editor.Redo(); refreshHistoryButtons(); },
 
-  "select":      () => { setFormFillMode(false); editor.SetMarkerFormat(undefined, false); setActiveTool("select"); },
+  "select":      () => {
+    setFormFillMode(false);
+    editor.SetMarkerFormat(undefined, false);
+    try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
+    setActiveTool("select");
+  },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => { if (typeof editor.asc_EditPage === "function") editor.asc_EditPage(); setActiveTool("edit-text"); },
   "textbox":     () => {
@@ -1045,11 +922,17 @@ const TOOL_HANDLERS = {
   "highlight":   () => setMarker("Highlight", 255, 236, 0, 1),
   "underline":   () => setMarker("Underline", 220, 30, 30, 1),
   "strikeout":   () => setMarker("Strikeout", 220, 30, 30, 1),
-  "shape":       () => { if (typeof editor.StartAddShape === "function") editor.StartAddShape("rect", false); setActiveTool("shape"); },
+  "shape":         () => startShape("shape", "rect"),
+  "shape-ellipse": () => startShape("shape-ellipse", "ellipse"),
+  "shape-line":    () => startShape("shape-line", "line"),
+  "shape-arrow":   () => startShape("shape-arrow", "lineWithArrow"),
+  "ink":         () => toggleInkPen(),
   "comment":     () => addComment(),
   "image":       () => insertImage(),
+  "signature":   (e) => { (e && e.shiftKey) ? openSignaturePad() : insertSignature(); },
 
   "page-add":    () => { if (typeof editor.asc_AddPage === "function") editor.asc_AddPage((editor.getCurrentPage() | 0) + 1); },
+  "page-move":   () => movePageDialog(),
   "page-remove": () => removeCurrentPage(),
   "page-remove-range": () => removePagesByRange(),
   "pdf-append":  () => appendPdf(),
@@ -1062,12 +945,92 @@ const TOOL_HANDLERS = {
   "page-numbers":  () => addPageNumbers(),
   "extract-images": () => extractEmbeddedImages(),
   "pages-to-images": () => exportPagesAsImages(),
+  "ocr":            () => recognizeText(),
 
   "zoom-out":    () => stepZoom(-1),
   "zoom-in":     () => stepZoom(1),
   "fit-width":   () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Width); },
   "fit-page":    () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Page); },
 };
+
+// Shape drawing. StartAddShape takes an OOXML preset name; the engine turns
+// the drawn geometry into a PDF drawing. Clicking the active shape tool again
+// leaves shape mode.
+function startShape(toolName, preset) {
+  if (typeof editor.StartAddShape !== "function") return;
+  if (activeTool === toolName) {
+    try { editor.StartAddShape("rect", true); } catch { /* leave draw mode */ }
+    setActiveTool("select");
+    return;
+  }
+  editor.StartAddShape(preset, false);
+  setActiveTool(toolName);
+}
+
+// Freehand pen: the engine's ink drawer turns drawn strokes into ink
+// annotations. Width is in EMU (12700 per pt).
+function toggleInkPen() {
+  if (activeTool === "ink") {
+    try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
+    setActiveTool("select");
+    setStatus("Stift beendet.");
+    return;
+  }
+  try {
+    const pen = new window.AscFormat.CLn();
+    pen.w = 2 * 12700; // 2 pt
+    pen.Fill = window.AscFormat.CreateSolidFillRGB(16, 26, 134); // ink blue
+    editor.asc_StartDrawInk(pen);
+    setActiveTool("ink");
+    setStatus(`Stift aktiv: mit gedrückter Maustaste zeichnen. „Auswahl" beendet den Modus.`);
+  } catch (e) {
+    console.error("Stift konnte nicht gestartet werden:", e);
+    setStatus("Stift konnte nicht gestartet werden.");
+  }
+}
+
+// Move the current page to a new position (1-based prompt). The thumbnail
+// rail also supports drag & drop; this is the keyboard/menu route. MovePages
+// is the engine's own undoable page-reorder primitive.
+async function movePageDialog() {
+  if (!docOpen || mode !== "editor") return;
+  const pageCount = editor.getCountPages() | 0;
+  if (pageCount < 2) { setStatus("Nur eine Seite — nichts zu verschieben."); return; }
+  const cur = (editor.getCurrentPage() | 0) + 1;
+  const spec = await showPromptDialog(
+    `Aktuelle Seite (${cur}) verschieben an Position (1–${pageCount}):`, String(cur));
+  if (!spec) return;
+  const target = parseInt(spec, 10);
+  if (!Number.isInteger(target) || target < 1 || target > pageCount) {
+    setStatus(`Ungültige Zielposition: „${spec}" (erlaubt: 1–${pageCount}).`);
+    return;
+  }
+  if (target === cur) return;
+  try {
+    const doc = editor.getPDFDoc();
+    doc.DoAction(function () {
+      doc.MovePages([cur - 1], target - 1);
+      doc.Viewer.navigateToPage(target - 1);
+    }, window.AscDFH.historydescription_Pdf_MovePage, doc, [Math.min(cur, target) - 1]);
+    refreshHistoryButtons();
+    setStatus(`Seite ${cur} an Position ${target} verschoben.`);
+  } catch (e) {
+    console.error("Seite verschieben fehlgeschlagen:", e);
+    setStatus(`Seite verschieben fehlgeschlagen: ${e.message}`);
+  }
+}
+
+// Insert an image from a data URL through the editor's image pipeline
+// (shared by the "Bild" tool and the signature stamp).
+function insertImageDataUrl(dataUrl) {
+  if (!docOpen) return;
+  try {
+    if (typeof editor.AddImageUrl === "function") editor.AddImageUrl([dataUrl]);
+  } catch (e) {
+    console.error("Bild einfügen fehlgeschlagen:", e);
+    setStatus("Bild konnte nicht eingefügt werden.");
+  }
+}
 
 async function addComment() {
   if (!docOpen) return;
@@ -1096,15 +1059,8 @@ function insertImage() {
     if (!f) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        const dataUrl = reader.result;
-        if (typeof editor.AddImageUrl === "function") editor.AddImageUrl([dataUrl]);
-        else if (typeof editor.asc_addImage === "function") editor.asc_addImage();
-        setStatus("Bild eingefügt.");
-      } catch (e) {
-        console.error(e);
-        setStatus("Bild konnte nicht eingefügt werden.");
-      }
+      insertImageDataUrl(reader.result);
+      setStatus("Bild eingefügt.");
     };
     reader.readAsDataURL(f);
   };
@@ -1251,7 +1207,8 @@ function setFormFillMode(on) {
   }
   // tools that edit content are unavailable while filling
   const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
-    "shape", "comment", "image", "page-add", "page-remove", "page-remove-range", "pdf-append",
+    "shape", "shape-ellipse", "shape-line", "shape-arrow", "ink", "comment", "image",
+    "signature", "page-add", "page-remove", "page-remove-range", "page-move", "pdf-append",
     "rotate-left", "rotate-right", "rotate-all", "watermark", "page-numbers"];
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
@@ -1368,16 +1325,6 @@ function addPageFreeText(doc, nPage, pageW, pageH, rotAngle, text, opts) {
     alignment: window.AscPDF.ALIGN_TYPE.center,
   }]);
   return oAnnot;
-}
-
-// data: URL variant of downloadBytes(), for images already base64-encoded.
-function downloadDataUrl(dataUrl, name) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 // Lazy-load the vendored pdf-lib bundle (MIT; public/js/vendor/pdf-lib.min.js).
@@ -1612,9 +1559,11 @@ function setToolEnabled(tool, on) {
 // Tools available once a document is open in editor mode.
 const EDITOR_TOOLS = [
   "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
-  "strikeout", "shape", "comment", "image", "page-add", "page-remove", "page-remove-range",
+  "strikeout", "shape", "shape-ellipse", "shape-line", "shape-arrow", "ink", "comment",
+  "image", "signature", "page-add", "page-remove", "page-remove-range", "page-move",
   "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
-  "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images", "pages-to-images",
+  "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images",
+  "pages-to-images", "ocr",
 ];
 
 function enableEditing(on) {
@@ -1645,11 +1594,44 @@ function waitFor(predicate, timeoutMs, errMsg) {
 // ── Wiring ────────────────────────────────────────────────────────────────
 function wireUi() {
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
+  // Desktop: route "Öffnen" through the native dialog in the main process so
+  // the recent-files list gets a real file path to reopen from.
+  if (window.desktop && typeof window.desktop.openPdfDialog === "function") {
+    const openLabel = document.querySelector('label[for="file-input"]');
+    if (openLabel) {
+      openLabel.addEventListener("click", (e) => {
+        e.preventDefault();
+        window.desktop.openPdfDialog();
+      });
+    }
+  }
   el("btn-save").addEventListener("click", saveDocument);
   el("btn-print").addEventListener("click", printDocument);
   wireFormatControls();
-  wireSearchBar();
-  wirePromptDialog();
+  wireSearchBar({
+    getEditor: () => editor,
+    canSearch: () => mode === "editor" && docOpen,
+    refocusEditor,
+  });
+  wirePromptDialog(refocusEditor);
+  wireStatusBar({
+    getRenderer: renderer,
+    isDocOpen: () => docOpen,
+    setZoomPercent: (percent) => { const r = renderer(); if (r) setZoomPercent(r, percent); },
+    refocusEditor,
+  });
+  wireSignatureDialog({ insertImageDataUrl, refocusEditor, setStatus });
+  initRecovery({
+    isDirty: () => docDirty,
+    isDocOpen: () => docOpen,
+    collectPdfBytes,
+    getDocName: () => lastName,
+    openArrayBuffer,
+    markSaved: () => markDirty(false),
+  });
+  renderRecentFiles();
+  initOcr({ getEditor: () => editor, isDocOpen: () => docOpen, showPromptDialog,
+            parsePageRangeSpec, getDocName: () => lastName, setStatus, renderer });
 
   // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
   // document "focus" listener: whenever DOM focus lands on an element it does
@@ -1665,10 +1647,10 @@ function wireUi() {
 
   for (const btn of document.querySelectorAll("[data-tool]")) {
     const tool = btn.getAttribute("data-tool");
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (event) => {
       const handler = TOOL_HANDLERS[tool];
       if (!handler) return;
-      try { handler(); } catch (e) {
+      try { handler(event); } catch (e) {
         console.error(`Tool '${tool}' fehlgeschlagen:`, e);
         setStatus(`Aktion „${tool}" fehlgeschlagen: ${e.message}`);
       }
@@ -1721,7 +1703,8 @@ function wireUi() {
     } else if (k === "o") {
       e.preventDefault();
       e.stopPropagation();
-      el("file-input").click();
+      if (window.desktop && typeof window.desktop.openPdfDialog === "function") window.desktop.openPdfDialog();
+      else el("file-input").click();
     } else if (k === "f") {
       e.preventDefault();
       e.stopPropagation();
@@ -1740,6 +1723,7 @@ function wireUi() {
       setTimeout(() => {
         if (window.confirm(`„${lastName}" hat ungespeicherte Änderungen. Trotzdem schließen?`)) {
           docDirty = false;
+          clearRecoverySnapshot();
           window.close();
         }
       });

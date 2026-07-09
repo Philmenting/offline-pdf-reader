@@ -77,6 +77,7 @@ vendor/onlyoffice/      Built AGPL engine (gitignored)
 ```bash
 npm run build-engine        # build the ONLYOFFICE PDF engine from source (Python 3)
 npm run generate-fonts      # download core-fonts + generate AllFonts.js registry
+npm run fetch-ocr           # vendor the offline OCR stack (optional)
 npm start                   # serve at http://localhost:3000
 npm test                    # E2E typing smoke test (needs Chromium, see below)
 npm run dist:win            # bundle the Windows desktop app (ZIP)
@@ -91,10 +92,18 @@ with `CHROMIUM_PATH=<path-to-chromium>`.
 ## Features & shortcuts
 
 Text editing (page text + text boxes) with a formatting bar (font family,
-size, bold/italic, color), highlight/underline/strikeout markers, shapes,
-comments, images, page add/remove/rotate, undo/redo. The top toolbar is a
-single icon row; page management and document tools live in the **Seiten**
-and **Extras** dropdown menus.
+size, bold/italic, color), highlight/underline/strikeout markers, shapes
+(rectangle/ellipse/line/arrow), a freehand **pen** (ink annotations), a
+reusable **signature** stamp (draw once, stored locally, Shift+click to
+redraw), comments, images, page add/remove/rotate, undo/redo. The top toolbar
+is a single icon row; page management and document tools live in the
+**Seiten** and **Extras** dropdown menus. The status bar shows the current
+page (with jump-to-page input) and a zoom selector.
+
+Pages can be reordered by **dragging thumbnails** in the sidebar, or via
+"Seite verschieben" in the Seiten menu. Recently opened files are listed on
+the start screen (desktop app), and unsaved sessions are snapshotted every
+~90 s so a crash offers recovery on the next start.
 
 **Seiten** menu (Stirling-PDF/PDFSam-style, fully offline):
 - **PDF anhängen** — merge another PDF's pages onto the end of the current
@@ -114,6 +123,9 @@ and **Extras** dropdown menus.
   own file, de-duplicating a logo repeated across pages.
 - **Seiten als Bilder exportieren** — export a page range as standalone PNG
   images at a chosen DPI, without navigating to each page first.
+- **Texterkennung (OCR)** — recognize text in scanned pages fully offline
+  (tesseract.js, German + English models vendored via `npm run fetch-ocr`)
+  and save it as a .txt file.
 
 | Shortcut | Action |
 | --- | --- |

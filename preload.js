@@ -31,4 +31,25 @@ contextBridge.exposeInMainWorld("desktop", {
 
   /** Tell the main process the editor can accept files now. */
   rendererReady: () => ipcRenderer.send("renderer-ready"),
+
+  /**
+   * Native open dialog (main process). Returns { opened } — the file itself
+   * arrives through the regular onOpenFile channel, so the recent-files list
+   * gets the real path.
+   */
+  openPdfDialog: () => ipcRenderer.invoke("open-pdf-dialog"),
+
+  /** Recently opened files: [{ path, name, ts }], newest first. */
+  listRecent: () => ipcRenderer.invoke("recent-list"),
+  /** Reopen a recent file by path (delivered via onOpenFile). */
+  openRecent: (path) => ipcRenderer.invoke("recent-open", path),
+
+  /** Small persistent key/value store (survives restarts, unlike web storage). */
+  storeGet: (key) => ipcRenderer.invoke("store-get", key),
+  storeSet: (key, value) => ipcRenderer.invoke("store-set", key, value),
+
+  /** Crash-recovery snapshot of the open document. */
+  recoverySave: (bytes, name) => ipcRenderer.invoke("recovery-save", bytes, name),
+  recoveryLoad: () => ipcRenderer.invoke("recovery-load"),
+  recoveryClear: () => ipcRenderer.invoke("recovery-clear"),
 });

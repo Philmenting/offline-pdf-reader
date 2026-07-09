@@ -7,19 +7,19 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
+        description: "Release tag (e.g. v0.5.0); empty = v<package.json version>"
         required: false
-        default: "v0.1.0"
+        default: ""
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags for the changelog step
 
       - uses: actions/setup-node@v4
         with:
@@ -29,11 +29,48 @@ jobs:
         with:
           python-version: "3.x"
 
+      # Single source of truth for the version: an explicit dispatch input
+      # wins, then the pushed tag, then package.json.
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      # Changelog from commit subjects since the previous release tag —
+      # GitHub's generated notes only list PRs, and this repo releases
+      # straight from master commits.
+      - name: Generate changelog
+        run: |
+          git fetch --tags --force
+          PREV=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -v "^${{ steps.tag.outputs.tag }}$" | head -1)
+          echo "## Änderungen" > release-notes.md
+          echo "" >> release-notes.md
+          if [ -n "$PREV" ] && git rev-parse "$PREV" >/dev/null 2>&1; then
+            echo "Seit $PREV:" >> release-notes.md
+            echo "" >> release-notes.md
+            git log --no-merges --pretty='- %s' "$PREV"..HEAD >> release-notes.md
+          else
+            git log --no-merges --pretty='- %s' -20 >> release-notes.md
+          fi
+          cat release-notes.md
+
       - name: Build ONLYOFFICE PDF engine
         run: npm run build-engine
 
       - name: Generate font registry
         run: npm run generate-fonts
+
+      - name: Fetch OCR stack (tesseract.js)
+        run: npm run fetch-ocr
 
       # Regression gate for the typed-text artifact bug (ASCW3 / .notdef
       # boxes): types into a subset-font PDF and asserts real glyphs come out.
@@ -60,6 +97,6 @@ jobs:
           files: |
             dist/Offline-PDF-Editor-Setup.exe
             dist/Offline-PDF-Editor.zip
-          generate_release_notes: true
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "Offline PDF Editor ${{ env.RELEASE_TAG }}"
+          body_path: release-notes.md
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Offline PDF Editor ${{ steps.tag.outputs.tag }}"

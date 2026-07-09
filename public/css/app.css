@@ -113,7 +113,7 @@ body {
 .toolbar-sep {
   width: 1px;
   height: 22px;
-  margin: 0 5px;
+  margin: 0 4px;
   background: var(--border-strong);
   flex: 0 0 auto;
 }
@@ -150,8 +150,8 @@ body {
 .btn:disabled .icon { color: var(--muted); }
 
 .btn.icon-only {
-  width: 34px;
-  min-width: 34px;
+  width: 31px;
+  min-width: 31px;
   padding: 0;
 }
 
@@ -182,6 +182,7 @@ body {
 .menu > summary { list-style: none; }
 .menu > summary::-webkit-details-marker { display: none; }
 .menu > summary .chevron { margin-left: -2px; transition: transform 0.12s ease; }
+.menu > summary.icon-only-menu { padding: 0 4px; }
 .menu[open] > summary { background: var(--control-active); }
 .menu[open] > summary .chevron { transform: rotate(180deg); }
 
@@ -386,6 +387,9 @@ body {
   justify-content: center;
   pointer-events: none;
 }
+/* the card itself is interactive (recent-files list) — drag&drop still works
+   because drop is handled on .viewer-host and bubbles up from here */
+.placeholder-card { pointer-events: auto; }
 .placeholder-card {
   display: flex;
   flex-direction: column;
@@ -403,18 +407,102 @@ body {
 .placeholder-title { margin: 0; font-size: 15px; font-weight: 650; }
 .placeholder .muted { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
+.recent-files {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+.recent-heading {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.recent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.recent-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 9px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.recent-item:hover { background: var(--control-hover); }
+.recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+  color: var(--accent);
+}
+.recent-date { flex: 0 0 auto; font-size: 11.5px; color: var(--muted); }
+
 /* ── Status bar ──────────────────────────────────────────────────────────── */
-.app-status {
+.app-statusbar {
   flex: 0 0 auto;
-  height: 26px;
+  height: 30px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0 8px 0 14px;
   background: var(--surface);
   border-top: 1px solid var(--border-strong);
   color: var(--muted);
   font-size: 12px;
 }
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.status-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.status-controls[hidden] { display: none; }
+.status-page { display: inline-flex; align-items: center; gap: 5px; }
+.status-page input {
+  width: 46px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+}
+.status-page input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-ring); }
+#page-count { font-variant-numeric: tabular-nums; }
+#zoom-select {
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+#zoom-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-ring); }
 
 /* ── Floating search bar (Strg+F) ────────────────────────────────────────── */
 .search-bar {
@@ -460,6 +548,21 @@ body {
   cursor: pointer;
 }
 .search-btn:hover { background: var(--control-hover); }
+
+/* ── Signature pad ───────────────────────────────────────────────────────── */
+.signature-panel { width: min(620px, calc(100vw - 48px)); }
+#signature-canvas {
+  width: 100%;
+  height: 200px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background:
+    linear-gradient(to top, transparent 47px, var(--border) 48px, transparent 49px),
+    var(--surface);
+  cursor: crosshair;
+  touch-action: none;
+}
+.prompt-actions-spacer { flex: 1 1 auto; }
 
 /* ── Reusable prompt dialog (replaces window.prompt()) ───────────────────── */
 .prompt-backdrop {

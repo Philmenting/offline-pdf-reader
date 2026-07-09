@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { createServer } = require("http");
-const { readFile, stat, writeFile } = require("fs/promises");
+const { readFile, stat, writeFile, unlink } = require("fs/promises");
 const { appendFileSync } = require("fs");
 const { join, posix, extname, dirname } = require("path");
 const os = require("os");
@@ -95,6 +95,34 @@ let mainWindow;
 let rendererReady = false;
 let pendingOpenPath = null;
 
+// ── Persistent app state (userData) ───────────────────────────────────────
+// The renderer's web storage (localStorage/IndexedDB) does NOT persist across
+// app restarts: the internal HTTP server binds a random port each launch, so
+// the renderer origin changes every time. Anything that must survive a
+// restart (recent files, saved signature, crash-recovery snapshot) therefore
+// lives here, as plain files in Electron's per-user data directory.
+const storePath = () => join(app.getPath("userData"), "app-store.json");
+const recoveryPdfPath = () => join(app.getPath("userData"), "recovery.pdf");
+
+async function readStore() {
+  try { return JSON.parse(await readFile(storePath(), "utf8")); }
+  catch { return {}; }
+}
+async function writeStore(store) {
+  try { await writeFile(storePath(), JSON.stringify(store)); }
+  catch (e) { logLine(`[store] write FAILED: ${e.message}`); }
+}
+
+const MAX_RECENT = 10;
+async function addRecentFile(filePath) {
+  const store = await readStore();
+  const recent = (store.recentFiles || []).filter((r) => r.path !== filePath);
+  recent.unshift({ path: filePath, name: filePath.replace(/^.*[\\/]/, ""), ts: Date.now() });
+  store.recentFiles = recent.slice(0, MAX_RECENT);
+  await writeStore(store);
+  try { app.addRecentDocument(filePath); } catch { /* platform optional */ }
+}
+
 // "Öffnen mit" / double-click: a PDF path may arrive on the command line
 // (first launch) or from a second instance (single-instance lock below).
 function pdfPathFromArgv(argv) {
@@ -113,6 +141,7 @@ async function sendOpenFile(filePath) {
     const data = await readFile(filePath);
     const name = filePath.replace(/^.*[\\/]/, "");
     mainWindow.webContents.send("open-file", { name, data });
+    addRecentFile(filePath);
     logLine(`[open-with] sent ${filePath} (${data.length} bytes)`);
   } catch (e) {
     logLine(`[open-with] FAILED to read ${filePath}: ${e.message}`);
@@ -178,6 +207,83 @@ ipcMain.handle("save-pdf", async (_event, bytes, suggestedName) => {
     logLine(`[save] FAILED: ${e.message}`);
     return { saved: false, error: e.message };
   }
+});
+
+// Native "Öffnen": file picker in the main process so we get a real file
+// PATH (renderer <input type=file> doesn't expose one with contextIsolation),
+// which the recent-files list needs to reopen the document later.
+ipcMain.handle("open-pdf-dialog", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: "PDF öffnen",
+    properties: ["openFile"],
+    filters: [{ name: "PDF-Dokument", extensions: ["pdf"] }],
+  });
+  if (canceled || !filePaths.length) return { opened: false };
+  await sendOpenFile(filePaths[0]);
+  return { opened: true };
+});
+
+// Recent files: list (pruning entries whose file vanished) and reopen-by-path.
+ipcMain.handle("recent-list", async () => {
+  const store = await readStore();
+  const recent = store.recentFiles || [];
+  const alive = [];
+  for (const entry of recent) {
+    try { await stat(entry.path); alive.push(entry); } catch { /* file gone */ }
+  }
+  if (alive.length !== recent.length) {
+    store.recentFiles = alive;
+    await writeStore(store);
+  }
+  return alive;
+});
+ipcMain.handle("recent-open", async (_event, filePath) => {
+  const store = await readStore();
+  if (!(store.recentFiles || []).some((r) => r.path === filePath)) {
+    return { ok: false, error: "Unbekannter Eintrag." }; // only reopen files we listed
+  }
+  await sendOpenFile(filePath);
+  return { ok: true };
+});
+
+// Small key/value store for renderer state that must survive restarts
+// (e.g. the saved signature image). Values are JSON-serializable and small.
+ipcMain.handle("store-get", async (_event, key) => (await readStore())[`kv:${key}`]);
+ipcMain.handle("store-set", async (_event, key, value) => {
+  const store = await readStore();
+  store[`kv:${key}`] = value;
+  await writeStore(store);
+});
+
+// Crash-recovery snapshot: the renderer periodically sends the serialized
+// document while it has unsaved changes; cleared on save and clean close.
+ipcMain.handle("recovery-save", async (_event, bytes, name) => {
+  try {
+    await writeFile(recoveryPdfPath(), Buffer.from(bytes));
+    const store = await readStore();
+    store.recovery = { name, ts: Date.now(), size: bytes.length };
+    await writeStore(store);
+    return { ok: true };
+  } catch (e) {
+    logLine(`[recovery] save FAILED: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle("recovery-load", async () => {
+  try {
+    const store = await readStore();
+    if (!store.recovery) return null;
+    const data = await readFile(recoveryPdfPath());
+    return { name: store.recovery.name, ts: store.recovery.ts, data };
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle("recovery-clear", async () => {
+  const store = await readStore();
+  delete store.recovery;
+  await writeStore(store);
+  try { await unlink(recoveryPdfPath()); } catch { /* already gone */ }
 });
 
 app.on("ready", async () => {

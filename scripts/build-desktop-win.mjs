@@ -171,6 +171,14 @@ async function main() {
   // vendor/onlyoffice (engine)
   await cp(join(ROOT, "vendor", "onlyoffice"), join(APP, "vendor", "onlyoffice"), { recursive: true });
 
+  // vendor/ocr (offline text recognition; optional — npm run fetch-ocr)
+  if (await exists(join(ROOT, "vendor", "ocr"))) {
+    await cp(join(ROOT, "vendor", "ocr"), join(APP, "vendor", "ocr"), { recursive: true });
+    console.log("  + vendor/ocr (Texterkennung)");
+  } else {
+    console.warn("  ! vendor/ocr fehlt — OCR wird im Build deaktiviert sein (npm run fetch-ocr)");
+  }
+
   // vendor/fonts (Western only)
   await mkdir(join(APP, "vendor", "fonts"), { recursive: true });
   const allFontFiles = await readdir(vendorFonts);

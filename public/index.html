@@ -35,6 +35,11 @@
       <symbol id="i-rotate-left" viewBox="0 0 24 24"><path d="M4.5 6.5v5h5"/><path d="M5 11.5a8 8 0 1 1 2.2 5.5"/></symbol>
       <symbol id="i-rotate-right" viewBox="0 0 24 24"><path d="M19.5 6.5v5h-5"/><path d="M19 11.5a8 8 0 1 0-2.2 5.5"/></symbol>
       <symbol id="i-doc" viewBox="0 0 24 24"><path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z"/><path d="M13.5 3.5v5h5"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20c2-.5 6-2.5 9.5-6S19 7 19 7l-2-2s-3.5 2-7 5.5S4.5 18 4 20Z"/><path d="m15 7 2 2"/></symbol>
+      <symbol id="i-sign" viewBox="0 0 24 24"><path d="M4 16c2-5 4-8 5.5-8s.5 5 1.5 5 2-3.5 3-3.5.5 3.5 1.5 3.5 2-1.5 4.5-1.5"/><path d="M4 20h16"/></symbol>
+      <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.5" ry="6"/></symbol>
+      <symbol id="i-line" viewBox="0 0 24 24"><path d="m5 19 14-14"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m5 19 13-13"/><path d="M11 5.5h7v7"/></symbol>
     </defs>
   </svg>
 
@@ -99,14 +104,37 @@
           <button class="btn tool icon-only" data-tool="strikeout" title="Durchstreichen" disabled>
             <svg class="icon" width="18" height="18"><use href="#i-strike"/></svg>
           </button>
-          <button class="btn tool icon-only" data-tool="shape" title="Form (Rechteck) zeichnen" disabled>
-            <svg class="icon" width="18" height="18"><use href="#i-shape"/></svg>
+          <details class="menu" id="menu-shapes">
+            <summary class="btn menu-btn icon-only-menu" title="Form zeichnen">
+              <svg class="icon" width="18" height="18"><use href="#i-shape"/></svg>
+              <svg class="icon chevron" width="14" height="14"><use href="#i-chevron"/></svg>
+            </summary>
+            <div class="menu-panel">
+              <button class="menu-item" data-tool="shape" title="Rechteck zeichnen" disabled>
+                <svg class="icon" width="16" height="16"><use href="#i-shape"/></svg>Rechteck
+              </button>
+              <button class="menu-item" data-tool="shape-ellipse" title="Ellipse zeichnen" disabled>
+                <svg class="icon" width="16" height="16"><use href="#i-ellipse"/></svg>Ellipse
+              </button>
+              <button class="menu-item" data-tool="shape-line" title="Linie zeichnen" disabled>
+                <svg class="icon" width="16" height="16"><use href="#i-line"/></svg>Linie
+              </button>
+              <button class="menu-item" data-tool="shape-arrow" title="Pfeil zeichnen" disabled>
+                <svg class="icon" width="16" height="16"><use href="#i-arrow"/></svg>Pfeil
+              </button>
+            </div>
+          </details>
+          <button class="btn tool icon-only" data-tool="ink" title="Stift: freihand zeichnen" disabled>
+            <svg class="icon" width="18" height="18"><use href="#i-pen"/></svg>
           </button>
           <button class="btn tool icon-only" data-tool="comment" title="Kommentar / Notiz" disabled>
             <svg class="icon" width="18" height="18"><use href="#i-comment"/></svg>
           </button>
           <button class="btn tool icon-only" data-tool="image" title="Bild einfügen" disabled>
             <svg class="icon" width="18" height="18"><use href="#i-image"/></svg>
+          </button>
+          <button class="btn icon-only" data-tool="signature" title="Signatur einfügen (Umschalt+Klick: neu zeichnen)" disabled>
+            <svg class="icon" width="18" height="18"><use href="#i-sign"/></svg>
           </button>
         </div>
 
@@ -121,6 +149,7 @@
             <button class="menu-item" data-tool="page-add" title="Leere Seite nach der aktuellen einfügen" disabled>Seite hinzufügen</button>
             <button class="menu-item" data-tool="page-remove" title="Aktuelle Seite löschen" disabled>Aktuelle Seite löschen</button>
             <button class="menu-item" data-tool="page-remove-range" title="Mehrere Seiten per Bereich löschen (z.B. „2-4,7&#34;)" disabled>Seitenbereich entfernen …</button>
+            <button class="menu-item" data-tool="page-move" title="Aktuelle Seite an eine andere Position verschieben (auch: Miniaturen per Drag && Drop sortieren)" disabled>Seite verschieben …</button>
             <div class="menu-divider" role="separator"></div>
             <button class="menu-item" data-tool="pdf-append" title="Anderes PDF anhängen (Seiten ans Dokumentende)" disabled>PDF anhängen …</button>
             <button class="menu-item" data-tool="pdf-extract" title="Seitenbereich als neue PDF-Datei exportieren (Teilen/Extrahieren)" disabled>Seiten extrahieren (Teilen) …</button>
@@ -146,6 +175,8 @@
             <div class="menu-divider" role="separator"></div>
             <button class="menu-item" data-tool="extract-images" title="Alle eingebetteten Bilder als Dateien exportieren" disabled>Bilder extrahieren</button>
             <button class="menu-item" data-tool="pages-to-images" title="Seitenbereich als PNG-Bilder exportieren" disabled>Seiten als Bilder exportieren …</button>
+            <div class="menu-divider" role="separator"></div>
+            <button class="menu-item" data-tool="ocr" title="Text in gescannten Seiten erkennen (offline, Deutsch/Englisch) und als Textdatei speichern" disabled>Texterkennung (OCR) …</button>
           </div>
         </details>
 
@@ -229,6 +260,20 @@
         </div>
       </div>
 
+      <!-- Signature pad: draw once, stored persistently, stamped as image. -->
+      <div id="signature-dialog" class="prompt-backdrop" hidden>
+        <div class="prompt-panel signature-panel" role="dialog" aria-modal="true" aria-label="Signatur zeichnen">
+          <p class="prompt-message">Signatur zeichnen (Maus oder Touch):</p>
+          <canvas id="signature-canvas" width="560" height="200"></canvas>
+          <div class="prompt-actions">
+            <button id="signature-clear" class="btn" type="button"><span class="btn-label">Löschen</span></button>
+            <span class="prompt-actions-spacer"></span>
+            <button id="signature-cancel" class="btn" type="button"><span class="btn-label">Abbrechen</span></button>
+            <button id="signature-ok" class="btn primary-action" type="button"><span class="btn-label">Übernehmen</span></button>
+          </div>
+        </div>
+      </div>
+
       <!--
         The ONLYOFFICE PDF editor (Asc.PDFEditorApi) replaces this element's
         innerHTML with the full editor page DOM (id_main / id_viewer /
@@ -247,12 +292,35 @@
           <svg class="icon placeholder-icon" width="44" height="44"><use href="#i-doc"/></svg>
           <p class="placeholder-title">Öffne eine PDF-Datei, um sie zu bearbeiten.</p>
           <p class="muted">Datei hierher ziehen oder oben links auf „Öffnen" klicken.<br>Läuft vollständig offline — kein Server-Upload.</p>
+          <div id="recent-files" class="recent-files" hidden>
+            <p class="recent-heading">Zuletzt geöffnet</p>
+            <ul id="recent-list" class="recent-list"></ul>
+          </div>
         </div>
       </div>
     </section>
   </main>
 
-  <footer class="app-status" id="status">Engine wird geladen …</footer>
+  <footer class="app-statusbar">
+    <div id="status" class="status-text">Engine wird geladen …</div>
+    <div id="status-controls" class="status-controls" hidden>
+      <label class="status-page" title="Seite (Enter springt)">Seite
+        <input id="page-input" type="number" min="1" value="1">
+        <span id="page-count">/ 0</span>
+      </label>
+      <select id="zoom-select" title="Zoom">
+        <option value="50">50 %</option>
+        <option value="75">75 %</option>
+        <option value="90">90 %</option>
+        <option value="100" selected>100 %</option>
+        <option value="125">125 %</option>
+        <option value="150">150 %</option>
+        <option value="200">200 %</option>
+        <option value="300">300 %</option>
+        <option value="400">400 %</option>
+      </select>
+    </div>
+  </footer>
 
   <script>
     // Dropdown menus (<details class="menu">): close on outside click, after a

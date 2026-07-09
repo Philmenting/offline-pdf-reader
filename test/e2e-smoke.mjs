@@ -766,6 +766,100 @@ async function testRemovePagesByRange(browser) {
   await page.close();
 }
 
+// UI + new-feature regression: status bar page/zoom controls, menu-based
+// page move, ink pen strokes surviving the real save pipeline, and the
+// signature pad inserting an image. Guards the modularized toolbar wiring.
+async function testUiAndNewTools(browser) {
+  const sourcePdf = await makeMultiPagePdf(4);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "ui.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("ui-and-new-tools document open");
+
+  // status bar controls
+  const sc = await page.evaluate(() => ({
+    visible: !document.getElementById("status-controls").hidden,
+    count: document.getElementById("page-count").textContent,
+  }));
+  check("status bar shows page controls after open", sc.visible && sc.count === "/ 4", JSON.stringify(sc));
+
+  await page.fill("#page-input", "3");
+  await page.press("#page-input", "Enter");
+  await page.waitForTimeout(600);
+  const cur = await page.evaluate(() => window.__pdfEditor.getCurrentPage());
+  check("page jump via status bar input", cur === 2, `currentPage=${cur}`);
+
+  await page.selectOption("#zoom-select", "150");
+  await page.waitForTimeout(500);
+  const zoom = await page.evaluate(() => Math.round(window.__pdfEditor.getDocumentRenderer().zoom * 100));
+  check("zoom via status bar select", zoom === 150, `zoom=${zoom}`);
+  await page.selectOption("#zoom-select", "100");
+  await page.waitForTimeout(400);
+
+  // menu-based page move (current page 3 → position 1), then undo
+  await clickTool(page, "page-move");
+  await fillPromptDialog(page, "1");
+  await page.waitForTimeout(700);
+  const moveStatus = await page.evaluate(() => document.getElementById("status").textContent);
+  check("page move via Seiten menu", moveStatus.includes("verschoben"), moveStatus);
+  await clickTool(page, "undo");
+  await page.waitForTimeout(500);
+
+  // ink pen: draw a stroke, leave the mode, save → /Ink annotation persists
+  await clickTool(page, "ink");
+  await page.waitForTimeout(300);
+  const dy = await headerYOffset(page);
+  await page.mouse.move(700, 252 + dy);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(700 + i * 14, 252 + dy + (i % 2) * 22, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  await clickTool(page, "select");
+  await page.waitForTimeout(300);
+  const annotTypes = await page.evaluate(() =>
+    (window.__pdfEditor.getPDFDoc().annots || []).map((a) => (a.GetType ? a.GetType() : -1)));
+  check("ink stroke creates an annotation", annotTypes.length > 0, `types=${JSON.stringify(annotTypes)}`);
+
+  const savedBytes = await page.evaluate(() => {
+    const e = window.__pdfEditor;
+    const d = e.getPDFDoc();
+    const n = e.getCountPages();
+    return Array.from(d.GetPagesBinary(Array.from({ length: n }, (_, i) => i), false));
+  });
+  check("save with ink yields a real PDF",
+    Buffer.from(savedBytes.slice(0, 5)).toString() === "%PDF-");
+  check("ink annotation serialized into the saved PDF (/Ink)",
+    Buffer.from(savedBytes).includes("/Ink"));
+
+  // signature pad: Shift+click opens it even with a stored signature
+  await page.keyboard.down("Shift");
+  await page.click('[data-tool="signature"]');
+  await page.keyboard.up("Shift");
+  await page.waitForSelector("#signature-dialog:not([hidden])", { timeout: 5000 });
+  const cb = await (await page.$("#signature-canvas")).boundingBox();
+  await page.mouse.move(cb.x + 60, cb.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(cb.x + 220, cb.y + 70, { steps: 6 });
+  await page.mouse.up();
+  await page.click("#signature-ok");
+  await page.waitForTimeout(1200);
+  const sigStatus = await page.evaluate(() => document.getElementById("status").textContent);
+  check("signature pad stores and inserts the signature", /Signatur/.test(sigStatus), sigStatus);
+
+  check("no page errors (ui-and-new-tools scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -906,6 +1000,7 @@ async function main() {
     await testExtractPages(browser);
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
+    await testUiAndNewTools(browser);
     await testEditPageImageRendering(browser);
     await testWatermark(browser);
     await testTextModeSaveKeepsContent(browser);
