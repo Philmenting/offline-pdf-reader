@@ -177,6 +177,18 @@ body {
 
 .btn.format-toggle { font-weight: 800; font-size: 13px; }
 
+.marker-color-wrap input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+.marker-color-wrap input[type="color"]:hover:not(:disabled) { background: var(--control-hover); }
+.marker-color-wrap input[type="color"]:disabled { opacity: 0.38; cursor: default; }
+
 /* ── Dropdown menus (<details>) ──────────────────────────────────────────── */
 .menu { position: relative; flex: 0 0 auto; }
 .menu > summary { list-style: none; }

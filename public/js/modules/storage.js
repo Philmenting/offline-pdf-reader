@@ -13,7 +13,12 @@ const STORE = "app-state";
 
 const isDesktop = () => !!window.desktop;
 
-function idb() {
+// Single opener for the app's IndexedDB — EVERY consumer must go through
+// this. Opening the same database with a lower explicit version (as the
+// pending-open handover in main.js once did with version 1) throws
+// VersionError as soon as this v2 exists, which silently broke opening a
+// second document in the web build.
+export function openAppDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
@@ -26,6 +31,8 @@ function idb() {
     req.onerror = () => reject(req.error);
   });
 }
+
+const idb = openAppDb;
 
 async function idbGet(key) {
   const db = await idb();

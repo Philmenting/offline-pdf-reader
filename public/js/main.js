@@ -53,8 +53,9 @@ import { wireSearchBar, openSearchBar, searchStep } from "./modules/search.js";
 import { wireStatusBar, updatePageCount, updateCurrentPage, updateZoomDisplay, setStatusControlsVisible } from "./modules/statusbar.js";
 import { initRecovery, offerRecovery, clearRecoverySnapshot } from "./modules/recovery.js";
 import { renderRecentFiles } from "./modules/recent-files.js";
+import { storeGet, storeSet, openAppDb } from "./modules/storage.js";
 import { wireSignatureDialog, insertSignature, openSignaturePad } from "./modules/signature.js";
-import { initOcr, recognizeText } from "./modules/ocr.js";
+import { initOcr, makeSearchablePdf, exportRecognizedText } from "./modules/ocr.js";
 
 const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
 const ZOOM_MODE  = { Custom: 0, Width: 1, Page: 2 };
@@ -402,7 +403,7 @@ function wireFormatControls() {
 }
 
 function setFormatEnabled(on) {
-  for (const id of ["text-font-family", "text-font-size", "text-bold", "text-italic", "text-color"]) {
+  for (const id of ["text-font-family", "text-font-size", "text-bold", "text-italic", "text-color", "marker-color"]) {
     const node = el(id);
     if (node) node.disabled = !on;
   }
@@ -626,17 +627,11 @@ async function initViewerFallback() {
 // reload the page (the beforeunload guard still protects unsaved changes)
 // and open them in the fresh editor. Used by the file picker, drag&drop and
 // the desktop "Öffnen mit" path alike.
-const PENDING_DB = "offline-pdf-editor";
 const PENDING_STORE = "pending-open";
 
-function pendingDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(PENDING_DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(PENDING_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+// The shared opener (storage.js) owns the DB version — opening with a stale
+// explicit version here threw VersionError and broke the handover.
+const pendingDb = openAppDb;
 
 async function stashPendingOpenAndReload(bytes, name) {
   if (docDirty && !window.confirm(
@@ -802,21 +797,116 @@ function updateTitle() {
 // NOTE: viewer.Save() is NOT that — it only returns the raw change-command
 // stream meant as serializer input; an earlier "Speichern" wrote exactly that
 // stream into .pdf files, which no PDF reader could open.
-function collectPdfBytes() {
+async function collectPdfBytes() {
   const doc = editor.getPDFDoc();
   try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
   const pageCount = editor.getCountPages() | 0;
   const indexes = Array.from({ length: pageCount }, (_, i) => i);
   const result = doc.GetPagesBinary(indexes, false);
   if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") return null;
-  return result instanceof Uint8Array ? result : new Uint8Array(result);
+  const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+  return bakeShapesIntoPdf(bytes, indexes);
+}
+
+// The engine's split-based save stream (SaveForSplit → WASM SplitPages) has
+// NO drawing serialization: user-drawn shapes (CShape page drawings) render
+// in the editor but vanish silently from the saved bytes — the same reason
+// the watermark is baked with pdf-lib. So collect every shape's geometry and
+// draw it into the serialized PDF. Covers the four toolbar presets (rect,
+// ellipse, line, lineWithArrow); free rotation is not re-applied (the
+// toolbar has no rotate for shapes).
+function collectShapeList(srcIndexes) {
+  const doc = editor.getPDFDoc();
+  const shapes = [];
+  srcIndexes.forEach((nPage, outIndex) => {
+    let drawings = [];
+    try {
+      const info = doc.GetPageInfo(nPage);
+      drawings = (info && info.drawings) || [];
+    } catch { return; }
+    for (const d of drawings) {
+      try {
+        if (!d.IsShape || !d.IsShape() || !d.GetRect) continue;
+        const rgba = (f) => { try { const c = f.fill.color.RGBA; return [c.R / 255, c.G / 255, c.B / 255]; } catch { return null; } };
+        shapes.push({
+          page: outIndex,
+          rect: d.GetRect(), // [x1, y1, x2, y2] in pt, y measured from page TOP
+          preset: d.getPresetGeom ? d.getPresetGeom()
+            : (d.spPr && d.spPr.geometry && d.spPr.geometry.preset) || "rect",
+          flipH: !!d.flipH,
+          flipV: !!d.flipV,
+          strokeWidthPt: d.pen && typeof d.pen.w === "number" ? d.pen.w / 12700 : 0.75,
+          stroke: (d.pen && rgba(d.pen)) || [47 / 255, 84 / 255, 150 / 255],
+          fill: d.brush ? rgba(d.brush) : null,
+        });
+      } catch { /* skip malformed drawing */ }
+    }
+  });
+  return shapes;
+}
+
+async function bakeShapesIntoPdf(bytes, srcIndexes) {
+  let shapes;
+  try {
+    shapes = collectShapeList(srcIndexes);
+  } catch { return bytes; }
+  if (!shapes.length) return bytes;
+
+  await loadPdfLib();
+  const { PDFDocument, rgb } = window.PDFLib;
+  const pdf = await PDFDocument.load(bytes);
+  const pages = pdf.getPages();
+
+  for (const s of shapes) {
+    const page = pages[s.page];
+    if (!page) continue;
+    const pageH = page.getHeight();
+    const [x1, yTop1, x2, yTop2] = s.rect;
+    const w = x2 - x1, h = yTop2 - yTop1;
+    const stroke = rgb(...s.stroke);
+    const thickness = Math.max(0.5, s.strokeWidthPt);
+
+    if (s.preset === "line" || s.preset === "lineWithArrow") {
+      // the xfrm box stores the drag's bounding box; flips encode direction
+      let sx = s.flipH ? x2 : x1, ex = s.flipH ? x1 : x2;
+      let syTop = s.flipV ? yTop2 : yTop1, eyTop = s.flipV ? yTop1 : yTop2;
+      const start = { x: sx, y: pageH - syTop };
+      const end = { x: ex, y: pageH - eyTop };
+      page.drawLine({ start, end, thickness, color: stroke });
+      if (s.preset === "lineWithArrow") {
+        const ang = Math.atan2(end.y - start.y, end.x - start.x);
+        const len = Math.max(6, thickness * 4);
+        for (const da of [Math.PI - 0.5, Math.PI + 0.5]) {
+          page.drawLine({
+            start: end,
+            end: { x: end.x + len * Math.cos(ang + da), y: end.y + len * Math.sin(ang + da) },
+            thickness, color: stroke,
+          });
+        }
+      }
+    } else if (s.preset === "ellipse") {
+      page.drawEllipse({
+        x: x1 + w / 2, y: pageH - (yTop1 + h / 2),
+        xScale: w / 2, yScale: h / 2,
+        borderColor: stroke, borderWidth: thickness,
+        color: s.fill ? rgb(...s.fill) : undefined,
+      });
+    } else { // rect and anything unknown: bounding box
+      page.drawRectangle({
+        x: x1, y: pageH - yTop2, width: w, height: h,
+        borderColor: stroke, borderWidth: thickness,
+        color: s.fill ? rgb(...s.fill) : undefined,
+      });
+    }
+  }
+  return pdf.save();
 }
 
 async function saveDocument() {
   if (mode !== "editor" || !docOpen) return;
   setStatus("PDF wird erzeugt …");
   try {
-    const bytes = collectPdfBytes();
+    const bytes = await collectPdfBytes();
     if (!bytes) {
       setStatus("Speichern fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
@@ -857,7 +947,7 @@ async function saveDocument() {
 async function printDocument() {
   if (mode !== "editor" || !docOpen) return;
   try {
-    const bytes = collectPdfBytes();
+    const bytes = await collectPdfBytes();
     if (!bytes) {
       setStatus("Drucken fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
@@ -898,6 +988,40 @@ function setViewerTargetType(type) {
   try { editor.asc_setViewerTargetType(type); } catch { /* viewer not ready */ }
 }
 
+// User-selectable marker color (shared by highlight/underline/strikeout),
+// persisted across sessions. Highlight applies it translucently, the line
+// markers opaquely.
+let markerColorHex = "#ffec00";
+
+function markerRgb() {
+  return [
+    parseInt(markerColorHex.slice(1, 3), 16),
+    parseInt(markerColorHex.slice(3, 5), 16),
+    parseInt(markerColorHex.slice(5, 7), 16),
+  ];
+}
+
+async function initMarkerColor() {
+  const saved = await storeGet("marker-color");
+  if (typeof saved === "string" && /^#[0-9a-fA-F]{6}$/.test(saved)) markerColorHex = saved;
+  const input = el("marker-color");
+  input.value = markerColorHex;
+  input.addEventListener("change", () => {
+    markerColorHex = input.value;
+    storeSet("marker-color", markerColorHex);
+    // re-arm an active marker so the next stroke uses the new color
+    if (activeTool.startsWith("marker:")) {
+      const typeName = activeTool.slice("marker:".length);
+      const [r, g, b] = markerRgb();
+      try {
+        editor.SetMarkerFormat(annotType(typeName), true,
+          typeName === "Highlight" ? 50 : 100, r, g, b);
+      } catch { /* keep old color */ }
+    }
+    refocusEditor();
+  });
+}
+
 function setMarker(typeName, r, g, b, opacity) {
   if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
   const type = annotType(typeName);
@@ -925,8 +1049,18 @@ const TOOL_HANDLERS = {
     setFormFillMode(false);
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
+    try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
     setViewerTargetType("select");
     setActiveTool("select");
+  },
+  "hand":        () => {
+    setFormFillMode(false);
+    editor.SetMarkerFormat(undefined, false);
+    try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
+    try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
+    setViewerTargetType("hand");
+    setActiveTool("hand");
+    setStatus("Hand-Werkzeug: Seite mit gedrückter Maustaste verschieben.");
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => { if (typeof editor.asc_EditPage === "function") editor.asc_EditPage(); setActiveTool("edit-text"); },
@@ -934,9 +1068,9 @@ const TOOL_HANDLERS = {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
     setActiveTool("textbox");
   },
-  "highlight":   () => setMarker("Highlight", 255, 236, 0, 50),
-  "underline":   () => setMarker("Underline", 220, 30, 30, 100),
-  "strikeout":   () => setMarker("Strikeout", 220, 30, 30, 100),
+  "highlight":   () => setMarker("Highlight", ...markerRgb(), 50),
+  "underline":   () => setMarker("Underline", ...markerRgb(), 100),
+  "strikeout":   () => setMarker("Strikeout", ...markerRgb(), 100),
   "shape":         () => startShape("shape", "rect"),
   "shape-ellipse": () => startShape("shape-ellipse", "ellipse"),
   "shape-line":    () => startShape("shape-line", "line"),
@@ -960,7 +1094,8 @@ const TOOL_HANDLERS = {
   "page-numbers":  () => addPageNumbers(),
   "extract-images": () => extractEmbeddedImages(),
   "pages-to-images": () => exportPagesAsImages(),
-  "ocr":            () => recognizeText(),
+  "ocr":            () => makeSearchablePdf(),
+  "ocr-txt":        () => exportRecognizedText(),
 
   "zoom-out":    () => stepZoom(-1),
   "zoom-in":     () => stepZoom(1),
@@ -971,14 +1106,18 @@ const TOOL_HANDLERS = {
 // Shape drawing. StartAddShape takes an OOXML preset name; the engine turns
 // the drawn geometry into a PDF drawing. Clicking the active shape tool again
 // leaves shape mode.
+// NOTE the is_apply flag: true ARMS add-shape mode (locks the crosshair
+// cursor, next drag draws the preset); false ENDS it (sync_EndAddShape +
+// sync_StartAddShapeCallback(false)). Getting this backwards makes the shape
+// tools silently do nothing.
 function startShape(toolName, preset) {
   if (typeof editor.StartAddShape !== "function") return;
   if (activeTool === toolName) {
-    try { editor.StartAddShape("rect", true); } catch { /* leave draw mode */ }
+    try { editor.StartAddShape(preset, false); } catch { /* leave draw mode */ }
     setActiveTool("select");
     return;
   }
-  editor.StartAddShape(preset, false);
+  editor.StartAddShape(preset, true);
   setActiveTool(toolName);
 }
 
@@ -1170,7 +1309,8 @@ async function extractPages() {
       setStatus("Extrahieren fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
     }
-    const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+    const bytes = await bakeShapesIntoPdf(
+      result instanceof Uint8Array ? result : new Uint8Array(result), indexes);
     const suffix = indexes.length === pageCount ? "alle-Seiten" : `Seiten-${spec.replace(/[^0-9,-]/g, "")}`;
     const outName = lastName.replace(/\.pdf$/i, "") + `-${suffix}.pdf`;
 
@@ -1370,7 +1510,7 @@ async function addWatermark() {
   setStatus("Wasserzeichen wird eingefügt …");
   try {
     await loadPdfLib();
-    const bytes = collectPdfBytes(); // carries all edits made so far
+    const bytes = await collectPdfBytes(); // carries all edits made so far
     if (!bytes) {
       setStatus("Wasserzeichen fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
@@ -1573,12 +1713,12 @@ function setToolEnabled(tool, on) {
 
 // Tools available once a document is open in editor mode.
 const EDITOR_TOOLS = [
-  "undo", "redo", "select", "edit-text", "textbox", "highlight", "underline",
+  "undo", "redo", "select", "hand", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "shape-ellipse", "shape-line", "shape-arrow", "ink", "comment",
   "image", "signature", "page-add", "page-remove", "page-remove-range", "page-move",
   "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images",
-  "pages-to-images", "ocr",
+  "pages-to-images", "ocr", "ocr-txt",
 ];
 
 function enableEditing(on) {
@@ -1645,8 +1785,13 @@ function wireUi() {
     markSaved: () => markDirty(false),
   });
   renderRecentFiles();
-  initOcr({ getEditor: () => editor, isDocOpen: () => docOpen, showPromptDialog,
-            parsePageRangeSpec, getDocName: () => lastName, setStatus, renderer });
+  initMarkerColor();
+  initOcr({
+    getEditor: () => editor, isDocOpen: () => docOpen, showPromptDialog,
+    parsePageRangeSpec, getDocName: () => lastName, setStatus, renderer,
+    collectPdfBytes, openArrayBuffer, loadPdfLib,
+    markClean: () => markDirty(false),
+  });
 
   // ONLYOFFICE's text-input layer (common/text_input2.js) installs a global
   // document "focus" listener: whenever DOM focus lands on an element it does

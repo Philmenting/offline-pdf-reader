@@ -889,6 +889,232 @@ async function testUiAndNewTools(browser) {
   await page.close();
 }
 
+// Shapes drawn with the mouse must (a) actually appear (StartAddShape's
+// is_apply flag ARMS with true and CANCELS with false — regression guard for
+// getting it backwards) and (b) survive the real save path. The engine's
+// save stream has no drawing serialization, so the host bakes shapes into
+// the PDF with pdf-lib; this verifies that end to end via pixel comparison.
+async function testShapesSurviveSave(browser) {
+  const sourcePdf = await makeMultiPagePdf(1);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", (d) => d.accept());
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "shapes.pdf", mimeType: "application/pdf", buffer: sourcePdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  console.log("shapes document open");
+
+  const dy = await headerYOffset(page);
+  const shapeDrags = [
+    ["shape", 420, 200, 560, 280],
+    ["shape-ellipse", 600, 200, 720, 280],
+    ["shape-line", 420, 330, 700, 360],
+    ["shape-arrow", 420, 400, 700, 440],
+  ];
+  for (const [tool, x1, y1, x2, y2] of shapeDrags) {
+    await clickTool(page, tool);
+    await page.waitForTimeout(200);
+    await page.mouse.move(x1, y1 + 52 + dy);
+    await page.mouse.down();
+    await page.mouse.move(x2, y2 + 52 + dy, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+  }
+  const drawn = await page.evaluate(() => {
+    const d = window.__pdfEditor.getPDFDoc();
+    try { return d.GetPageInfo(0).drawings.filter((x) => x.IsShape && x.IsShape()).length; }
+    catch { return 0; }
+  });
+  check("all four shape presets draw via mouse drag", drawn === 4, `shapes=${drawn}`);
+
+  const bandCount = (p) => p.evaluate(() => {
+    const e = window.__pdfEditor;
+    const d = e.getPDFDoc();
+    const r = e.getDocumentRenderer();
+    const w = Math.round(d.GetPageWidthMM(0) / 25.4 * 96);
+    const h = Math.round(d.GetPageHeightMM(0) / 25.4 * 96);
+    const canvas = r.GetPrintPage(0, w, h, window.AscPDF.PRINT_CONTENT_TYPES.docAndMarkups);
+    const ctx = canvas.getContext("2d");
+    const img = ctx.getImageData(0, Math.round(h * 0.15), w, Math.round(h * 0.5)).data;
+    let nonWhite = 0;
+    for (let i = 0; i < img.length; i += 4) {
+      if (img[i] < 245 || img[i + 1] < 245 || img[i + 2] < 245) nonWhite++;
+    }
+    return nonWhite;
+  });
+
+  const pixelsBefore = await bandCount(page);
+  const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
+  await page.click("#btn-save");
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const c of stream) chunks.push(c);
+  const saved = Buffer.concat(chunks);
+  check("saving with shapes yields a real PDF", saved.slice(0, 5).toString() === "%PDF-", `${saved.length} bytes`);
+
+  const page2 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page2.on("dialog", (d) => d.accept());
+  await page2.goto(BASE);
+  await page2.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page2.$("#file-input")).setInputFiles({ name: "shapes-saved.pdf", mimeType: "application/pdf", buffer: saved });
+  await page2.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page2.waitForTimeout(1500);
+  const pixelsAfter = await bandCount(page2);
+  check("shapes survive save+reopen (baked into the PDF)",
+    pixelsBefore > 500 && pixelsAfter >= pixelsBefore * 0.6,
+    `before=${pixelsBefore} after=${pixelsAfter}`);
+
+  check("no page errors (shapes scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+  await page2.close();
+}
+
+// Hand tool, marker color, and — critically — opening a SECOND document.
+// The handover stashes bytes in IndexedDB and reloads; a version mismatch
+// between two openers of the same DB (VersionError) once broke it silently,
+// and no scenario covered it because each test opens exactly one file.
+async function testHandMarkerSecondDoc(browser) {
+  const first = await makeMultiPagePdf(2);
+  const second = await makeMultiPagePdf(5);
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", (d) => d.accept());
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "erste.pdf", mimeType: "application/pdf", buffer: first });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("hand-marker-seconddoc document open");
+
+  // hand tool pans, select restores drag-to-select
+  await clickTool(page, "hand");
+  const handMode = await page.evaluate(() => !!window.__pdfEditor.getDocumentRenderer().MouseHandObject);
+  check("hand tool switches the engine into pan mode", handMode);
+  await clickTool(page, "select");
+  const selectMode = await page.evaluate(() => !window.__pdfEditor.getDocumentRenderer().MouseHandObject);
+  check("select tool restores text-selection mode", selectMode);
+
+  // marker color picker feeds the engine
+  await page.evaluate(() => {
+    const input = document.getElementById("marker-color");
+    input.value = "#00c853";
+    input.dispatchEvent(new Event("change"));
+  });
+  await clickTool(page, "highlight");
+  await page.waitForTimeout(300);
+  const hlColor = await page.evaluate(() => window.__pdfEditor.getPDFDoc().HighlightColor);
+  check("marker color picker feeds SetMarkerFormat", 
+    !!hlColor && hlColor.r === 0 && hlColor.g === 200 && hlColor.b === 83, JSON.stringify(hlColor));
+  await clickTool(page, "select");
+
+  // second document: IndexedDB handover + reload must survive
+  await (await page.$("#file-input")).setInputFiles({ name: "zweite.pdf", mimeType: "application/pdf", buffer: second });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.waitForFunction(
+        () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten")
+          && document.getElementById("status").textContent.includes("zweite"),
+        null, { timeout: 90000 });
+      break;
+    } catch (e) {
+      if (!/Execution context was destroyed|navigat/i.test(String(e))) throw e;
+    }
+  }
+  await page.waitForTimeout(1500);
+  const pagesAfter = await page.evaluate(() => window.__pdfEditor.getCountPages());
+  check("opening a second document survives the IndexedDB handover", pagesAfter === 5, `pages=${pagesAfter}`);
+
+  check("no page errors (hand-marker-seconddoc scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
+// Searchable-scan OCR: only when the OCR stack is vendored (npm run
+// fetch-ocr) — CI fetches it, a bare checkout skips gracefully.
+async function testOcrSearchable(browser) {
+  try {
+    const head = await fetch(`${BASE}/vendor/ocr/tesseract.min.js`, { method: "HEAD" });
+    if (!head.ok) throw new Error();
+  } catch {
+    console.log("ocr-searchable: vendor/ocr missing — skipped");
+    return;
+  }
+
+  // scan-like PDF: text rendered into an IMAGE, no text layer
+  const shotPage = await browser.newPage({ viewport: { width: 1240, height: 1754 } });
+  await shotPage.setContent(`<div style="width:1240px;height:1754px;background:#fff;font-family:serif;padding:80px;box-sizing:border-box">
+    <h1 style="font-size:48px">Vertrag über die Lieferung</h1>
+    <p style="font-size:28px">Der Auftragnehmer verpflichtet sich zur fristgerechten Lieferung.</p>
+  </div>`);
+  const shot = await shotPage.screenshot({ type: "png" });
+  await shotPage.close();
+  const { PDFDocument } = await import("pdf-lib");
+  const scanDoc = await PDFDocument.create();
+  const png = await scanDoc.embedPng(shot);
+  scanDoc.addPage([595, 842]).drawImage(png, { x: 0, y: 0, width: 595, height: 842 });
+  const scanPdf = Buffer.from(await scanDoc.save());
+
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", (d) => d.accept());
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: scanPdf });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1500);
+  console.log("ocr-searchable document open");
+
+  const countMatches = () => page.evaluate(() => {
+    const props = new window.AscCommon.CSearchSettings();
+    props.put_Text("Lieferung");
+    props.put_MatchCase(false);
+    const n = window.__pdfEditor.asc_findText(props, true) | 0;
+    try { window.__pdfEditor.asc_endFindText(); } catch { /* none */ }
+    return n;
+  });
+  check("scan has no searchable text before OCR", (await countMatches()) === 0);
+
+  await clickTool(page, "ocr");
+  await fillPromptDialog(page, "1");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.waitForFunction(
+        () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+        null, { timeout: 300000 });
+      break;
+    } catch (e) {
+      if (!/Execution context was destroyed|navigat/i.test(String(e))) throw e;
+    }
+  }
+  await page.waitForTimeout(2000);
+  const matches = await countMatches();
+  check("scan is searchable after OCR (invisible text layer)", matches >= 1, `matches=${matches}`);
+
+  check("no page errors (ocr-searchable scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function main() {
   console.log("=== PDF editor typing smoke test ===\n");
 
@@ -1030,6 +1256,9 @@ async function main() {
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
     await testUiAndNewTools(browser);
+    await testShapesSurviveSave(browser);
+    await testHandMarkerSecondDoc(browser);
+    await testOcrSearchable(browser);
     await testEditPageImageRendering(browser);
     await testWatermark(browser);
     await testTextModeSaveKeepsContent(browser);

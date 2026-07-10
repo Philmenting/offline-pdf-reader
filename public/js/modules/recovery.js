@@ -23,7 +23,7 @@ async function maybeSnapshot() {
   if (now - lastSnapshotTs < SNAPSHOT_INTERVAL_MS) return;
   snapshotting = true;
   try {
-    const bytes = deps.collectPdfBytes();
+    const bytes = await deps.collectPdfBytes();
     if (bytes) {
       await recoverySave(bytes, deps.getDocName());
       lastSnapshotTs = now;

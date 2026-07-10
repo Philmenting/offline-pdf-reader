@@ -100,6 +100,10 @@ is a single icon row; page management and document tools live in the
 **Seiten** and **Extras** dropdown menus. The status bar shows the current
 page (with jump-to-page input) and a zoom selector.
 
+A **hand tool** pans the page while dragging; the select tool does
+drag-to-select text (Strg+C copies). The marker color is user-selectable via
+the swatch next to the marker buttons. User-drawn shapes are baked into the
+PDF bytes on save (the engine's save stream has no drawing serialization).
 Pages can be reordered by **dragging thumbnails** in the sidebar, or via
 "Seite verschieben" in the Seiten menu. Recently opened files are listed on
 the start screen (desktop app), and unsaved sessions are snapshotted every
@@ -123,9 +127,10 @@ the start screen (desktop app), and unsaved sessions are snapshotted every
   own file, de-duplicating a logo repeated across pages.
 - **Seiten als Bilder exportieren** — export a page range as standalone PNG
   images at a chosen DPI, without navigating to each page first.
-- **Texterkennung (OCR)** — recognize text in scanned pages fully offline
-  (tesseract.js, German + English models vendored via `npm run fetch-ocr`)
-  and save it as a .txt file.
+- **Durchsuchbar machen (OCR)** — recognize text in scanned pages fully
+  offline (tesseract.js, German + English models vendored via
+  `npm run fetch-ocr`) and embed it as an invisible text layer, so search,
+  select and copy work in scans; or export the recognized text as .txt.
 
 | Shortcut | Action |
 | --- | --- |
