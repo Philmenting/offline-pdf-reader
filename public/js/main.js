@@ -478,6 +478,7 @@ function registerEditorCallbacks() {
     // default to text selection (the engine's open path forces hand/pan
     // mode, which blocks drag-select and with it markers and Strg+C)
     setViewerTargetType("select");
+    installDocMouseGuard();
     updatePageCount(editor.getCountPages ? editor.getCountPages() : 0);
     updateCurrentPage(editor.getCurrentPage ? editor.getCurrentPage() : 0);
     try { updateZoomDisplay(getZoomPercent(renderer())); } catch { /* not ready */ }
@@ -988,6 +989,54 @@ function setViewerTargetType(type) {
   try { editor.asc_setViewerTargetType(type); } catch { /* viewer not ready */ }
 }
 
+// Leaving the Text tool must also drop the page-edit focus: the engine's
+// canSelectPageText() refuses text selection while doc.activeDrawing is set,
+// so a leftover active text frame from edit mode silently killed selection
+// and markers until the next document open.
+function leavePageEditFocus() {
+  try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
+  undoPureRecognition();
+}
+
+// asc_EditPage "recognizes" the page: its content becomes drawing objects
+// and the viewer layer permanently loses the text geometry — drag-to-select
+// and markers then find no quads on that page, forever. Undoing the
+// recognition restores everything. So: remember the history state when the
+// Text tool is entered, and when the user leaves it WITHOUT real edits
+// (every new history point is a Pdf_EditPage recognition point), roll the
+// recognition back. Real text edits keep the object model — that page then
+// intentionally stays in editing-oriented interaction.
+let editModeEntry = null; // { pointsBefore, wasDirty }
+
+function historyPointCount() {
+  try { return window.AscCommon.History.Points.length; } catch { return -1; }
+}
+
+function markTextEditEntry() {
+  if (!editModeEntry) editModeEntry = { pointsBefore: historyPointCount(), wasDirty: docDirty };
+}
+
+function undoPureRecognition() {
+  if (!editModeEntry) return;
+  const entry = editModeEntry;
+  editModeEntry = null;
+  try {
+    const H = window.AscCommon.History;
+    const points = (H && H.Points) || [];
+    if (entry.pointsBefore < 0 || points.length <= entry.pointsBefore) return;
+    if (H.Index !== points.length - 1) return; // user already undid something — leave it
+    const newPoints = points.slice(entry.pointsBefore);
+    const onlyRecognition = newPoints.every(
+      (p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
+    if (!onlyRecognition) return; // real edits — keep them
+    for (let i = 0; i < newPoints.length; i++) editor.Undo();
+    refreshHistoryButtons();
+    if (!entry.wasDirty) markDirty(false);
+  } catch (e) {
+    console.warn("Erkennungs-Undo fehlgeschlagen:", e);
+  }
+}
+
 // User-selectable marker color (shared by highlight/underline/strikeout),
 // persisted across sessions. Highlight applies it translucently, the line
 // markers opaquely.
@@ -1029,6 +1078,7 @@ function setMarker(typeName, r, g, b, opacity) {
   // turn any current marker off first
   editor.SetMarkerFormat(undefined, false);
   if (turningOn) {
+    leavePageEditFocus();
     setViewerTargetType("select"); // drag must select text for the marker to apply
     editor.SetMarkerFormat(type, true, opacity, r, g, b);
     setActiveTool("marker:" + typeName);
@@ -1050,6 +1100,7 @@ const TOOL_HANDLERS = {
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
     try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
+    leavePageEditFocus();
     setViewerTargetType("select");
     setActiveTool("select");
   },
@@ -1058,12 +1109,19 @@ const TOOL_HANDLERS = {
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
     try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
+    leavePageEditFocus();
     setViewerTargetType("hand");
     setActiveTool("hand");
     setStatus("Hand-Werkzeug: Seite mit gedrückter Maustaste verschieben.");
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
-  "edit-text":   () => { if (typeof editor.asc_EditPage === "function") editor.asc_EditPage(); setActiveTool("edit-text"); },
+  "edit-text":   () => {
+    if (typeof editor.asc_EditPage === "function") {
+      markTextEditEntry();
+      editor.asc_EditPage();
+    }
+    setActiveTool("edit-text");
+  },
   "textbox":     () => {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
     setActiveTool("textbox");
@@ -1102,6 +1160,42 @@ const TOOL_HANDLERS = {
   "fit-width":   () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Width); },
   "fit-page":    () => { const r = renderer(); r && r.setZoomMode(ZOOM_MODE.Page); },
 };
+
+// ── Mouse-interaction guard ───────────────────────────────────────────────
+// Once a page has been through the Text tool (asc_EditPage), its content
+// lives as editable drawing objects, and CPDFDoc.OnMouseDown hit-tests those
+// in EVERY mode: the hand tool then moved text blocks instead of panning,
+// and drag-to-select/markers were shadowed because the drawing captured the
+// drag. OnMouseDown is also the dispatcher that STARTS text selection and
+// feeds the pan state, so it must keep running — instead, blind the object
+// HIT-TESTS per tool:
+//   • hand: pure pan — drawings, annotations and fields are all invisible
+//     to the mouse (links keep working).
+//   • select/marker: page-content drawings are invisible (text selection
+//     wins); annotations/fields (textboxes, signatures, images as annots,
+//     form fields) stay interactive.
+//   • Text tool (edit-text) and everything else: untouched — page content
+//     is edited there.
+function installDocMouseGuard() {
+  const viewer = editor.getDocumentRenderer && editor.getDocumentRenderer();
+  if (!viewer || viewer.__hitTestGuardInstalled) return;
+  viewer.__hitTestGuardInstalled = true;
+
+  const guards = {
+    getPageDrawingByMouse: () =>
+      activeTool === "hand" || activeTool === "select" || activeTool.startsWith("marker:"),
+    getPageAnnotByMouse: () => activeTool === "hand",
+    getPageFieldByMouse: () => activeTool === "hand",
+  };
+  for (const [method, isBlinded] of Object.entries(guards)) {
+    if (typeof viewer[method] !== "function") continue;
+    const orig = viewer[method].bind(viewer);
+    viewer[method] = function (...args) {
+      if (mode === "editor" && docOpen && isBlinded()) return null;
+      return orig(...args);
+    };
+  }
+}
 
 // Shape drawing. StartAddShape takes an OOXML preset name; the engine turns
 // the drawn geometry into a PDF drawing. Clicking the active shape tool again
@@ -1587,6 +1681,7 @@ function extractEmbeddedImages() {
     // historydescription_Pdf_EditPage case reads it straight as the page
     // index list to lock-check (CheckPages(fn, aSelectedPagesIdx)) — omitting
     // it crashes reading .length of undefined before the action even runs.
+    markTextEditEntry(); // so the bulk recognition below can be rolled back
     doc.DoAction(function () {
       for (let nPage = 0; nPage < pageCount; nPage++) {
         if (!doc.Viewer.file.pages[nPage].isRecognized) {
@@ -1611,6 +1706,7 @@ function extractEmbeddedImages() {
       }
     }
     if (!images.length) {
+      undoPureRecognition();
       setStatus("Keine eingebetteten Bilder in diesem Dokument gefunden.");
       return;
     }
@@ -1619,6 +1715,7 @@ function extractEmbeddedImages() {
       const ext = (dataUrl.match(/^data:image\/(\w+);/) || [, "png"])[1];
       downloadDataUrl(dataUrl, `${base}-Bild-${i + 1}.${ext}`);
     });
+    undoPureRecognition(); // reading images must not leave pages recognized
     setStatus(`${images.length} Bild(er) extrahiert.`);
   } catch (e) {
     console.error("Bilder extrahieren fehlgeschlagen:", e);
@@ -1696,6 +1793,7 @@ function stepZoom(dir) {
 
 // ── Toolbar state ─────────────────────────────────────────────────────────
 function setActiveTool(name) {
+  if (activeTool === "edit-text" && name !== "edit-text") leavePageEditFocus();
   activeTool = name;
   for (const btn of document.querySelectorAll(".toolbar .tool")) {
     const t = btn.getAttribute("data-tool");

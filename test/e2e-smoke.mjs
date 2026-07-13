@@ -1042,6 +1042,38 @@ async function testHandMarkerSecondDoc(browser) {
   const pagesAfter = await page.evaluate(() => window.__pdfEditor.getCountPages());
   check("opening a second document survives the IndexedDB handover", pagesAfter === 5, `pages=${pagesAfter}`);
 
+  // Leaving the Text tool without real edits must roll back the page
+  // "recognition" (it permanently kills viewer-layer text selection);
+  // WITH real edits the object model must survive the tool switch.
+  const dy2 = await headerYOffset(page);
+  await clickTool(page, "edit-text");
+  await page.waitForTimeout(1200);
+  await clickTool(page, "select");
+  await page.waitForTimeout(400);
+  await page.mouse.move(400, 120 + 52 + dy2);
+  await page.mouse.down();
+  await page.mouse.move(800, 120 + 52 + dy2, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const quadsAfterPeek = await page.evaluate(() =>
+    window.__pdfEditor.getDocumentRenderer().file.getSelectionQuads().length);
+  check("text selection works again after LEAVING the Text tool (peek)",
+    quadsAfterPeek > 0, `quads=${quadsAfterPeek}`);
+
+  await clickTool(page, "edit-text");
+  await page.waitForTimeout(1200);
+  await page.mouse.dblclick(430, 120 + 52 + dy2);
+  await page.waitForTimeout(800);
+  await page.keyboard.type("XY", { delay: 60 });
+  await page.waitForTimeout(500);
+  await clickTool(page, "select");
+  await page.waitForTimeout(400);
+  const editKept = await page.evaluate(() => {
+    try { return window.__pdfEditor.getPDFDoc().GetPageInfo(0).drawings.length > 0; }
+    catch { return false; }
+  });
+  check("real text edits survive switching away from the Text tool", editKept);
+
   check("no page errors (hand-marker-seconddoc scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
 }
