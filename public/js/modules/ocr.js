@@ -18,6 +18,8 @@ let deps = null; // { getEditor, isDocOpen, showPromptDialog, parsePageRangeSpec
                  //   openArrayBuffer, loadPdfLib, markClean }
 let workerPromise = null;
 
+export async function ocrStackAvailable() { return ocrAvailable(); }
+
 async function ocrAvailable() {
   try {
     const res = await fetch(`${OCR_BASE}/tesseract.min.js`, { method: "HEAD" });
@@ -43,6 +45,39 @@ function ensureWorker() {
 
 export function initOcr(dependencies) {
   deps = dependencies;
+}
+
+/** Recognize a single canvas; returns word objects with bbox geometry. */
+export async function recognizeCanvasWords(canvas) {
+  const worker = await ensureWorker();
+  const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
+  return collectWords(data);
+}
+
+/**
+ * Draw recognized words invisibly onto a pdf-lib page (searchable/selectable
+ * text layer). widthPx is the pixel width the words' bboxes refer to.
+ */
+export function embedWordsOnPdfPage(page, words, widthPx, font) {
+  const scale = page.getWidth() / widthPx;
+  const pageH = page.getHeight();
+  let embedded = 0;
+  for (const w of words) {
+    const text = (w.text || "").trim();
+    const b = w.bbox;
+    if (!text || !b) continue;
+    const size = Math.max(4, (b.y1 - b.y0) * scale * 0.85);
+    try {
+      page.drawText(text, {
+        x: b.x0 * scale,
+        y: pageH - b.y1 * scale + size * 0.18, // approximate baseline
+        size, font,
+        opacity: 0, // invisible, but searchable/selectable
+      });
+      embedded++;
+    } catch { /* glyphs outside WinAnsi — skip the word */ }
+  }
+  return embedded;
 }
 
 // Prompt for a page range and recognize it. Returns null (user cancelled /
@@ -146,23 +181,7 @@ export async function makeSearchablePdf() {
     for (const res of results) {
       const page = pages[res.nPage];
       if (!page) continue;
-      const scale = page.getWidth() / res.widthPx; // px @300dpi → pt
-      const pageH = page.getHeight();
-      for (const w of res.words) {
-        const text = (w.text || "").trim();
-        const b = w.bbox;
-        if (!text || !b) continue;
-        const size = Math.max(4, (b.y1 - b.y0) * scale * 0.85);
-        try {
-          page.drawText(text, {
-            x: b.x0 * scale,
-            y: pageH - b.y1 * scale + size * 0.18, // approximate baseline
-            size, font,
-            opacity: 0, // invisible, but searchable/selectable
-          });
-          embedded++;
-        } catch { /* glyphs outside WinAnsi — skip the word */ }
-      }
+      embedded += embedWordsOnPdfPage(page, res.words, res.widthPx, font);
     }
     if (!embedded) {
       setStatus("OCR abgeschlossen — erkannte Wörter konnten nicht eingebettet werden.");

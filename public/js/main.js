@@ -55,7 +55,7 @@ import { initRecovery, offerRecovery, clearRecoverySnapshot } from "./modules/re
 import { renderRecentFiles } from "./modules/recent-files.js";
 import { storeGet, storeSet, openAppDb } from "./modules/storage.js";
 import { wireSignatureDialog, insertSignature, openSignaturePad } from "./modules/signature.js";
-import { initOcr, makeSearchablePdf, exportRecognizedText } from "./modules/ocr.js";
+import { initOcr, makeSearchablePdf, exportRecognizedText, ocrStackAvailable, recognizeCanvasWords, embedWordsOnPdfPage } from "./modules/ocr.js";
 
 const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400];
 const ZOOM_MODE  = { Custom: 0, Width: 1, Page: 2 };
@@ -255,6 +255,7 @@ async function initEditor() {
   // a document handed over by a pre-reload session (second file opened)
   const pending = await takePendingOpen();
   if (pending && pending.bytes) {
+    pendingKeepDirty = !!pending.keepDirty;
     openArrayBuffer(pending.bytes.buffer, pending.name || "dokument.pdf");
   }
 
@@ -474,6 +475,11 @@ function registerEditorCallbacks() {
     preloadFallbackFonts();
     preloadFieldFonts();
     markDirty(false);
+    if (pendingKeepDirty) {
+      pendingKeepDirty = false;
+      markDirty(true); // the committed text edits are not saved to disk yet
+      setStatus(`Textänderungen übernommen — „${lastName}" ist bereit zum Bearbeiten (noch nicht gespeichert).`);
+    }
     updateTitle();
     // default to text selection (the engine's open path forces hand/pan
     // mode, which blocks drag-select and with it markers and Strg+C)
@@ -634,7 +640,7 @@ const PENDING_STORE = "pending-open";
 // explicit version here threw VersionError and broke the handover.
 const pendingDb = openAppDb;
 
-async function stashPendingOpenAndReload(bytes, name) {
+async function stashPendingOpenAndReload(bytes, name, keepDirty) {
   if (docDirty && !window.confirm(
     `„${lastName}" hat ungespeicherte Änderungen. Trotzdem „${name}" öffnen?`)) {
     return;
@@ -644,7 +650,7 @@ async function stashPendingOpenAndReload(bytes, name) {
     const db = await pendingDb();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(PENDING_STORE, "readwrite");
-      tx.objectStore(PENDING_STORE).put({ name, bytes }, "file");
+      tx.objectStore(PENDING_STORE).put({ name, bytes, keepDirty: !!keepDirty }, "file");
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
@@ -780,6 +786,8 @@ function onFileChosen(file) {
 // engine's asc_onCanUndo events (any undoable change marks dirty) and
 // cleared on successful save. Reflected in the window title.
 let docDirty = false;
+// set when a commit-reload carries unsaved edits across the reload
+let pendingKeepDirty = false;
 
 function markDirty(dirty) {
   if (docDirty === dirty) return;
@@ -798,15 +806,81 @@ function updateTitle() {
 // NOTE: viewer.Save() is NOT that — it only returns the raw change-command
 // stream meant as serializer input; an earlier "Speichern" wrote exactly that
 // stream into .pdf files, which no PDF reader could open.
-async function collectPdfBytes() {
+async function collectPdfBytes(forceRasterPages) {
   const doc = editor.getPDFDoc();
   try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
   const pageCount = editor.getCountPages() | 0;
   const indexes = Array.from({ length: pageCount }, (_, i) => i);
   const result = doc.GetPagesBinary(indexes, false);
   if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") return null;
-  const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
-  return bakeShapesIntoPdf(bytes, indexes);
+  let bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+  bytes = await bakeShapesIntoPdf(bytes, indexes);
+  // Text-mode edits can NOT be serialized by the engine's split writer (the
+  // only PDF-producing WASM entry point — see patchSaveNoPageClear in the
+  // build script): the saved bytes always carry the ORIGINAL page content.
+  // So pages with real text edits are rasterized from the editor's own
+  // renderer (which shows the edits correctly) and replace the page content,
+  // plus an invisible OCR text layer so the text stays searchable/markable.
+  const rasterPages = (forceRasterPages && forceRasterPages.length)
+    ? forceRasterPages
+    : (sessionHasRealEdits() ? recognizedPageIndexes() : []);
+  return rasterizePagesIntoPdf(bytes, rasterPages);
+}
+
+function recognizedPageIndexes() {
+  const out = [];
+  try {
+    const v = editor.getDocumentRenderer();
+    const n = editor.getCountPages() | 0;
+    for (let i = 0; i < n; i++) {
+      if (v.file.pages[i] && v.file.pages[i].isRecognized) out.push(i);
+    }
+  } catch { /* renderer not ready */ }
+  return out;
+}
+
+function sessionHasRealEdits() {
+  if (!editModeEntry) return false;
+  const fresh = newActivePoints(editModeEntry);
+  if (!fresh || !fresh.length) return false;
+  return !fresh.every((p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
+}
+
+const RASTER_DPI = 200; // print-grade replacement for text-edited pages
+
+async function rasterizePagesIntoPdf(bytes, pages) {
+  if (!pages || !pages.length) return bytes;
+  await loadPdfLib();
+  const { PDFDocument, PDFName, StandardFonts } = window.PDFLib;
+  const pdf = await PDFDocument.load(bytes);
+  const doc = editor.getPDFDoc();
+  const r = renderer();
+  const useOcr = await ocrStackAvailable();
+  const font = useOcr ? await pdf.embedFont(StandardFonts.Helvetica) : null;
+
+  for (const nPage of pages) {
+    const page = pdf.getPage(nPage);
+    if (!page) continue;
+    const wPx = Math.round(doc.GetPageWidthMM(nPage) / 25.4 * RASTER_DPI);
+    const hPx = Math.round(doc.GetPageHeightMM(nPage) / 25.4 * RASTER_DPI);
+    // "doc" renders page content + drawings (the text edits) WITHOUT markup
+    // annotations — those live on as real PDF annotations and must not be
+    // burned into the bitmap twice.
+    const canvas = r.GetPrintPage(nPage, wPx, hPx, window.AscPDF.PRINT_CONTENT_TYPES.doc);
+    const png = await pdf.embedPng(canvas.toDataURL("image/png"));
+    page.node.set(PDFName.of("Contents"), pdf.context.obj([]));
+    page.drawImage(png, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
+    if (useOcr) {
+      try {
+        setStatus(`Textebene für Seite ${nPage + 1} wird erzeugt (OCR) …`);
+        const words = await recognizeCanvasWords(canvas);
+        embedWordsOnPdfPage(page, words, wPx, font);
+      } catch (e) {
+        console.warn(`OCR-Textebene für Seite ${nPage + 1} fehlgeschlagen:`, e);
+      }
+    }
+  }
+  return pdf.save();
 }
 
 // The engine's split-based save stream (SaveForSplit → WASM SplitPages) has
@@ -995,7 +1069,10 @@ function setViewerTargetType(type) {
 // and markers until the next document open.
 function leavePageEditFocus() {
   try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
-  undoPureRecognition();
+  const entry = editModeEntry;
+  editModeEntry = null;
+  if (!entry) return;
+  if (!rollbackIfPureRecognition(entry)) commitTextEdits(recognizedPageIndexes());
 }
 
 // asc_EditPage "recognizes" the page: its content becomes drawing objects
@@ -1016,24 +1093,59 @@ function markTextEditEntry() {
   if (!editModeEntry) editModeEntry = { pointsBefore: historyPointCount(), wasDirty: docDirty };
 }
 
-function undoPureRecognition() {
-  if (!editModeEntry) return;
-  const entry = editModeEntry;
-  editModeEntry = null;
+// Active (not user-undone) history points added since entry.
+function newActivePoints(entry) {
   try {
     const H = window.AscCommon.History;
     const points = (H && H.Points) || [];
-    if (entry.pointsBefore < 0 || points.length <= entry.pointsBefore) return;
-    if (H.Index !== points.length - 1) return; // user already undid something — leave it
-    const newPoints = points.slice(entry.pointsBefore);
-    const onlyRecognition = newPoints.every(
-      (p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
-    if (!onlyRecognition) return; // real edits — keep them
-    for (let i = 0; i < newPoints.length; i++) editor.Undo();
+    if (entry.pointsBefore < 0) return null;
+    const active = points.slice(0, (typeof H.Index === "number" ? H.Index : points.length - 1) + 1);
+    return active.slice(entry.pointsBefore);
+  } catch { return null; }
+}
+
+// Returns true when there is nothing left to handle (no new points, or the
+// pure recognition was rolled back); false when real edits are present.
+function rollbackIfPureRecognition(entry) {
+  const fresh = newActivePoints(entry);
+  if (!fresh || !fresh.length) return true;
+  const onlyRecognition = fresh.every(
+    (p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
+  if (!onlyRecognition) return false; // real edits — keep them
+  try {
+    for (let i = 0; i < fresh.length; i++) editor.Undo();
     refreshHistoryButtons();
     if (!entry.wasDirty) markDirty(false);
   } catch (e) {
     console.warn("Erkennungs-Undo fehlgeschlagen:", e);
+  }
+  return true;
+}
+
+// Real text edits leave the page in the object model, where the viewer's
+// text layer is gone for good — the edited text could never be selected or
+// highlighted again. COMMIT the edits instead: serialize the document (the
+// save pipeline writes edited pages properly) and reload it, exactly like
+// the watermark flow. The page returns with a fresh text layer; the
+// document stays marked unsaved. Undo history resets at this point.
+let commitInProgress = false;
+async function commitTextEdits(rasterPages) {
+  if (commitInProgress) return;
+  commitInProgress = true;
+  try {
+    setStatus("Textänderungen werden übernommen …");
+    const bytes = await collectPdfBytes(rasterPages);
+    if (!bytes) {
+      setStatus("Textänderungen konnten nicht übernommen werden (keine gültigen PDF-Daten).");
+      return;
+    }
+    markDirty(false); // reload guard must not prompt — the bytes carry everything
+    await stashPendingOpenAndReload(bytes, lastName, true /* still unsaved */);
+  } catch (e) {
+    console.error("Übernehmen fehlgeschlagen:", e);
+    setStatus(`Textänderungen übernehmen fehlgeschlagen: ${e.message}`);
+  } finally {
+    commitInProgress = false;
   }
 }
 
@@ -1681,7 +1793,7 @@ function extractEmbeddedImages() {
     // historydescription_Pdf_EditPage case reads it straight as the page
     // index list to lock-check (CheckPages(fn, aSelectedPagesIdx)) — omitting
     // it crashes reading .length of undefined before the action even runs.
-    markTextEditEntry(); // so the bulk recognition below can be rolled back
+    const extractEntry = { pointsBefore: historyPointCount(), wasDirty: docDirty };
     doc.DoAction(function () {
       for (let nPage = 0; nPage < pageCount; nPage++) {
         if (!doc.Viewer.file.pages[nPage].isRecognized) {
@@ -1706,7 +1818,7 @@ function extractEmbeddedImages() {
       }
     }
     if (!images.length) {
-      undoPureRecognition();
+      rollbackIfPureRecognition(extractEntry);
       setStatus("Keine eingebetteten Bilder in diesem Dokument gefunden.");
       return;
     }
@@ -1715,7 +1827,7 @@ function extractEmbeddedImages() {
       const ext = (dataUrl.match(/^data:image\/(\w+);/) || [, "png"])[1];
       downloadDataUrl(dataUrl, `${base}-Bild-${i + 1}.${ext}`);
     });
-    undoPureRecognition(); // reading images must not leave pages recognized
+    rollbackIfPureRecognition(extractEntry); // reading images must not leave pages recognized
     setStatus(`${images.length} Bild(er) extrahiert.`);
   } catch (e) {
     console.error("Bilder extrahieren fehlgeschlagen:", e);

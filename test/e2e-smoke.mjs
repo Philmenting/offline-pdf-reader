@@ -1060,19 +1060,48 @@ async function testHandMarkerSecondDoc(browser) {
   check("text selection works again after LEAVING the Text tool (peek)",
     quadsAfterPeek > 0, `quads=${quadsAfterPeek}`);
 
+  // REAL edits: leaving the Text tool commits them (the engine's split
+  // writer cannot serialize the object model — edited pages get rasterized
+  // with an invisible OCR text layer and the document reloads). The typed
+  // text must survive, stay searchable and markable.
+  let ocrPresent = false;
+  try { ocrPresent = (await fetch(`${BASE}/vendor/ocr/tesseract.min.js`, { method: "HEAD" })).ok; }
+  catch { /* not vendored */ }
+
   await clickTool(page, "edit-text");
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
   await page.mouse.dblclick(430, 120 + 52 + dy2);
+  await page.waitForTimeout(1200);
+  await page.keyboard.press("End");
+  await page.keyboard.type("XQY", { delay: 80 });
   await page.waitForTimeout(800);
-  await page.keyboard.type("XY", { delay: 60 });
-  await page.waitForTimeout(500);
   await clickTool(page, "select");
-  await page.waitForTimeout(400);
-  const editKept = await page.evaluate(() => {
-    try { return window.__pdfEditor.getPDFDoc().GetPageInfo(0).drawings.length > 0; }
-    catch { return false; }
-  });
-  check("real text edits survive switching away from the Text tool", editKept);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.waitForFunction(
+        () => document.getElementById("status").textContent.includes("Textänderungen übernommen"),
+        null, { timeout: 300000 });
+      break;
+    } catch (e) {
+      if (!/Execution context was destroyed|navigat/i.test(String(e))) throw e;
+    }
+  }
+  await page.waitForTimeout(2000);
+  check("real text edits trigger a commit when leaving the Text tool", true);
+  if (ocrPresent) {
+    const typedFound = await page.evaluate(() => {
+      const props = new window.AscCommon.CSearchSettings();
+      props.put_Text("XQY");
+      props.put_MatchCase(false);
+      const n = window.__pdfEditor.asc_findText(props, true) | 0;
+      try { window.__pdfEditor.asc_endFindText(); } catch { /* none */ }
+      return n;
+    });
+    check("typed text survives the commit and is searchable (OCR layer)",
+      typedFound >= 1, `matches=${typedFound}`);
+  }
+  const dirtyAfterCommit = await page.evaluate(() => document.title.startsWith("•"));
+  check("document stays marked unsaved after the commit", dirtyAfterCommit);
 
   check("no page errors (hand-marker-seconddoc scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
