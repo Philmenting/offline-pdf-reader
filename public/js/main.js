@@ -847,7 +847,7 @@ function sessionHasRealEdits() {
   return !fresh.every((p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
 }
 
-const RASTER_DPI = 200; // print-grade replacement for text-edited pages
+const RASTER_DPI = 300; // match OCR resolution so rebuilt text selection stays precise
 
 async function rasterizePagesIntoPdf(bytes, pages) {
   if (!pages || !pages.length) return bytes;
