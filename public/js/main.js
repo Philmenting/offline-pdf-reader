@@ -484,6 +484,7 @@ function registerEditorCallbacks() {
     // default to text selection (the engine's open path forces hand/pan
     // mode, which blocks drag-select and with it markers and Strg+C)
     setViewerTargetType("select");
+    restorePendingMarkerTool();
     installDocMouseGuard();
     updatePageCount(editor.getCountPages ? editor.getCountPages() : 0);
     updateCurrentPage(editor.getCurrentPage ? editor.getCurrentPage() : 0);
@@ -1183,20 +1184,84 @@ async function initMarkerColor() {
   });
 }
 
+const PENDING_MARKER_TOOL_KEY = "offline-pdf-editor:pending-marker-tool";
+
+// PDF text edits are committed by serializing and reopening the document.
+// Keep the requested marker across that short reload so it is armed against
+// the fresh text layer rather than the obsolete editable-object model.
+function hasRealTextEditsToCommit() {
+  if (!editModeEntry) return false;
+  const fresh = newActivePoints(editModeEntry);
+  return !!(fresh && fresh.length) && !fresh.every(
+    (p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
+}
+
+function storePendingMarkerTool(typeName, r, g, b, opacity) {
+  try {
+    sessionStorage.setItem(PENDING_MARKER_TOOL_KEY, JSON.stringify({ typeName, r, g, b, opacity }));
+    return true;
+  } catch (error) {
+    console.warn("Markierungswerkzeug konnte nicht für den Neuaufbau vorgemerkt werden:", error);
+    return false;
+  }
+}
+
+function takePendingMarkerTool() {
+  try {
+    const raw = sessionStorage.getItem(PENDING_MARKER_TOOL_KEY);
+    sessionStorage.removeItem(PENDING_MARKER_TOOL_KEY);
+    const marker = raw && JSON.parse(raw);
+    if (!marker || !["Highlight", "Underline", "Strikeout"].includes(marker.typeName)) return null;
+    if (![marker.r, marker.g, marker.b, marker.opacity].every(Number.isFinite)) return null;
+    return marker;
+  } catch {
+    return null;
+  }
+}
+
+function armMarkerTool(typeName, r, g, b, opacity) {
+  if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
+  editor.SetMarkerFormat(undefined, false);
+  setViewerTargetType("select"); // drag must select text for the marker to apply
+  editor.SetMarkerFormat(annotType(typeName), true, opacity, r, g, b);
+  setActiveTool("marker:" + typeName);
+}
+
+function restorePendingMarkerTool() {
+  const marker = takePendingMarkerTool();
+  if (!marker) return;
+
+  // The content-ready callback runs before the viewer has completed its first
+  // layout. Arming on the next tick ensures the rebuilt text layer receives
+  // the subsequent drag selection.
+  setTimeout(() => {
+    armMarkerTool(marker.typeName, marker.r, marker.g, marker.b, marker.opacity);
+    setStatus("Textänderungen übernommen. Markierungswerkzeug ist aktiv — Text auswählen.");
+  }, 120);
+}
+
 function setMarker(typeName, r, g, b, opacity) {
   if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
-  const type = annotType(typeName);
   const turningOn = activeTool !== ("marker:" + typeName);
-  // turn any current marker off first
-  editor.SetMarkerFormat(undefined, false);
-  if (turningOn) {
-    leavePageEditFocus();
-    setViewerTargetType("select"); // drag must select text for the marker to apply
-    editor.SetMarkerFormat(type, true, opacity, r, g, b);
-    setActiveTool("marker:" + typeName);
-  } else {
+  if (!turningOn) {
+    editor.SetMarkerFormat(undefined, false);
     setActiveTool("select");
+    return;
   }
+
+  if (activeTool === "edit-text" && hasRealTextEditsToCommit()) {
+    // The existing commit path reloads the page to restore selectable text.
+    // Defer marker arming until that fresh page is ready.
+    if (storePendingMarkerTool(typeName, r, g, b, opacity)) {
+      editor.SetMarkerFormat(undefined, false);
+      leavePageEditFocus();
+      setStatus("Textänderungen werden übernommen. Markierung wird danach aktiviert …");
+      return;
+    }
+  }
+
+  leavePageEditFocus();
+  armMarkerTool(typeName, r, g, b, opacity);
 }
 
 function clearActiveMarkerTools() {
