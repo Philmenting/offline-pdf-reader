@@ -61,19 +61,46 @@ export async function recognizeCanvasWords(canvas) {
 export function embedWordsOnPdfPage(page, words, widthPx, font) {
   const scale = page.getWidth() / widthPx;
   const pageH = page.getHeight();
+  const pdfLib = window.PDFLib || {};
   let embedded = 0;
+
   for (const w of words) {
     const text = (w.text || "").trim();
     const b = w.bbox;
     if (!text || !b) continue;
+
+    const x = b.x0 * scale;
     const size = Math.max(4, (b.y1 - b.y0) * scale * 0.85);
+    const targetWidth = Math.max(1, (b.x1 - b.x0) * scale);
+    const naturalWidth = font.widthOfTextAtSize(text, size);
+    const horizontalScale = naturalWidth > 0 ? targetWidth / naturalWidth : 1;
+    const drawOptions = {
+      x,
+      y: pageH - b.y1 * scale + size * 0.18, // approximate baseline
+      size, font,
+      opacity: 0, // invisible, but searchable/selectable
+    };
+
     try {
-      page.drawText(text, {
-        x: b.x0 * scale,
-        y: pageH - b.y1 * scale + size * 0.18, // approximate baseline
-        size, font,
-        opacity: 0, // invisible, but searchable/selectable
-      });
+      // OCR provides the real word box, while Helvetica often has different
+      // metrics from the printed font. Scale the text matrix horizontally so
+      // selection/annotation quads reach the final character as well.
+      const canScaleText = Math.abs(horizontalScale - 1) > 0.02
+        && typeof page.pushOperators === "function"
+        && typeof pdfLib.pushGraphicsState === "function"
+        && typeof pdfLib.popGraphicsState === "function"
+        && typeof pdfLib.concatTransformationMatrix === "function";
+
+      if (canScaleText) {
+        page.pushOperators(
+          pdfLib.pushGraphicsState(),
+          pdfLib.concatTransformationMatrix(horizontalScale, 0, 0, 1, x * (1 - horizontalScale), 0)
+        );
+        page.drawText(text, drawOptions);
+        page.pushOperators(pdfLib.popGraphicsState());
+      } else {
+        page.drawText(text, drawOptions);
+      }
       embedded++;
     } catch { /* glyphs outside WinAnsi — skip the word */ }
   }
