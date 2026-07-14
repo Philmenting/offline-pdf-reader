@@ -69,6 +69,12 @@ let lastName = "document.pdf";
 let activeTool = "select";
 let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
 
+// A text edit is baked into a fresh PDF so it can be selected and marked again.
+// Keep a small hand-off state across that one required editor restart.
+const TEXT_COMMIT_TRANSITION_KEY = "offline-pdf-editor:text-commit-transition";
+let textCommitReloadRequested = false;
+let textCommitReloadPending = false;
+
 // Font-name resolution is data-driven by g_fonts_selection_bin, which our
 // generated AllFonts.js now ships with real per-face records (panose, unicode/
 // codepage ranges, metrics) for every bundled font — see
@@ -106,7 +112,7 @@ function lockEngineBaseUrl() {
 let sdkLoadError = null; // captured if _onEndLoadSdk throws inside the ctor
 
 async function initEditor() {
-  setStatus("PDF-Editor wird geladen …");
+  setStatus(textCommitReloadPending ? "Textänderungen werden vorbereitet …" : "PDF-Editor wird geladen …");
 
   // Third-party libs first (jQuery, XRegExp). polyfill is best-effort.
   console.log("[bootstrap] loading third-party libs (jquery, xregexp) …");
@@ -236,7 +242,7 @@ async function initEditor() {
   mode = "editor";
   installSubsetFontNameNormalization();
   installLongActionWatchdog();
-  setStatus("Bereit. Öffne eine PDF-Datei zum Bearbeiten.");
+  if (!textCommitReloadPending) setStatus("PDF-Editor ist bereit — bitte PDF öffnen.");
 
   // Desktop only: accept files from "Öffnen mit"/double-click (delivered by
   // the main process once we signal readiness).
@@ -655,6 +661,9 @@ async function stashPendingOpenAndReload(bytes, name, keepDirty) {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
+    if (textCommitReloadRequested) {
+      try { sessionStorage.setItem(TEXT_COMMIT_TRANSITION_KEY, "1"); } catch { /* no session storage */ }
+    }
     location.reload();
   } catch (e) {
     console.error("Zweites Dokument konnte nicht übergeben werden:", e);
@@ -678,6 +687,20 @@ async function takePendingOpen() {
   } catch {
     return null;
   }
+}
+
+function restoreTextCommitTransition() {
+  try {
+    textCommitReloadPending = sessionStorage.getItem(TEXT_COMMIT_TRANSITION_KEY) === "1";
+    sessionStorage.removeItem(TEXT_COMMIT_TRANSITION_KEY);
+  } catch { /* no session storage */ }
+  if (!textCommitReloadPending) return;
+
+  const title = document.querySelector("#placeholder .placeholder-title");
+  const detail = document.querySelector("#placeholder .muted");
+  if (title) title.textContent = "Textänderungen werden vorbereitet …";
+  if (detail) detail.textContent = "Die Seite wird kurz aktualisiert, damit der bearbeitete Text vollständig markiert werden kann.";
+  setStatus("Textänderungen werden vorbereitet …");
 }
 
 function openArrayBuffer(buf, name) {
@@ -1141,7 +1164,12 @@ async function commitTextEdits(rasterPages) {
       return;
     }
     markDirty(false); // reload guard must not prompt — the bytes carry everything
-    await stashPendingOpenAndReload(bytes, lastName, true /* still unsaved */);
+    textCommitReloadRequested = true;
+    try {
+      await stashPendingOpenAndReload(bytes, lastName, true /* still unsaved */);
+    } finally {
+      textCommitReloadRequested = false;
+    }
   } catch (e) {
     console.error("Übernehmen fehlgeschlagen:", e);
     setStatus(`Textänderungen übernehmen fehlgeschlagen: ${e.message}`);
@@ -2170,6 +2198,7 @@ function wireUi() {
 }
 
 wireUi();
+restoreTextCommitTransition();
 initEditor().catch((err) => {
   editorErrorMsg = (err && err.message) ? err.message : String(err);
   console.error("Editor-Bootstrap fehlgeschlagen:", err);
