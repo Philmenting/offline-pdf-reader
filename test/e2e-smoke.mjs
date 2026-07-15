@@ -1214,7 +1214,7 @@ async function main() {
 
     await page.goto(BASE);
     await page.waitForFunction(
-      () => document.getElementById("status").textContent.includes("Bereit"),
+      () => window.__pdfEditorReady === true,
       null, { timeout: 90000 }
     );
     console.log("editor ready");
