@@ -76,7 +76,7 @@ export function embedWordsOnPdfPage(page, words, widthPx, font) {
     const horizontalScale = naturalWidth > 0 ? targetWidth / naturalWidth : 1;
     const drawOptions = {
       x,
-      y: pageH - b.y1 * scale + size * 0.18, // approximate baseline
+      y: pageH - b.y1 * scale + size * 0.04, // align marker lines to the visual word center
       size, font,
       opacity: 0, // invisible, but searchable/selectable
     };
