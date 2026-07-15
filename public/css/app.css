@@ -394,6 +394,7 @@ body {
 .placeholder {
   position: absolute;
   inset: 0;
+  z-index: 30; /* remain visible above the initialized editor until a PDF opens */
   display: flex;
   align-items: center;
   justify-content: center;
