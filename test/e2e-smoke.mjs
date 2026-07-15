@@ -122,7 +122,7 @@ async function testFormRoundtrip(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   const openBytes = async (buffer, name) => {
     await (await page.$("#file-input")).setInputFiles({ name, mimeType: "application/pdf", buffer });
     // opening a second document reloads the page (fresh editor); the wait
@@ -242,7 +242,7 @@ async function testEditPageImageRendering(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "image.pdf", mimeType: "application/pdf", buffer: imagePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -285,7 +285,7 @@ async function testWatermark(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -340,7 +340,7 @@ async function testTextModeSaveKeepsContent(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "two.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -373,7 +373,7 @@ async function testTextModeSaveKeepsContent(browser) {
   page2.on("pageerror", (e) => pageErrors.push(e.message));
   await page2.goto(BASE);
   await page2.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page2.$("#file-input")).setInputFiles({ name: "reopened.pdf", mimeType: "application/pdf", buffer: savedBytes });
   await page2.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -409,7 +409,7 @@ async function testPageNumbers(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -457,7 +457,7 @@ async function testExtractEmbeddedImages(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "images.pdf", mimeType: "application/pdf", buffer: bytes });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -489,7 +489,7 @@ async function testExtractEmbeddedImagesNone(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "noimg.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -518,7 +518,7 @@ async function testExportPagesAsImages(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "three.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -566,7 +566,7 @@ async function testAppendScrollbarSync(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "base.pdf", mimeType: "application/pdf", buffer: basePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -650,7 +650,7 @@ async function testExtractPages(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "ten.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -676,7 +676,7 @@ async function testExtractPages(browser) {
     page2.on("pageerror", (e) => pageErrors.push(e.message));
     await page2.goto(BASE);
     await page2.waitForFunction(
-      () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+      () => window.__pdfEditorReady === true, null, { timeout: 90000 });
     await (await page2.$("#file-input")).setInputFiles({ name: "extracted.pdf", mimeType: "application/pdf", buffer: bytes });
     await page2.waitForFunction(
       () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -706,7 +706,7 @@ async function testRotateAll(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "four.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -743,7 +743,7 @@ async function testRemovePagesByRange(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "six.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -778,7 +778,7 @@ async function testUiAndNewTools(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "ui.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -904,7 +904,7 @@ async function testShapesSurviveSave(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "shapes.pdf", mimeType: "application/pdf", buffer: sourcePdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -965,7 +965,7 @@ async function testShapesSurviveSave(browser) {
   page2.on("dialog", (d) => d.accept());
   await page2.goto(BASE);
   await page2.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page2.$("#file-input")).setInputFiles({ name: "shapes-saved.pdf", mimeType: "application/pdf", buffer: saved });
   await page2.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -996,7 +996,7 @@ async function testHandMarkerSecondDoc(browser) {
 
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "erste.pdf", mimeType: "application/pdf", buffer: first });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
@@ -1138,7 +1138,7 @@ async function testOcrSearchable(browser) {
   page.on("dialog", (d) => d.accept());
   await page.goto(BASE);
   await page.waitForFunction(
-    () => document.getElementById("status").textContent.includes("Bereit"), null, { timeout: 90000 });
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page.$("#file-input")).setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: scanPdf });
   await page.waitForFunction(
     () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
