@@ -1322,11 +1322,17 @@ const TOOL_HANDLERS = {
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => {
+    // The toolbar button takes DOM focus. Restore the editor's keyboard
+    // capture after page recognition so annotations such as strikeout do not
+    // leave the user in a visible-but-non-editable text mode.
+    editor.SetMarkerFormat(undefined, false);
+    setViewerTargetType("select");
     if (typeof editor.asc_EditPage === "function") {
       markTextEditEntry();
       editor.asc_EditPage();
     }
     setActiveTool("edit-text");
+    requestAnimationFrame(() => refocusEditor());
   },
   "textbox":     () => {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
