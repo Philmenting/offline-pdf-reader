@@ -240,6 +240,7 @@ async function initEditor() {
   }
 
   mode = "editor";
+  window.__pdfEditorReady = true; // stable readiness signal for integrations/tests
   installSubsetFontNameNormalization();
   installLongActionWatchdog();
   if (!textCommitReloadPending) setStatus("PDF-Editor ist bereit — bitte PDF öffnen.");
