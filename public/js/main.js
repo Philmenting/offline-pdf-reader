@@ -1092,12 +1092,24 @@ function setViewerTargetType(type) {
 // canSelectPageText() refuses text selection while doc.activeDrawing is set,
 // so a leftover active text frame from edit mode silently killed selection
 // and markers until the next document open.
+function setTextEditAnnotationVisibility(hidden) {
+  try {
+    const doc = editor.getPDFDoc();
+    if (doc && typeof doc.HideShowAnnots === "function" && doc.IsAnnotsHidden() !== hidden) {
+      doc.HideShowAnnots(hidden);
+    }
+  } catch { /* annotations are optional */ }
+}
+
 function leavePageEditFocus() {
   try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
   const entry = editModeEntry;
   editModeEntry = null;
-  if (!entry) return;
-  if (!rollbackIfPureRecognition(entry)) commitTextEdits(recognizedPageIndexes());
+  const needsCommit = !!entry && !rollbackIfPureRecognition(entry);
+  // Marker annotations own their hit area. Restore them only after the text
+  // object has been blurred, so they never intercept a text-editing click.
+  setTextEditAnnotationVisibility(false);
+  if (needsCommit) commitTextEdits(recognizedPageIndexes());
 }
 
 // asc_EditPage "recognizes" the page: its content becomes drawing objects
@@ -1322,11 +1334,11 @@ const TOOL_HANDLERS = {
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => {
-    // The toolbar button takes DOM focus. Restore the editor's keyboard
-    // capture after page recognition so annotations such as strikeout do not
-    // leave the user in a visible-but-non-editable text mode.
+    // Marker annotations otherwise win the hit test over the text they cover.
+    // Hide them while editing; leavePageEditFocus restores them before saving.
     editor.SetMarkerFormat(undefined, false);
     setViewerTargetType("select");
+    setTextEditAnnotationVisibility(true);
     if (typeof editor.asc_EditPage === "function") {
       markTextEditEntry();
       editor.asc_EditPage();
