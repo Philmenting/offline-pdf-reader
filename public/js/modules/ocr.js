@@ -78,7 +78,11 @@ export function embedWordsOnPdfPage(page, words, widthPx, font) {
       x,
       y: pageH - b.y1 * scale + size * 0.04, // align marker lines to the visual word center
       size, font,
-      opacity: 0, // invisible, but searchable/selectable
+      // A fully transparent glyph imports as a non-editable drawing in
+      // ONLYOFFICE after the PDF is reopened. Near-zero opacity remains
+      // visually indistinguishable from the raster below, while preserving
+      // an editable text run for a later text/marker/text cycle.
+      opacity: 0.001,
     };
 
     try {
