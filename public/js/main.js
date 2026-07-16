@@ -373,6 +373,32 @@ function refocusEditor() {
   try { editor.asc_enableKeyEvents(true); } catch { /* best effort */ }
 }
 
+// OCR-rebuilt words arrive as individual drawing objects. A normal click only
+// selects the object's frame; activate its text content immediately so typing
+// and Delete operate on the word rather than its resize handles.
+function activateSelectedTextForTyping() {
+  if (activeTool !== "edit-text" || !editor) return;
+  try {
+    const doc = editor.getPDFDoc();
+    const active = doc.GetActiveObject();
+    if (!active || !active.IsDrawing || !active.IsDrawing()) return;
+
+    const controller = doc.GetController();
+    const content = controller.getTargetDocContent
+      ? controller.getTargetDocContent(undefined, true)
+      : active.GetDocContent();
+    if (!content || typeof content.SelectAll !== "function") return;
+
+    content.SelectAll();
+    try { doc.GetDrawingDocument().TargetStart(); } catch { /* target is optional */ }
+    renderer() && renderer().onUpdateOverlay();
+    doc.UpdateInterface();
+    refocusEditor();
+  } catch (error) {
+    console.warn("Textobjekt konnte nicht aktiviert werden:", error);
+  }
+}
+
 function wireFormatControls() {
   const fontSel = el("text-font-family"), sizeInp = el("text-font-size");
   const boldBtn = el("text-bold"), italicBtn = el("text-italic"), colorInp = el("text-color");
@@ -2114,6 +2140,11 @@ function wireUi() {
   el("toolbar").addEventListener("mousedown", (e) => {
     if (e.target.closest("button, summary")) e.preventDefault();
   });
+
+  // Run after the SDK's canvas click handler has selected the drawing.
+  el("editor_sdk").addEventListener("click", () => {
+    setTimeout(activateSelectedTextForTyping, 0);
+  }, true);
 
   for (const btn of document.querySelectorAll("[data-tool]")) {
     const tool = btn.getAttribute("data-tool");
