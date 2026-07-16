@@ -374,8 +374,8 @@ function refocusEditor() {
 }
 
 // OCR-rebuilt words arrive as individual drawing objects. A normal click only
-// selects the object's frame; activate its text content immediately so typing
-// and Delete operate on the word rather than its resize handles.
+// selects the object's frame; activate its text content while preserving the
+// cursor position that ONLYOFFICE resolved from that click.
 function activateSelectedTextForTyping() {
   if (activeTool !== "edit-text" || !editor) return;
   try {
@@ -387,9 +387,11 @@ function activateSelectedTextForTyping() {
     const content = controller.getTargetDocContent
       ? controller.getTargetDocContent(undefined, true)
       : active.GetDocContent();
-    if (!content || typeof content.SelectAll !== "function") return;
+    if (!content) return;
 
-    content.SelectAll();
+    // Do not select the entire word: users need normal character-by-character
+    // edits after clicking at their intended insertion point.
+    if (typeof content.RemoveSelection === "function") content.RemoveSelection();
     try { doc.GetDrawingDocument().TargetStart(); } catch { /* target is optional */ }
     renderer() && renderer().onUpdateOverlay();
     doc.UpdateInterface();
