@@ -373,9 +373,10 @@ function refocusEditor() {
   try { editor.asc_enableKeyEvents(true); } catch { /* best effort */ }
 }
 
-// OCR-rebuilt words arrive as individual drawing objects. A normal click only
-// selects the object's frame; activate its text content while preserving the
-// cursor position that ONLYOFFICE resolved from that click.
+// OCR-rebuilt words arrive as individual drawing objects. A normal click can
+// stop at the object's resize frame, so replay it through ONLYOFFICE's native
+// text-hit path. That path installs selection.textSelection, starts
+// TextAddState and places the caret at the clicked character.
 function activateSelectedTextForTyping() {
   if (activeTool !== "edit-text" || !editor) return;
   try {
@@ -384,15 +385,21 @@ function activateSelectedTextForTyping() {
     if (!active || !active.IsDrawing || !active.IsDrawing()) return;
 
     const controller = doc.GetController();
-    const content = controller.getTargetDocContent
-      ? controller.getTargetDocContent(undefined, true)
-      : active.GetDocContent();
-    if (!content) return;
+    const viewer = renderer();
+    const mouse = window.AscCommon && window.AscCommon.global_mouseEvent;
+    if (!controller || typeof controller.handleTextHit !== "function"
+        || !viewer || typeof viewer.getPageByCoords2 !== "function" || !mouse) return;
 
-    // Do not select the entire word: users need normal character-by-character
-    // edits after clicking at their intended insertion point.
-    if (typeof content.RemoveSelection === "function") content.RemoveSelection();
-    try { doc.GetDrawingDocument().TargetStart(); } catch { /* target is optional */ }
+    let point = viewer.getPageByCoords2(mouse.X, mouse.Y);
+    if (!point) return;
+    const page = typeof active.GetPage === "function" ? active.GetPage() : point.index;
+    if (page !== point.index && window.AscPDF && typeof window.AscPDF.ConvertCoordsToAnotherPage === "function") {
+      point = window.AscPDF.ConvertCoordsToAnotherPage(point.x, point.y, point.index, page);
+      point.index = page;
+    }
+
+    controller.handleTextHit(active, mouse, point.x, point.y, null, page, false);
+    controller.updateSelectionState();
     renderer() && renderer().onUpdateOverlay();
     doc.UpdateInterface();
     refocusEditor();
