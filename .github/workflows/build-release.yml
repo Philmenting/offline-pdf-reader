@@ -2,6 +2,8 @@ name: Build Windows Desktop ZIP
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   workflow_dispatch:
