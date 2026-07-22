@@ -1060,48 +1060,81 @@ async function testHandMarkerSecondDoc(browser) {
   check("text selection works again after LEAVING the Text tool (peek)",
     quadsAfterPeek > 0, `quads=${quadsAfterPeek}`);
 
-  // REAL edits: leaving the Text tool commits them (the engine's split
-  // writer cannot serialize the object model — edited pages get rasterized
-  // with an invisible OCR text layer and the document reloads). The typed
-  // text must survive, stay searchable and markable.
-  let ocrPresent = false;
-  try { ocrPresent = (await fetch(`${BASE}/vendor/ocr/tesseract.min.js`, { method: "HEAD" })).ok; }
-  catch { /* not vendored */ }
-
+  // REAL edits remain in ONLYOFFICE's drawing text model across tool changes.
+  // Marking a selection must not reload/OCR the page, and the same text object
+  // must accept a second character-level edit afterwards.
   await clickTool(page, "edit-text");
   await page.waitForTimeout(1500);
   await page.mouse.dblclick(430, 120 + 52 + dy2);
   await page.waitForTimeout(1200);
   await page.keyboard.press("End");
   await page.keyboard.type("XQY", { delay: 80 });
-  await page.waitForTimeout(800);
-  await clickTool(page, "select");
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await page.waitForFunction(
-        () => document.getElementById("status").textContent.includes("Textänderungen übernommen"),
-        null, { timeout: 300000 });
-      break;
-    } catch (e) {
-      if (!/Execution context was destroyed|navigat/i.test(String(e))) throw e;
+  await page.waitForTimeout(500);
+
+  await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    window.__editCycleDoc = doc;
+    window.__editCycleObject = doc.GetActiveObject();
+  });
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.up("Shift");
+  await clickTool(page, "strikeout");
+  await page.waitForTimeout(500);
+
+  const markerState = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const active = doc.GetActiveObject();
+    const content = doc.GetController().getTargetDocContent(undefined, true);
+    const para = content && content.GetCurrentParagraph && content.GetCurrentParagraph();
+    let strikeoutRuns = 0;
+    if (para) {
+      para.CheckRunContent((run) => {
+        const pr = run.Get_CompiledPr ? run.Get_CompiledPr(false) : null;
+        if (pr && pr.TextPr && pr.TextPr.Strikeout) strikeoutRuns++;
+      });
     }
-  }
-  await page.waitForTimeout(2000);
-  check("real text edits trigger a commit when leaving the Text tool", true);
-  if (ocrPresent) {
-    const typedFound = await page.evaluate(() => {
-      const props = new window.AscCommon.CSearchSettings();
-      props.put_Text("XQY");
-      props.put_MatchCase(false);
-      const n = window.__pdfEditor.asc_findText(props, true) | 0;
-      try { window.__pdfEditor.asc_endFindText(); } catch { /* none */ }
-      return n;
-    });
-    check("typed text survives the commit and is searchable (OCR layer)",
-      typedFound >= 1, `matches=${typedFound}`);
-  }
-  const dirtyAfterCommit = await page.evaluate(() => document.title.startsWith("•"));
-  check("document stays marked unsaved after the commit", dirtyAfterCommit);
+    return {
+      sameDocument: doc === window.__editCycleDoc,
+      sameObject: active === window.__editCycleObject,
+      strikeoutRuns,
+      status: document.getElementById("status").textContent,
+    };
+  });
+  check("marking edited text does not reload the document",
+    markerState.sameDocument && markerState.sameObject,
+    `sameDocument=${markerState.sameDocument} sameObject=${markerState.sameObject}`);
+  check("strikeout is applied inside the editable text model",
+    markerState.strikeoutRuns > 0 || markerState.status.includes("Textformatierung angewendet"),
+    `runs=${markerState.strikeoutRuns} status=${markerState.status}`);
+
+  await clickTool(page, "edit-text");
+  await page.waitForTimeout(250);
+  await page.keyboard.press("End");
+  await page.keyboard.type("Z", { delay: 80 });
+  await page.waitForTimeout(500);
+  const textAfterSecondEdit = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const content = doc.GetController().getTargetDocContent(undefined, true);
+    const para = content && content.GetCurrentParagraph && content.GetCurrentParagraph();
+    let value = "";
+    if (para) {
+      para.CheckRunContent((run) => {
+        for (const item of run.Content || []) {
+          if (!item.IsText || !item.IsText()) continue;
+          const cp = item.GetCodePoint ? item.GetCodePoint() : item.Value;
+          if (Number.isFinite(cp)) value += String.fromCodePoint(cp);
+        }
+      });
+    }
+    return value;
+  });
+  check("marked text accepts a second character-level edit",
+    textAfterSecondEdit.includes("XQYZ"), textAfterSecondEdit);
+  const dirtyAfterEdit = await page.evaluate(() => document.title.startsWith("•"));
+  check("document stays marked unsaved after editable formatting", dirtyAfterEdit);
 
   check("no page errors (hand-marker-seconddoc scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
