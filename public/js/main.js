@@ -1137,16 +1137,13 @@ function setViewerTargetType(type) {
 // session. Rebuilding it through raster/OCR on every tool switch destroys the
 // caret, run and selection identity and makes a second edit unreliable.
 function leavePageEditFocus() {
+  try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
   const entry = editModeEntry;
-  if (!entry) {
-    try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
-    return;
-  }
+  if (!entry) return;
 
   if (rollbackIfPureRecognition(entry)) {
     editModeEntry = null;
   }
-  try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
 }
 
 // asc_EditPage "recognizes" the page: its content becomes drawing objects
@@ -1269,8 +1266,7 @@ function applyEditableMarkerSelection() {
     if (marker.typeName === "Highlight") {
       // An undefined annotation type intentionally selects CPdfDoc.SetHighlight,
       // whose active-drawing branch applies paragraph/run highlighting.
-      editor.SetMarkerFormat(undefined, true,
-        marker.opacity, marker.r, marker.g, marker.b);
+      selection.doc.SetHighlight(marker.r, marker.g, marker.b, marker.opacity);
     } else if (marker.typeName === "Underline") {
       editor.put_TextPrUnderline(true);
     } else if (marker.typeName === "Strikeout") {
