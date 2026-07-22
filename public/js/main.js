@@ -378,13 +378,22 @@ function refocusEditor() {
 // text-hit path. That path installs selection.textSelection, starts
 // TextAddState and places the caret at the clicked character.
 function activateSelectedTextForTyping() {
-  if (activeTool !== "edit-text" || !editor) return;
+  if ((activeTool !== "edit-text" && !editableMarkerTool) || !editor) return;
   try {
     const doc = editor.getPDFDoc();
     const active = doc.GetActiveObject();
     if (!active || !active.IsDrawing || !active.IsDrawing()) return;
 
     const controller = doc.GetController();
+    // Native hit handling already put the drawing into text-edit state. Replaying
+    // handleTextHit in that case can reuse a double-click count and select the
+    // whole word/object, which prevents precise character-by-character edits.
+    if (controller && controller.selection
+        && controller.selection.textSelection === active) {
+      refocusEditor();
+      return;
+    }
+
     const viewer = renderer();
     const mouse = window.AscCommon && window.AscCommon.global_mouseEvent;
     if (!controller || typeof controller.handleTextHit !== "function"
@@ -526,7 +535,6 @@ function registerEditorCallbacks() {
     // default to text selection (the engine's open path forces hand/pan
     // mode, which blocks drag-select and with it markers and Strg+C)
     setViewerTargetType("select");
-    restorePendingMarkerTool();
     installDocMouseGuard();
     updatePageCount(editor.getCountPages ? editor.getCountPages() : 0);
     updateCurrentPage(editor.getCurrentPage ? editor.getCurrentPage() : 0);
@@ -1123,16 +1131,22 @@ function setViewerTargetType(type) {
   try { editor.asc_setViewerTargetType(type); } catch { /* viewer not ready */ }
 }
 
-// Leaving the Text tool must also drop the page-edit focus: the engine's
-// canSelectPageText() refuses text selection while doc.activeDrawing is set,
-// so a leftover active text frame from edit mode silently killed selection
-// and markers until the next document open.
+// Leaving an untouched Text page rolls back ONLYOFFICE's recognition point so
+// the original viewer text layer remains selectable. Once the user has made a
+// real edit, keep the recognized drawing model alive for the rest of the
+// session. Rebuilding it through raster/OCR on every tool switch destroys the
+// caret, run and selection identity and makes a second edit unreliable.
 function leavePageEditFocus() {
-  try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
   const entry = editModeEntry;
-  editModeEntry = null;
-  if (!entry) return;
-  if (!rollbackIfPureRecognition(entry)) commitTextEdits(recognizedPageIndexes());
+  if (!entry) {
+    try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
+    return;
+  }
+
+  if (rollbackIfPureRecognition(entry)) {
+    editModeEntry = null;
+  }
+  try { editor.getPDFDoc().BlurActiveObject(); } catch { /* nothing focused */ }
 }
 
 // asc_EditPage "recognizes" the page: its content becomes drawing objects
@@ -1182,37 +1196,8 @@ function rollbackIfPureRecognition(entry) {
   return true;
 }
 
-// Real text edits leave the page in the object model, where the viewer's
-// text layer is gone for good — the edited text could never be selected or
-// highlighted again. COMMIT the edits instead: serialize the document (the
-// save pipeline writes edited pages properly) and reload it, exactly like
-// the watermark flow. The page returns with a fresh text layer; the
-// document stays marked unsaved. Undo history resets at this point.
-let commitInProgress = false;
-async function commitTextEdits(rasterPages) {
-  if (commitInProgress) return;
-  commitInProgress = true;
-  try {
-    setStatus("Textänderungen werden übernommen …");
-    const bytes = await collectPdfBytes(rasterPages);
-    if (!bytes) {
-      setStatus("Textänderungen konnten nicht übernommen werden (keine gültigen PDF-Daten).");
-      return;
-    }
-    markDirty(false); // reload guard must not prompt — the bytes carry everything
-    textCommitReloadRequested = true;
-    try {
-      await stashPendingOpenAndReload(bytes, lastName, true /* still unsaved */);
-    } finally {
-      textCommitReloadRequested = false;
-    }
-  } catch (e) {
-    console.error("Übernehmen fehlgeschlagen:", e);
-    setStatus(`Textänderungen übernehmen fehlgeschlagen: ${e.message}`);
-  } finally {
-    commitInProgress = false;
-  }
-}
+// Text edits stay in the drawing model until collectPdfBytes() performs the
+// single final raster/OCR conversion required by the standalone sdkjs writer.
 
 // User-selectable marker color (shared by highlight/underline/strikeout),
 // persisted across sessions. Highlight applies it translucently, the line
@@ -1235,8 +1220,16 @@ async function initMarkerColor() {
   input.addEventListener("change", () => {
     markerColorHex = input.value;
     storeSet("marker-color", markerColorHex);
-    // re-arm an active marker so the next stroke uses the new color
-    if (activeTool.startsWith("marker:")) {
+    // Keep both marker backends in sync: editable text is formatted in the
+    // drawing model, untouched PDF text uses a regular PDF annotation.
+    if (editableMarkerTool) {
+      const [r, g, b] = markerRgb();
+      editableMarkerTool = {
+        ...editableMarkerTool,
+        r, g, b,
+        opacity: editableMarkerTool.typeName === "Highlight" ? 50 : 100,
+      };
+    } else if (activeTool.startsWith("marker:")) {
       const typeName = activeTool.slice("marker:".length);
       const [r, g, b] = markerRgb();
       try {
@@ -1248,80 +1241,99 @@ async function initMarkerColor() {
   });
 }
 
-const PENDING_MARKER_TOOL_KEY = "offline-pdf-editor:pending-marker-tool";
+let editableMarkerTool = null;
 
-// PDF text edits are committed by serializing and reopening the document.
-// Keep the requested marker across that short reload so it is armed against
-// the fresh text layer rather than the obsolete editable-object model.
-function hasRealTextEditsToCommit() {
-  if (!editModeEntry) return false;
-  const fresh = newActivePoints(editModeEntry);
-  return !!(fresh && fresh.length) && !fresh.every(
-    (p) => p && p.Description === window.AscDFH.historydescription_Pdf_EditPage);
-}
-
-function storePendingMarkerTool(typeName, r, g, b, opacity) {
+function getEditableTextSelection() {
   try {
-    sessionStorage.setItem(PENDING_MARKER_TOOL_KEY, JSON.stringify({ typeName, r, g, b, opacity }));
-    return true;
-  } catch (error) {
-    console.warn("Markierungswerkzeug konnte nicht für den Neuaufbau vorgemerkt werden:", error);
-    return false;
-  }
-}
-
-function takePendingMarkerTool() {
-  try {
-    const raw = sessionStorage.getItem(PENDING_MARKER_TOOL_KEY);
-    sessionStorage.removeItem(PENDING_MARKER_TOOL_KEY);
-    const marker = raw && JSON.parse(raw);
-    if (!marker || !["Highlight", "Underline", "Strikeout"].includes(marker.typeName)) return null;
-    if (![marker.r, marker.g, marker.b, marker.opacity].every(Number.isFinite)) return null;
-    return marker;
+    const doc = editor.getPDFDoc();
+    const active = doc.GetActiveObject();
+    if (!active || typeof active.IsDrawing !== "function" || !active.IsDrawing()
+        || typeof active.GetSelectionQuads !== "function") return null;
+    const quads = active.GetSelectionQuads();
+    if (!quads || !quads.length) return null;
+    return { doc, active, quads };
   } catch {
     return null;
   }
 }
 
+// Recognized page text is a real ONLYOFFICE drawing text model. Formatting its
+// current selection directly keeps runs, caret and undo history intact. The
+// normal marker backend remains in use for untouched viewer-layer PDF text.
+function applyEditableMarkerSelection() {
+  const marker = editableMarkerTool;
+  const selection = marker && getEditableTextSelection();
+  if (!marker || !selection) return false;
+
+  try {
+    if (marker.typeName === "Highlight") {
+      // An undefined annotation type intentionally selects CPdfDoc.SetHighlight,
+      // whose active-drawing branch applies paragraph/run highlighting.
+      editor.SetMarkerFormat(undefined, true,
+        marker.opacity, marker.r, marker.g, marker.b);
+    } else if (marker.typeName === "Underline") {
+      editor.put_TextPrUnderline(true);
+    } else if (marker.typeName === "Strikeout") {
+      editor.put_TextPrStrikeout(true);
+    } else {
+      return false;
+    }
+
+    const controller = selection.doc.GetController();
+    if (controller && typeof controller.updateSelectionState === "function") {
+      controller.updateSelectionState();
+    }
+    const view = renderer();
+    if (view && typeof view.onUpdateOverlay === "function") view.onUpdateOverlay();
+    selection.doc.UpdateInterface();
+    markDirty(true);
+    setStatus("Textformatierung angewendet. Der Text bleibt direkt bearbeitbar.");
+    return true;
+  } catch (error) {
+    console.warn("Textformatierung fehlgeschlagen:", error);
+    setStatus(`Textformatierung fehlgeschlagen: ${error.message}`);
+    return false;
+  }
+}
+
+function hasRealTextEditsToCommit() {
+  return sessionHasRealEdits();
+}
+
 function armMarkerTool(typeName, r, g, b, opacity) {
   if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
+  editableMarkerTool = null;
   editor.SetMarkerFormat(undefined, false);
-  setViewerTargetType("select"); // drag must select text for the marker to apply
+  setViewerTargetType("select");
   editor.SetMarkerFormat(annotType(typeName), true, opacity, r, g, b);
   setActiveTool("marker:" + typeName);
 }
 
-function restorePendingMarkerTool() {
-  const marker = takePendingMarkerTool();
-  if (!marker) return;
-
-  // The content-ready callback runs before the viewer has completed its first
-  // layout. Arming on the next tick ensures the rebuilt text layer receives
-  // the subsequent drag selection.
-  setTimeout(() => {
-    armMarkerTool(marker.typeName, marker.r, marker.g, marker.b, marker.opacity);
-    setStatus("Textänderungen übernommen. Markierungswerkzeug ist aktiv — Text auswählen.");
-  }, 120);
-}
-
 function setMarker(typeName, r, g, b, opacity) {
   if (!docOpen || typeof editor.SetMarkerFormat !== "function") return;
-  const turningOn = activeTool !== ("marker:" + typeName);
+  const toolName = "marker:" + typeName;
+  const turningOn = activeTool !== toolName;
+
   if (!turningOn) {
+    editableMarkerTool = null;
     editor.SetMarkerFormat(undefined, false);
+    leavePageEditFocus();
     setActiveTool("select");
     return;
   }
 
-  if (activeTool === "edit-text" && hasRealTextEditsToCommit()) {
-    // The existing commit path reloads the page to restore selectable text.
-    // Defer marker arming until that fresh page is ready.
-    if (storePendingMarkerTool(typeName, r, g, b, opacity)) {
-      editor.SetMarkerFormat(undefined, false);
-      leavePageEditFocus();
-      setStatus("Textänderungen werden übernommen. Markierung wird danach aktiviert …");
-      return;
+  if (hasRealTextEditsToCommit()) {
+    editor.SetMarkerFormat(undefined, false);
+    editableMarkerTool = { typeName, r, g, b, opacity };
+    setViewerTargetType("select");
+    // A toolbar mousedown does not steal focus, so a selection made immediately
+    // before clicking the marker is still available here.
+    const applied = applyEditableMarkerSelection();
+    setActiveTool(toolName);
+    if (!applied) {
+      setStatus("Markierungswerkzeug aktiv — Text im bearbeitbaren Textobjekt auswählen.");
     }
+    return;
   }
 
   leavePageEditFocus();
@@ -1338,6 +1350,7 @@ const TOOL_HANDLERS = {
 
   "select":      () => {
     setFormFillMode(false);
+    editableMarkerTool = null;
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
     try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
@@ -1347,6 +1360,7 @@ const TOOL_HANDLERS = {
   },
   "hand":        () => {
     setFormFillMode(false);
+    editableMarkerTool = null;
     editor.SetMarkerFormat(undefined, false);
     try { editor.asc_StopInkDrawer(); } catch { /* not drawing */ }
     try { if (editor.isStartAddShape) editor.StartAddShape("rect", false); } catch { /* not armed */ }
@@ -1360,6 +1374,7 @@ const TOOL_HANDLERS = {
     // The toolbar button takes DOM focus. Restore the editor's keyboard
     // capture after page recognition so annotations do not leave the user in
     // a visible-but-non-editable text mode.
+    editableMarkerTool = null;
     editor.SetMarkerFormat(undefined, false);
     setViewerTargetType("select");
     if (typeof editor.asc_EditPage === "function") {
@@ -1430,7 +1445,8 @@ function installDocMouseGuard() {
 
   const guards = {
     getPageDrawingByMouse: () =>
-      activeTool === "hand" || activeTool === "select" || activeTool.startsWith("marker:"),
+      activeTool === "hand" || activeTool === "select"
+        || (activeTool.startsWith("marker:") && !editableMarkerTool),
     getPageAnnotByMouse: () => activeTool === "hand",
     getPageFieldByMouse: () => activeTool === "hand",
   };
@@ -2040,7 +2056,9 @@ function stepZoom(dir) {
 
 // ── Toolbar state ─────────────────────────────────────────────────────────
 function setActiveTool(name) {
-  if (activeTool === "edit-text" && name !== "edit-text") leavePageEditFocus();
+  if (activeTool === "edit-text" && name !== "edit-text" && !editableMarkerTool) {
+    leavePageEditFocus();
+  }
   activeTool = name;
   for (const btn of document.querySelectorAll(".toolbar .tool")) {
     const t = btn.getAttribute("data-tool");
@@ -2150,9 +2168,15 @@ function wireUi() {
     if (e.target.closest("button, summary")) e.preventDefault();
   });
 
-  // Run after the SDK's canvas click handler has selected the drawing.
+  // Run after the SDK's canvas handler. The first click may need to enter an
+  // OCR-created drawing's text state; later clicks are left entirely native so
+  // the caret can be placed character by character. Editable marker formatting
+  // is applied after a drag has produced selection quads.
   el("editor_sdk").addEventListener("click", () => {
     setTimeout(activateSelectedTextForTyping, 0);
+  }, true);
+  el("editor_sdk").addEventListener("mouseup", () => {
+    if (editableMarkerTool) setTimeout(applyEditableMarkerSelection, 0);
   }, true);
 
   for (const btn of document.querySelectorAll("[data-tool]")) {
