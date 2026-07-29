@@ -542,11 +542,23 @@ function registerEditorCallbacks() {
     setStatusControlsVisible(true);
   });
   on("asc_onCountPages", (n) => updatePageCount(n));
-  on("asc_onCurrentPage", (n) => updateCurrentPage(n));
+  on("asc_onCurrentPage", (n) => {
+    updateCurrentPage(n);
+    if (activeTool === "edit-text") scheduleCurrentPageTextEditing(n);
+  });
   on("asc_onZoomChange", (percent) => updateZoomDisplay(percent));
   on("asc_onCanUndo", (v) => {
     setToolEnabled("undo", docOpen && !!v);
-    if (docOpen && v) markDirty(true); // any undoable change = unsaved changes
+    if (docOpen && v) {
+      markDirty(true); // any undoable change = unsaved changes
+      if (activeTool === "edit-text" && editModeEntry) {
+        const fresh = newActivePoints(editModeEntry);
+        const latest = fresh && fresh[fresh.length - 1];
+        if (latest && latest.Description !== window.AscDFH.historydescription_Pdf_EditPage) {
+          markCurrentTextPageEdited();
+        }
+      }
+    }
   });
   on("asc_onCanRedo", (v) => setToolEnabled("redo", docOpen && !!v));
   on("asc_onMarkerFormatChanged", (type, isOn) => {
@@ -891,17 +903,18 @@ async function collectPdfBytes(forceRasterPages) {
   // plus an invisible OCR text layer so the text stays searchable/markable.
   const rasterPages = (forceRasterPages && forceRasterPages.length)
     ? forceRasterPages
-    : (sessionHasRealEdits() ? recognizedPageIndexes() : []);
+    : editedTextPageIndexes();
   return rasterizePagesIntoPdf(bytes, rasterPages);
 }
 
-function recognizedPageIndexes() {
+function editedTextPageIndexes() {
   const out = [];
   try {
     const v = editor.getDocumentRenderer();
     const n = editor.getCountPages() | 0;
     for (let i = 0; i < n; i++) {
-      if (v.file.pages[i] && v.file.pages[i].isRecognized) out.push(i);
+      const page = v.file.pages[i];
+      if (page && editedTextPageObjects.has(page)) out.push(i);
     }
   } catch { /* renderer not ready */ }
   return out;
@@ -1155,6 +1168,55 @@ function leavePageEditFocus() {
 // recognition back. Real text edits keep the object model — that page then
 // intentionally stays in editing-oriented interaction.
 let editModeEntry = null; // { pointsBefore, wasDirty }
+const editedTextPageObjects = new WeakSet();
+let editPageActivationTimer = null;
+
+function currentPdfPageObject() {
+  try {
+    const view = renderer();
+    const index = editor.getCurrentPage() | 0;
+    return view && view.file && view.file.pages[index];
+  } catch {
+    return null;
+  }
+}
+
+function markCurrentTextPageEdited() {
+  const page = currentPdfPageObject();
+  if (page) editedTextPageObjects.add(page);
+}
+
+function activateCurrentPageForTextEditing(expectedPage) {
+  if (!docOpen || mode !== "editor" || activeTool !== "edit-text"
+      || typeof editor.asc_EditPage !== "function") return;
+
+  const pageIndex = editor.getCurrentPage() | 0;
+  if (Number.isInteger(expectedPage) && expectedPage !== pageIndex) return;
+
+  const page = currentPdfPageObject();
+  if (!page || page.isRecognized) {
+    refocusEditor();
+    return;
+  }
+
+  try {
+    markTextEditEntry();
+    editor.asc_EditPage();
+    setStatus(`Textbearbeitung für Seite ${pageIndex + 1} wird vorbereitet …`);
+    requestAnimationFrame(() => refocusEditor());
+  } catch (error) {
+    console.warn(`Textbearbeitung für Seite ${pageIndex + 1} konnte nicht aktiviert werden:`, error);
+    setStatus(`Textbearbeitung für Seite ${pageIndex + 1} konnte nicht aktiviert werden.`);
+  }
+}
+
+function scheduleCurrentPageTextEditing(pageIndex, delay = 120) {
+  if (editPageActivationTimer !== null) clearTimeout(editPageActivationTimer);
+  editPageActivationTimer = setTimeout(() => {
+    editPageActivationTimer = null;
+    activateCurrentPageForTextEditing(pageIndex);
+  }, delay);
+}
 
 function historyPointCount() {
   try { return window.AscCommon.History.Points.length; } catch { return -1; }
@@ -1299,6 +1361,7 @@ function applyEditableMarkerSelection() {
     const view = renderer();
     if (view && typeof view.onUpdateOverlay === "function") view.onUpdateOverlay();
     selection.doc.UpdateInterface();
+    markCurrentTextPageEdited();
     markDirty(true);
     setStatus("Textformatierung angewendet. Der Text bleibt direkt bearbeitbar.");
     return true;
@@ -1337,6 +1400,7 @@ function clearEditableMarkerSelection() {
     const view = renderer();
     if (view && typeof view.onUpdateOverlay === "function") view.onUpdateOverlay();
     selection.doc.UpdateInterface();
+    markCurrentTextPageEdited();
     markDirty(true);
     setStatus("Markierung entfernt. Der Text bleibt unverändert.");
     return true;
@@ -1422,18 +1486,13 @@ const TOOL_HANDLERS = {
   },
   "form-fill":   () => setFormFillMode(activeTool !== "form-fill"),
   "edit-text":   () => {
-    // The toolbar button takes DOM focus. Restore the editor's keyboard
-    // capture after page recognition so annotations do not leave the user in
-    // a visible-but-non-editable text mode.
+    // Text editing remains active across page changes. Each reached page is
+    // recognized lazily so large documents stay responsive.
     editableMarkerTool = null;
     editor.SetMarkerFormat(undefined, false);
     setViewerTargetType("select");
-    if (typeof editor.asc_EditPage === "function") {
-      markTextEditEntry();
-      editor.asc_EditPage();
-    }
     setActiveTool("edit-text");
-    requestAnimationFrame(() => refocusEditor());
+    scheduleCurrentPageTextEditing(editor.getCurrentPage() | 0, 0);
   },
   "textbox":     () => {
     if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
