@@ -1081,34 +1081,52 @@ async function testHandMarkerSecondDoc(browser) {
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.up("Shift");
-  await clickTool(page, "strikeout");
+  await clickTool(page, "highlight");
   await page.waitForTimeout(500);
 
   const markerState = await page.evaluate(() => {
     const doc = window.__pdfEditor.getPDFDoc();
-    const active = doc.GetActiveObject();
-    const content = doc.GetController().getTargetDocContent(undefined, true);
-    const para = content && content.GetCurrentParagraph && content.GetCurrentParagraph();
-    let strikeoutRuns = 0;
-    if (para) {
-      para.CheckRunContent((run) => {
-        const pr = run.Get_CompiledPr ? run.Get_CompiledPr(false) : null;
-        if (pr && pr.TextPr && pr.TextPr.Strikeout) strikeoutRuns++;
-      });
-    }
     return {
       sameDocument: doc === window.__editCycleDoc,
-      sameObject: active === window.__editCycleObject,
-      strikeoutRuns,
+      sameObject: doc.GetActiveObject() === window.__editCycleObject,
       status: document.getElementById("status").textContent,
     };
   });
   check("marking edited text does not reload the document",
     markerState.sameDocument && markerState.sameObject,
     `sameDocument=${markerState.sameDocument} sameObject=${markerState.sameObject}`);
-  check("strikeout is applied inside the editable text model",
-    markerState.strikeoutRuns > 0 || markerState.status.includes("Textformatierung angewendet"),
-    `runs=${markerState.strikeoutRuns} status=${markerState.status}`);
+  check("highlight is applied inside the editable text model",
+    markerState.status.includes("Textformatierung angewendet"), markerState.status);
+
+  // Entf while the editable marker is active clears only the formatting. The
+  // selected text and its drawing object must remain available for more edits.
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(300);
+  const clearedMarkerState = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const content = doc.GetController().getTargetDocContent(undefined, true);
+    const para = content && content.GetCurrentParagraph && content.GetCurrentParagraph();
+    let value = "";
+    if (para) {
+      para.CheckRunContent((run) => {
+        for (const item of run.Content || []) {
+          if (!item.IsText || !item.IsText()) continue;
+          const cp = item.GetCodePoint ? item.GetCodePoint() : item.Value;
+          if (Number.isFinite(cp)) value += String.fromCodePoint(cp);
+        }
+      });
+    }
+    return {
+      sameObject: doc.GetActiveObject() === window.__editCycleObject,
+      text: value,
+      status: document.getElementById("status").textContent,
+    };
+  });
+  check("Delete removes editable highlight without deleting its text",
+    clearedMarkerState.sameObject
+      && clearedMarkerState.text.includes("XQY")
+      && clearedMarkerState.status.includes("Markierung entfernt"),
+    `sameObject=${clearedMarkerState.sameObject} text=${clearedMarkerState.text} status=${clearedMarkerState.status}`);
 
   await clickTool(page, "edit-text");
   await page.waitForTimeout(250);
