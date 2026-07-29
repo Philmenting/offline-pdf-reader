@@ -1240,15 +1240,32 @@ async function initMarkerColor() {
 
 let editableMarkerTool = null;
 
-function getEditableTextSelection() {
+function getEditableTextSelection(selectWholeObject = false) {
   try {
     const doc = editor.getPDFDoc();
     const active = doc.GetActiveObject();
     if (!active || typeof active.IsDrawing !== "function" || !active.IsDrawing()
         || typeof active.GetSelectionQuads !== "function") return null;
-    const quads = active.GetSelectionQuads();
+
+    const controller = doc.GetController();
+    const content = controller && typeof controller.getTargetDocContent === "function"
+      ? controller.getTargetDocContent(undefined, true)
+      : null;
+    let quads = active.GetSelectionQuads();
+    let selectedWholeObject = false;
+
+    // A single click can select the OCR text object's frame without creating
+    // a character selection. For deletion, select that object's text once so
+    // the formatting API has a concrete range to clear.
+    if ((!quads || !quads.length) && selectWholeObject
+        && content && typeof content.SelectAll === "function") {
+      content.SelectAll();
+      quads = active.GetSelectionQuads();
+      selectedWholeObject = true;
+    }
+
     if (!quads || !quads.length) return null;
-    return { doc, active, quads };
+    return { doc, active, content, quads, selectedWholeObject };
   } catch {
     return null;
   }
@@ -1288,6 +1305,44 @@ function applyEditableMarkerSelection() {
   } catch (error) {
     console.warn("Textformatierung fehlgeschlagen:", error);
     setStatus(`Textformatierung fehlgeschlagen: ${error.message}`);
+    return false;
+  }
+}
+
+function clearEditableMarkerSelection() {
+  const marker = editableMarkerTool;
+  const selection = marker && getEditableTextSelection(true);
+  if (!marker || !selection) return false;
+
+  try {
+    if (marker.typeName === "Highlight") {
+      selection.doc.SetHighlight(undefined, undefined, undefined, marker.opacity);
+    } else if (marker.typeName === "Underline") {
+      editor.put_TextPrUnderline(false);
+    } else if (marker.typeName === "Strikeout") {
+      editor.put_TextPrStrikeout(false);
+    } else {
+      return false;
+    }
+
+    if (selection.selectedWholeObject && selection.content
+        && typeof selection.content.RemoveSelection === "function") {
+      selection.content.RemoveSelection();
+    }
+
+    const controller = selection.doc.GetController();
+    if (controller && typeof controller.updateSelectionState === "function") {
+      controller.updateSelectionState();
+    }
+    const view = renderer();
+    if (view && typeof view.onUpdateOverlay === "function") view.onUpdateOverlay();
+    selection.doc.UpdateInterface();
+    markDirty(true);
+    setStatus("Markierung entfernt. Der Text bleibt unverändert.");
+    return true;
+  } catch (error) {
+    console.warn("Markierung konnte nicht entfernt werden:", error);
+    setStatus(`Markierung entfernen fehlgeschlagen: ${error.message}`);
     return false;
   }
 }
@@ -2214,6 +2269,14 @@ function wireUi() {
   // Keyboard shortcuts. Capture phase so they win over the engine's own key
   // handling; undo/redo (Strg+Z/Y) is left to the engine.
   window.addEventListener("keydown", (e) => {
+    if (!e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === "Delete" || e.key === "Backspace")
+        && editableMarkerTool && clearEditableMarkerSelection()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     if (e.key === "F3") {
       e.preventDefault();
       e.stopPropagation();
