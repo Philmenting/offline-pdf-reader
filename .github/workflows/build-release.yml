@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.5.0); empty = v<package.json version>"
+        description: "Release tag (e.g. v0.6.3); empty = v<package.json version>"
         required: false
         default: ""
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -21,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history + tags for the changelog step
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -31,37 +35,48 @@ jobs:
         with:
           python-version: "3.x"
 
-      # Single source of truth for the version: an explicit dispatch input
-      # wins, then the pushed tag, then package.json.
-      - name: Resolve release tag
-        id: tag
+      - name: Resolve build metadata
+        id: meta
+        shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            TAG="${{ github.ref_name }}"
-          else
-            TAG="v$(node -p "require('./package.json').version")"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Release tag: $TAG"
+          VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RELEASE_TAG=""
 
-      # Changelog from commit subjects since the previous release tag —
-      # GitHub's generated notes only list PRs, and this repo releases
-      # straight from master commits.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ github.event.inputs.tag }}"
+            if [ -z "$RELEASE_TAG" ]; then
+              RELEASE_TAG="v$VERSION"
+            fi
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            RELEASE_TAG="${{ github.ref_name }}"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_label=v$VERSION-$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Build: v$VERSION-$SHORT_SHA"
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "Release: $RELEASE_TAG"
+          fi
+
       - name: Generate changelog
+        shell: bash
         run: |
           git fetch --tags --force
+          RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"
           PREV=$(git tag --list 'v*' --sort=-v:refname \
-            | grep -v "^${{ steps.tag.outputs.tag }}$" | head -1)
+            | grep -v "^$RELEASE_TAG$" | head -1)
           echo "## Änderungen" > release-notes.md
+          echo "" >> release-notes.md
+          echo "Build aus Commit \`${{ github.sha }}\`." >> release-notes.md
           echo "" >> release-notes.md
           if [ -n "$PREV" ] && git rev-parse "$PREV" >/dev/null 2>&1; then
             echo "Seit $PREV:" >> release-notes.md
             echo "" >> release-notes.md
-            git log --no-merges --pretty='- %s' "$PREV"..HEAD >> release-notes.md
+            git log --no-merges --pretty='* %s' "$PREV"..HEAD >> release-notes.md
           else
-            git log --no-merges --pretty='- %s' -20 >> release-notes.md
+            git log --no-merges --pretty='* %s' -20 >> release-notes.md
           fi
           cat release-notes.md
 
@@ -71,34 +86,65 @@ jobs:
       - name: Generate font registry
         run: npm run generate-fonts
 
-      - name: Fetch OCR stack (tesseract.js)
+      - name: Fetch OCR stack
         run: npm run fetch-ocr
 
-      # Regression gate for the typed-text artifact bug (ASCW3 / .notdef
-      # boxes): types into a subset-font PDF and asserts real glyphs come out.
-      # Runs BEFORE packaging so a broken font stack can never ship.
       - name: Install Playwright Chromium
         run: |
           npm install --no-save playwright pdf-lib
           npx playwright install --with-deps chromium
 
-      - name: Typing smoke test
+      - name: Run browser tests
         run: npm test
 
       - name: Build Windows desktop package
         run: npm run dist:win
 
-      - name: Build Windows installer (NSIS)
+      - name: Build Windows installer
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq nsis
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nsis
           npm run dist:win:installer
 
-      - name: Create Release
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Offline-PDF-Editor-${{ steps.meta.outputs.build_label }}
+          path: |
+            dist/Offline-PDF-Editor-Setup.exe
+            dist/Offline-PDF-Editor.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Update continuous test tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        run: |
+          git tag -f continuous "$GITHUB_SHA"
+          git push origin refs/tags/continuous --force
+
+      - name: Publish current test build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: continuous
+          name: "Offline PDF Editor Testbuild aktuell"
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          body_path: release-notes.md
           files: |
             dist/Offline-PDF-Editor-Setup.exe
             dist/Offline-PDF-Editor.zip
+
+      - name: Publish version release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: "Offline PDF Editor ${{ steps.meta.outputs.release_tag }}"
+          overwrite_files: true
           body_path: release-notes.md
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "Offline PDF Editor ${{ steps.tag.outputs.tag }}"
+          files: |
+            dist/Offline-PDF-Editor-Setup.exe
+            dist/Offline-PDF-Editor.zip
