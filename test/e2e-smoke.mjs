@@ -1048,6 +1048,23 @@ async function testHandMarkerSecondDoc(browser) {
   const dy2 = await headerYOffset(page);
   await clickTool(page, "edit-text");
   await page.waitForTimeout(1200);
+  await page.evaluate(() => window.__pdfEditor.getDocumentRenderer().navigateToPage(1));
+  await page.waitForFunction(() => {
+    const editor = window.__pdfEditor;
+    const view = editor.getDocumentRenderer();
+    return editor.getCurrentPage() === 1
+      && view.file.pages[1] && view.file.pages[1].isRecognized;
+  }, null, { timeout: 90000 });
+  const documentWideTextMode = await page.evaluate(() => ({
+    active: document.querySelector('[data-tool="edit-text"]').classList.contains("active"),
+    page: window.__pdfEditor.getCurrentPage(),
+  }));
+  check("Text tool remains active and prepares the next page automatically",
+    documentWideTextMode.active && documentWideTextMode.page === 1,
+    JSON.stringify(documentWideTextMode));
+  await page.evaluate(() => window.__pdfEditor.getDocumentRenderer().navigateToPage(0));
+  await page.waitForFunction(() => window.__pdfEditor.getCurrentPage() === 0);
+  await page.waitForTimeout(300);
   await clickTool(page, "select");
   await page.waitForTimeout(400);
   await page.mouse.move(400, 120 + 52 + dy2);
