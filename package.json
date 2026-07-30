@@ -1,6 +1,6 @@
 {
   "name": "offline-pdf-editor",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "An offline PDF editor built on the ONLYOFFICE sdkjs PDF engine (AGPL-3.0).",
   "main": "electron-main.js",
   "license": "AGPL-3.0-only",
