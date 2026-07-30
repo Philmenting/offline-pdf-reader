@@ -159,6 +159,18 @@ async function testFormRoundtrip(browser) {
     formPresentation.designMode === false && formPresentation.editShapes === 0,
     JSON.stringify(formPresentation));
 
+  const forcedDesignLabel = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    const field = doc.widgets.find((widget) => widget.GetFullName() === "name");
+    field.SetEditMode(true);
+    const shape = field.GetEditShape();
+    const label = shape ? shape.GetDocContent().getAllText() : null;
+    field.SetEditMode(false);
+    return label;
+  });
+  check("newly recreated form design shapes contain no visible field name",
+    forcedDesignLabel === "", JSON.stringify(forcedDesignLabel));
+
   // fill mode: text field at PDF pts (150..400, 705..729), checkbox at
   // (150..168, 660..678) → screen at 100% zoom (page top-left ~336/72,
   // scale 96/72): field center ~(703,238), checkbox ~(548,302)
