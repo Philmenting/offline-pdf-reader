@@ -580,10 +580,43 @@ async function testAppendScrollbarSync(browser) {
     window.__pdfEditor.getPDFDoc().fontLoader.isWorking = () => true;
   });
 
-  const chooser = page.waitForEvent("filechooser", { timeout: 15000 });
-  await clickTool(page, "pdf-append");
-  await (await chooser).setFiles({ name: "many.pdf", mimeType: "application/pdf", buffer: appendedPdf });
-  await page.waitForTimeout(2500); // same order of wait a user would give it
+  const dragState = await page.evaluate((pdfBytes) => {
+    const file = new File(
+      [new Uint8Array(pdfBytes)], "many.pdf", { type: "application/pdf" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    window.__appendDropTransfer = transfer;
+
+    const workspace = document.querySelector(".workspace");
+    workspace.dispatchEvent(new DragEvent("dragenter", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+    const overlay = document.getElementById("pdf-drop-overlay");
+    return {
+      visible: !overlay.hidden,
+      message: document.getElementById("pdf-drop-message").textContent,
+    };
+  }, Array.from(appendedPdf));
+  check("drag overlay announces that the PDF will be appended",
+    dragState.visible && dragState.message.includes("anzuhängen"), JSON.stringify(dragState));
+
+  await page.evaluate(() => {
+    const workspace = document.querySelector(".workspace");
+    workspace.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: window.__appendDropTransfer,
+    }));
+    delete window.__appendDropTransfer;
+  });
+  await page.waitForFunction(
+    () => window.__pdfEditor.getCountPages() === 16, null, { timeout: 30000 });
+  await page.waitForTimeout(1000);
+  const overlayHidden = await page.evaluate(
+    () => document.getElementById("pdf-drop-overlay").hidden);
+  check("drag overlay closes after the PDF was dropped", overlayHidden);
 
   const state = await page.evaluate(() => {
     const th = window.__pdfEditor.getDocumentRenderer().Thumbnails;
@@ -792,6 +825,9 @@ async function testUiAndNewTools(browser) {
     count: document.getElementById("page-count").textContent,
   }));
   check("status bar shows page controls after open", sc.visible && sc.count === "/ 4", JSON.stringify(sc));
+  const mailEnabled = await page.evaluate(
+    () => document.getElementById("btn-mail").disabled === false);
+  check("mail button is enabled for an open editable PDF", mailEnabled);
 
   await page.fill("#page-input", "3");
   await page.press("#page-input", "Enter");
