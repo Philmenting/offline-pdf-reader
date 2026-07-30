@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld("desktop", {
   printPdf: (bytes, name) => ipcRenderer.invoke("print-pdf", bytes, name),
 
   /**
+   * Open a compose window in the default Windows mail client with the PDF
+   * attached. The main process keeps the temporary attachment alive until
+   * the compose window is closed.
+   * @returns {Promise<{ok: boolean, canceled?: boolean, error?: string}>}
+   */
+  sendPdfByEmail: (bytes, name) =>
+    ipcRenderer.invoke("send-pdf-by-email", bytes, name),
+
+  /**
    * Receive files the OS asked us to open ("Öffnen mit" / double-click /
    * second instance). Callback gets { name, data: Uint8Array }.
    */
