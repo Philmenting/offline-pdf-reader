@@ -142,6 +142,23 @@ async function testFormRoundtrip(browser) {
   await openBytes(formPdf, "form.pdf");
   console.log("form document open");
 
+  const formPresentation = await page.evaluate(() => {
+    const doc = window.__pdfEditor.getPDFDoc();
+    return {
+      designMode: doc.IsEditFieldsMode(),
+      names: doc.widgets.map((field) => field.GetFullName()),
+      editShapes: doc.widgets.filter(
+        (field) => field.GetEditShape && field.GetEditShape()).length,
+    };
+  });
+  check("form field names remain available as metadata",
+    formPresentation.names.includes("name") &&
+      formPresentation.names.includes("einverstanden"),
+    JSON.stringify(formPresentation.names));
+  check("form opens without visible field-name design labels",
+    formPresentation.designMode === false && formPresentation.editShapes === 0,
+    JSON.stringify(formPresentation));
+
   // fill mode: text field at PDF pts (150..400, 705..729), checkbox at
   // (150..168, 660..678) → screen at 100% zoom (page top-left ~336/72,
   // scale 96/72): field center ~(703,238), checkbox ~(548,302)
