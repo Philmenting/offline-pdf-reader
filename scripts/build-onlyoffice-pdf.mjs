@@ -106,6 +106,33 @@ async function patchTextShaper() {
 }
 
 /**
+ * Keep AcroForm field names as metadata without painting them onto the page.
+ *
+ * In edit mode ONLYOFFICE creates a temporary transparent shape for every
+ * widget and writes GetFullName() into that shape. Those are the black
+ * "Text1" and "DatumRow1" labels users see over otherwise valid fields.
+ * This editor fills existing forms but does not redesign their widgets, so
+ * the temporary shape must stay visually empty.
+ */
+async function patchFormDesignLabels() {
+  const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
+  if (!(await exists(file))) return;
+  let src = await readFile(file, "utf8");
+
+  const needle = "oRun.AddText(this.GetFullName());";
+  const count = src.split(needle).length - 1;
+  if (count !== 2) {
+    throw new Error(
+      `patchFormDesignLabels: expected 2 occurrences, found ${count}; upstream form rendering changed`);
+  }
+
+  src = src.replaceAll(needle,
+    'oRun.AddText(""); // patched: internal AcroForm names are metadata, not visible page text');
+  await writeFile(file, src);
+  console.log("→ patched sdk-all.js: internal form field names remain visually hidden");
+}
+
+/**
  * Stop the save pipeline from BLANKING pages that were opened in text-edit
  * mode ("Text" tool → CPDFDoc.EditPage() marks the page isRecognized).
  *
@@ -292,6 +319,7 @@ async function main() {
   console.log("→ patching engine for standalone-viewer compatibility ...");
   await patchDrawingFile();
   await patchTextShaper();
+  await patchFormDesignLabels();
   await patchSaveNoPageClear();
 
   await writeFile(
