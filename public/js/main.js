@@ -519,6 +519,7 @@ function registerEditorCallbacks() {
   on("asc_onDocumentContentReady", () => {
     docOpen = true;
     resetLongActionCounter();
+    suppressFormDesignLabels();
     enableEditing(true);
     setStatus(`„${lastName}" geöffnet — bereit zum Bearbeiten.`);
     ensureEditorThumbnails();
@@ -848,6 +849,7 @@ function forceEnableEditing(name) {
   ensureEditorThumbnails();
   docOpen = true;
   resetLongActionCounter();
+  suppressFormDesignLabels();
   enableEditing(true);
   refreshHistoryButtons();
   setStatus(`„${name}" geöffnet — bereit zum Bearbeiten.`);
@@ -1841,6 +1843,34 @@ function preloadFieldFonts() {
     }
   } catch (e) {
     console.warn("Formular-Fonts vorladen fehlgeschlagen:", e);
+  }
+}
+
+// ONLYOFFICE equates general PDF editing with form-design mode. In that mode
+// every AcroForm widget gets a temporary edit shape containing its internal
+// field name ("Text1", "DatumRow1", ...). This app supports filling existing
+// forms, not redesigning their widgets, so keep the real field metadata but
+// use the normal fill presentation while all other PDF editing stays enabled.
+function suppressFormDesignLabels() {
+  try {
+    const doc = editor.getPDFDoc && editor.getPDFDoc();
+    if (!doc || !Array.isArray(doc.widgets)) return;
+
+    if (!doc.__formDesignLabelsSuppressed) {
+      doc.IsEditFieldsMode = function () { return false; };
+      doc.__formDesignLabelsSuppressed = true;
+    }
+
+    for (const field of doc.widgets) {
+      try {
+        if (typeof field.SetEditMode === "function") field.SetEditMode(false);
+        if (typeof field.SetNeedUpdateEditShape === "function") {
+          field.SetNeedUpdateEditShape(false);
+        }
+      } catch { /* per-field best effort */ }
+    }
+  } catch (e) {
+    console.warn("Formular-Entwurfsbeschriftungen konnten nicht ausgeblendet werden:", e);
   }
 }
 
