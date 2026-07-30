@@ -1739,6 +1739,7 @@ async function appendPdfFile(file) {
     doc.DoAction(function () {
       doc.MergePagesBinary(insertPos, bytes);
     }, window.AscDFH.historydescription_Pdf_AddPage, doc);
+    suppressFormDesignLabels();
     refreshHistoryButtons();
     markDirty(true);
     setStatus(`„${file.name}" angehängt — ${editor.getCountPages()} Seiten insgesamt.`);
