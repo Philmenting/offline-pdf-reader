@@ -1127,6 +1127,36 @@ async function printDocument() {
   }
 }
 
+async function emailDocument() {
+  if (mode !== "editor" || !docOpen) return;
+  if (!window.desktop || typeof window.desktop.sendPdfByEmail !== "function") {
+    setStatus("E-Mail mit PDF-Anhang ist nur in der Windows-Desktop-App verfügbar.");
+    return;
+  }
+
+  setStatus("PDF für den Mailentwurf wird erzeugt …");
+  try {
+    const bytes = await collectPdfBytes();
+    if (!bytes) {
+      setStatus("E-Mail fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
+      return;
+    }
+
+    setStatus("Mailentwurf wird im Standard-Mailprogramm geöffnet …");
+    const res = await window.desktop.sendPdfByEmail(bytes, lastName);
+    if (res && res.canceled) {
+      setStatus("Mailentwurf geschlossen.");
+    } else if (res && res.ok) {
+      setStatus("PDF wurde an das Standard-Mailprogramm übergeben.");
+    } else {
+      setStatus(`E-Mail fehlgeschlagen: ${(res && res.error) || "unbekannt"}`);
+    }
+  } catch (e) {
+    console.error("email() error:", e);
+    setStatus(`E-Mail fehlgeschlagen: ${e.message}`);
+  }
+}
+
 // ── Editing tools ─────────────────────────────────────────────────────────
 function renderer() {
   if (mode === "editor" && editor && editor.getDocumentRenderer) return editor.getDocumentRenderer();
@@ -1692,37 +1722,38 @@ function insertImage() {
 // engine's real PDF merge (CPDFDoc.MergePagesBinary → WASM MergePages), the
 // same machinery its cross-document page paste uses: pages arrive with their
 // original content, fonts and annotations, and the operation is undoable.
+async function appendPdfFile(file) {
+  if (!file || !docOpen || mode !== "editor") return false;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") {
+      setStatus(`„${file.name}" ist keine gültige PDF-Datei.`);
+      return false;
+    }
+
+    setStatus(`„${file.name}" wird angehängt …`);
+    const doc = editor.getPDFDoc();
+    const insertPos = editor.getCountPages() | 0;
+    doc.DoAction(function () {
+      doc.MergePagesBinary(insertPos, bytes);
+    }, window.AscDFH.historydescription_Pdf_AddPage, doc);
+    refreshHistoryButtons();
+    markDirty(true);
+    setStatus(`„${file.name}" angehängt — ${editor.getCountPages()} Seiten insgesamt.`);
+    return true;
+  } catch (e) {
+    console.error("PDF anhängen fehlgeschlagen:", e);
+    setStatus(`PDF anhängen fehlgeschlagen: ${e.message}`);
+    return false;
+  }
+}
+
 function appendPdf() {
   if (!docOpen || mode !== "editor") return;
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "application/pdf";
-  input.onchange = () => {
-    const f = input.files && input.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onerror = () => setStatus("Datei konnte nicht gelesen werden.");
-    reader.onload = () => {
-      const bytes = new Uint8Array(reader.result);
-      if (String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") {
-        setStatus(`„${f.name}" ist keine gültige PDF-Datei.`);
-        return;
-      }
-      try {
-        const doc = editor.getPDFDoc();
-        const insertPos = editor.getCountPages() | 0;
-        doc.DoAction(function () {
-          doc.MergePagesBinary(insertPos, bytes);
-        }, window.AscDFH.historydescription_Pdf_AddPage, doc);
-        refreshHistoryButtons();
-        setStatus(`„${f.name}" angehängt — ${editor.getCountPages()} Seiten insgesamt.`);
-      } catch (e) {
-        console.error("PDF anhängen fehlgeschlagen:", e);
-        setStatus(`PDF anhängen fehlgeschlagen: ${e.message}`);
-      }
-    };
-    reader.readAsArrayBuffer(f);
-  };
+  input.onchange = () => appendPdfFile(input.files && input.files[0]);
   input.click();
 }
 
@@ -2197,6 +2228,7 @@ const EDITOR_TOOLS = [
 function enableEditing(on) {
   el("btn-save").disabled = !(on && mode === "editor");
   el("btn-print").disabled = !(on && mode === "editor");
+  el("btn-mail").disabled = !(on && mode === "editor");
   for (const tool of EDITOR_TOOLS) {
     // in viewer fallback, only view tools are usable
     const viewerOk = ["zoom-out", "zoom-in", "fit-width", "fit-page"].includes(tool);
@@ -2235,6 +2267,7 @@ function wireUi() {
   }
   el("btn-save").addEventListener("click", saveDocument);
   el("btn-print").addEventListener("click", printDocument);
+  el("btn-mail").addEventListener("click", emailDocument);
   wireFormatControls();
   wireSearchBar({
     getEditor: () => editor,
@@ -2313,11 +2346,51 @@ function wireUi() {
     stepZoom(e.deltaY < 0 ? 1 : -1);
   }, { capture: true, passive: false });
 
-  host.addEventListener("dragover", (e) => e.preventDefault());
-  host.addEventListener("drop", (e) => {
+  const workspace = document.querySelector(".workspace");
+  const dropOverlay = el("pdf-drop-overlay");
+  const dropMessage = el("pdf-drop-message");
+  const isFileDrag = (event) =>
+    event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files");
+  const hideDropOverlay = () => { dropOverlay.hidden = true; };
+
+  workspace.addEventListener("dragenter", (e) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault();
-    onFileChosen(e.dataTransfer.files && e.dataTransfer.files[0]);
+    dropMessage.textContent = docOpen
+      ? "PDF hier ablegen, um sie an das Dokument anzuhängen."
+      : "PDF hier ablegen, um sie zu öffnen.";
+    dropOverlay.hidden = false;
   });
+  workspace.addEventListener("dragover", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  workspace.addEventListener("dragleave", (e) => {
+    if (!workspace.contains(e.relatedTarget)) hideDropOverlay();
+  });
+  workspace.addEventListener("drop", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    hideDropOverlay();
+
+    const files = Array.from(e.dataTransfer.files || []);
+    const file = files.find((candidate) =>
+      candidate.type === "application/pdf" || /\.pdf$/i.test(candidate.name));
+    if (!file) {
+      setStatus("Bitte eine PDF-Datei ablegen.");
+      return;
+    }
+    if (docOpen && mode === "editor") {
+      appendPdfFile(file);
+    } else if (!docOpen) {
+      onFileChosen(file);
+    } else {
+      setStatus("PDF anhängen ist im schreibgeschützten Modus nicht verfügbar.");
+    }
+  });
+  window.addEventListener("dragend", hideDropOverlay);
+  window.addEventListener("blur", hideDropOverlay);
 
   window.addEventListener("resize", () => {
     if (mode === "editor" && editor && editor.WordControl) {
