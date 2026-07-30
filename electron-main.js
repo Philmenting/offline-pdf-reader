@@ -1,8 +1,9 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { createServer } = require("http");
-const { readFile, stat, writeFile, unlink } = require("fs/promises");
+const { readFile, stat, writeFile, unlink, mkdtemp, rm } = require("fs/promises");
 const { appendFileSync } = require("fs");
-const { join, posix, extname, dirname } = require("path");
+const { join, posix, extname, dirname, basename } = require("path");
+const { spawn } = require("child_process");
 const os = require("os");
 
 // Diagnostic log written next to the executable (falls back to temp dir if the
@@ -170,6 +171,128 @@ ipcMain.on("renderer-ready", () => {
     const p = pendingOpenPath;
     pendingOpenPath = null;
     sendOpenFile(p);
+  }
+});
+
+// Windows Simple MAPI opens the user's registered mail client with a normal
+// compose window and supports local file attachments. mailto: URLs cannot
+// attach files, so the call is made in a short-lived PowerShell child process.
+function powershellString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function openMailDraftWithAttachment(filePath, fileName, subject) {
+  const script = [
+    `$attachment = ${powershellString(filePath)}`,
+    `$attachmentName = ${powershellString(fileName)}`,
+    `$subject = ${powershellString(subject)}`,
+    "$source = @'",
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public static class OfflinePdfMapi {",
+    "  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]",
+    "  public struct MapiFileDescW {",
+    "    public uint ulReserved;",
+    "    public uint flFlags;",
+    "    public int nPosition;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszPathName;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszFileName;",
+    "    public IntPtr lpFileType;",
+    "  }",
+    "  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]",
+    "  public struct MapiMessageW {",
+    "    public uint ulReserved;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszSubject;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszNoteText;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszMessageType;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszDateReceived;",
+    "    [MarshalAs(UnmanagedType.LPWStr)] public string lpszConversationID;",
+    "    public uint flFlags;",
+    "    public IntPtr lpOriginator;",
+    "    public uint nRecipCount;",
+    "    public IntPtr lpRecips;",
+    "    public uint nFileCount;",
+    "    public IntPtr lpFiles;",
+    "  }",
+    "  [DllImport(\"MAPI32.DLL\", CharSet = CharSet.Unicode, EntryPoint = \"MAPISendMailW\")]",
+    "  private static extern uint MAPISendMail(IntPtr session, IntPtr uiParam, ref MapiMessageW message, uint flags, uint reserved);",
+    "  public static uint Open(string path, string name, string subject) {",
+    "    var file = new MapiFileDescW { nPosition = -1, lpszPathName = path, lpszFileName = name };",
+    "    IntPtr filePtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(MapiFileDescW)));",
+    "    try {",
+    "      Marshal.StructureToPtr(file, filePtr, false);",
+    "      var message = new MapiMessageW { lpszSubject = subject, nFileCount = 1, lpFiles = filePtr };",
+    "      return MAPISendMail(IntPtr.Zero, IntPtr.Zero, ref message, 9, 0);",
+    "    } finally {",
+    "      Marshal.DestroyStructure(filePtr, typeof(MapiFileDescW));",
+    "      Marshal.FreeHGlobal(filePtr);",
+    "    }",
+    "  }",
+    "}",
+    "'@",
+    "Add-Type -TypeDefinition $source -Language CSharp",
+    "$result = [OfflinePdfMapi]::Open($attachment, $attachmentName, $subject)",
+    "if ($result -ne 0 -and $result -ne 1) { throw \"Simple MAPI meldet Fehlercode $result.\" }",
+    "[Console]::Out.WriteLine(\"MAPI_RESULT:{0}\" -f $result)",
+  ].join("\r\n");
+
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const child = spawn("powershell.exe", [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-EncodedCommand", encoded,
+  ], { windowsHide: true });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `PowerShell wurde mit Code ${code} beendet.`));
+        return;
+      }
+      const match = stdout.match(/MAPI_RESULT:(\d+)/);
+      if (!match) {
+        reject(new Error("Das Mailprogramm hat kein Ergebnis zurückgegeben."));
+        return;
+      }
+      resolve(Number(match[1]));
+    });
+  });
+}
+
+ipcMain.handle("send-pdf-by-email", async (_event, bytes, name) => {
+  if (process.platform !== "win32") {
+    return { ok: false, error: "E-Mail mit Anhang wird derzeit nur unter Windows unterstützt." };
+  }
+
+  let tempDir = null;
+  try {
+    tempDir = await mkdtemp(join(os.tmpdir(), "offline-pdf-mail-"));
+    const requested = basename(String(name || "dokument.pdf"));
+    const safeBase = requested.replace(/[^\w.\-äöüÄÖÜß ]/g, "_") || "dokument.pdf";
+    const safeName = /\.pdf$/i.test(safeBase) ? safeBase : `${safeBase}.pdf`;
+    const tempFile = join(tempDir, safeName);
+    await writeFile(tempFile, Buffer.from(bytes));
+
+    const subjectName = safeName.replace(/\.pdf$/i, "");
+    logLine(`[mail] opening default mail client with ${tempFile}`);
+    const result = await openMailDraftWithAttachment(
+      tempFile, safeName, `PDF: ${subjectName}`);
+    logLine(`[mail] Simple MAPI result ${result}`);
+    return result === 1 ? { ok: true, canceled: true } : { ok: true };
+  } catch (error) {
+    logLine(`[mail] FAILED: ${error.message}`);
+    return { ok: false, error: error.message };
+  } finally {
+    if (tempDir) {
+      try { await rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   }
 });
 
