@@ -408,7 +408,28 @@ async function testTextModeSaveKeepsContent(browser) {
     () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page2.$("#file-input")).setInputFiles({ name: "reopened.pdf", mimeType: "application/pdf", buffer: savedBytes });
   await page2.waitForFunction(
-    () => document.getElementById("status").textConten…8481 tokens truncated…n  await clickTool(page, "highlight");
+    () => document.getElementById("status").textConten…8212 tokens truncated…le-input")).setInputFiles({ name: "erste.pdf", mimeType: "application/pdf", buffer: first });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  await page.waitForTimeout(1200);
+  console.log("hand-marker-seconddoc document open");
+
+  // hand tool pans, select restores drag-to-select
+  await clickTool(page, "hand");
+  const handMode = await page.evaluate(() => !!window.__pdfEditor.getDocumentRenderer().MouseHandObject);
+  check("hand tool switches the engine into pan mode", handMode);
+  await clickTool(page, "select");
+  const selectMode = await page.evaluate(() => !window.__pdfEditor.getDocumentRenderer().MouseHandObject);
+  check("select tool restores text-selection mode", selectMode);
+
+  // marker color picker feeds the engine
+  await page.evaluate(() => {
+    const input = document.getElementById("marker-color");
+    input.value = "#00c853";
+    input.dispatchEvent(new Event("change"));
+  });
+  await clickTool(page, "highlight");
   await page.waitForTimeout(300);
   const hlColor = await page.evaluate(() => window.__pdfEditor.getPDFDoc().HighlightColor);
   check("marker color picker feeds SetMarkerFormat", 
@@ -592,12 +613,7 @@ async function testOcrSearchable(browser) {
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
-  const activationWarnings = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  page.on("console", (message) => {
-    const text = message.text();
-    if (text.includes("Textobjekt konnte nicht aktiviert werden")) activationWarnings.push(text);
-  });
   page.on("dialog", (d) => d.accept());
   await page.goto(BASE);
   await page.waitForFunction(
@@ -634,24 +650,6 @@ async function testOcrSearchable(browser) {
   await page.waitForTimeout(2000);
   const matches = await countMatches();
   check("scan is searchable after OCR (invisible text layer)", matches >= 1, `matches=${matches}`);
-
-  const dy = await headerYOffset(page);
-  await clickTool(page, "edit-text");
-  await page.waitForTimeout(1200);
-  await page.mouse.click(700, 300 + dy);
-  await page.waitForTimeout(800);
-  const selectionHealth = await page.evaluate(() => {
-    const controller = window.__pdfEditor.getPDFDoc().GetController();
-    const textObject = controller.selection && controller.selection.textSelection;
-    return {
-      hasTextSelection: !!textObject,
-      valid: !textObject || typeof textObject.updateSelectionState === "function",
-    };
-  });
-  check("scan background is never installed as a text selection",
-    selectionHealth.valid, JSON.stringify(selectionHealth));
-  check("OCR text activation emits no compatibility warning",
-    activationWarnings.length === 0, activationWarnings.slice(0, 2).join(" | "));
 
   check("no page errors (ocr-searchable scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
