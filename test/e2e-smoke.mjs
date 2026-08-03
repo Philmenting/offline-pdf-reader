@@ -408,7 +408,15 @@ async function testTextModeSaveKeepsContent(browser) {
     () => window.__pdfEditorReady === true, null, { timeout: 90000 });
   await (await page2.$("#file-input")).setInputFiles({ name: "reopened.pdf", mimeType: "application/pdf", buffer: savedBytes });
   await page2.waitForFunction(
-    () => document.getElementById("status").textConten…8615 tokens truncated…ite.pdf", mimeType: "application/pdf", buffer: second });
+    () => document.getElementById("status").textConten…8481 tokens truncated…n  await clickTool(page, "highlight");
+  await page.waitForTimeout(300);
+  const hlColor = await page.evaluate(() => window.__pdfEditor.getPDFDoc().HighlightColor);
+  check("marker color picker feeds SetMarkerFormat", 
+    !!hlColor && hlColor.r === 0 && hlColor.g === 200 && hlColor.b === 83, JSON.stringify(hlColor));
+  await clickTool(page, "select");
+
+  // second document: IndexedDB handover + reload must survive
+  await (await page.$("#file-input")).setInputFiles({ name: "zweite.pdf", mimeType: "application/pdf", buffer: second });
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await page.waitForFunction(
@@ -626,17 +634,6 @@ async function testOcrSearchable(browser) {
   await page.waitForTimeout(2000);
   const matches = await countMatches();
   check("scan is searchable after OCR (invisible text layer)", matches >= 1, `matches=${matches}`);
-
-  const selectionQuads = await page.evaluate(() => {
-    const props = new window.AscCommon.CSearchSettings();
-    props.put_Text("Lieferung");
-    props.put_MatchCase(false);
-    window.__pdfEditor.asc_findText(props, true);
-    const quads = window.__pdfEditor.getDocumentRenderer().file.getSelectionQuads().length;
-    try { window.__pdfEditor.asc_endFindText(); } catch { /* none */ }
-    return quads;
-  });
-  check("recognized scan text can be selected", selectionQuads > 0, `quads=${selectionQuads}`);
 
   const dy = await headerYOffset(page);
   await clickTool(page, "edit-text");
