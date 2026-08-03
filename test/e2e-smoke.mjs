@@ -1308,6 +1308,37 @@ async function testOcrSearchable(browser) {
   const matches = await countMatches();
   check("scan is searchable after OCR (invisible text layer)", matches >= 1, `matches=${matches}`);
 
+  const lineEmbedding = await page.evaluate(async () => {
+    const { embedWordsOnPdfPage } = await import("/js/modules/ocr.js");
+    const calls = [];
+    const mockPage = {
+      getWidth: () => 600,
+      getHeight: () => 800,
+      drawText: (text) => calls.push(text),
+    };
+    const mockFont = {
+      widthOfTextAtSize: (text, size) => text.length * size * 0.5,
+    };
+    const phrase = ["Haushaltssatzung", "und", "Haushaltsplan", "für", "das", "Jahr", "2026"];
+    let x = 100;
+    const words = phrase.map((text) => {
+      const width = text.length * 12;
+      const word = {
+        text,
+        bbox: { x0: x, y0: 200, x1: x + width, y1: 230 },
+        _ocrLine: 0,
+      };
+      x += width + 14;
+      return word;
+    });
+    const embedded = embedWordsOnPdfPage(mockPage, words, 1200, mockFont);
+    return { embedded, calls };
+  });
+  check("OCR words on one line become one copyable text run",
+    lineEmbedding.embedded === 7 && lineEmbedding.calls.length === 1
+      && lineEmbedding.calls[0] === "Haushaltssatzung und Haushaltsplan für das Jahr 2026",
+    JSON.stringify(lineEmbedding));
+
   check("no page errors (ocr-searchable scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
 }
