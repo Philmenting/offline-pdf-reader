@@ -1,13 +1,12 @@
 // Offline OCR (Texterkennung) for scanned PDFs, built on tesseract.js with
-// all assets vendored under /vendor/ocr (npm run fetch-ocr) — no network at
+// all assets vendored under /vendor/ocr (npm run fetch-ocr) - no network at
 // runtime, matching the app's offline guarantee.
 //
-// Two consumers share the recognition pipeline (render page range → bitmaps
-// via the engine's offscreen renderer → tesseract):
-//   • makeSearchablePdf(): embeds every recognized word as an INVISIBLE text
-//     layer at its bounding box (pdf-lib, opacity 0), so search/select/copy
-//     work in scans — the visual page stays untouched.
-//   • exportRecognizedText(): plain .txt download of the recognized text.
+// Two consumers share the recognition pipeline (render page range -> bitmaps
+// via the engine's offscreen renderer -> tesseract):
+//   * makeSearchablePdf(): embeds recognized lines as an invisible text layer,
+//     so search/select/copy work across complete phrases in scans.
+//   * exportRecognizedText(): plain .txt download of the recognized text.
 import { loadScript, downloadBytes } from "./dom.js";
 
 const OCR_BASE = "/vendor/ocr";
@@ -54,9 +53,115 @@ export async function recognizeCanvasWords(canvas) {
   return collectWords(data);
 }
 
+function validBbox(word) {
+  const b = word && word.bbox;
+  return b && [b.x0, b.y0, b.x1, b.y1].every(Number.isFinite)
+    && b.x1 > b.x0 && b.y1 > b.y0;
+}
+
+function wordLineKey(word) {
+  if (word && word._ocrLine != null) return String(word._ocrLine);
+  if (word && word.line_num != null) return String(word.line_num);
+  if (word && word.line && word.line.id != null) return String(word.line.id);
+  return null;
+}
+
+function lineFromWords(words) {
+  const ordered = words.filter(validBbox).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  if (!ordered.length) return null;
+  return {
+    words: ordered,
+    x0: Math.min(...ordered.map((w) => w.bbox.x0)),
+    y0: Math.min(...ordered.map((w) => w.bbox.y0)),
+    x1: Math.max(...ordered.map((w) => w.bbox.x1)),
+    y1: Math.max(...ordered.map((w) => w.bbox.y1)),
+  };
+}
+
+function groupWordsIntoLines(words) {
+  const explicit = new Map();
+  const unassigned = [];
+
+  for (const word of words || []) {
+    const text = (word && word.text || "").trim();
+    if (!text || !validBbox(word)) continue;
+    const key = wordLineKey(word);
+    if (key == null) unassigned.push(word);
+    else {
+      if (!explicit.has(key)) explicit.set(key, []);
+      explicit.get(key).push(word);
+    }
+  }
+
+  const lines = [...explicit.values()].map(lineFromWords).filter(Boolean);
+  const geometric = [];
+  const ordered = unassigned.sort((a, b) => {
+    const ay = (a.bbox.y0 + a.bbox.y1) / 2;
+    const by = (b.bbox.y0 + b.bbox.y1) / 2;
+    return ay - by || a.bbox.x0 - b.bbox.x0;
+  });
+
+  for (const word of ordered) {
+    const b = word.bbox;
+    const h = b.y1 - b.y0;
+    const cy = (b.y0 + b.y1) / 2;
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (const line of geometric) {
+      const lineH = line.y1 - line.y0;
+      const lineCy = (line.y0 + line.y1) / 2;
+      const overlap = Math.min(b.y1, line.y1) - Math.max(b.y0, line.y0);
+      const overlapRatio = overlap / Math.max(1, Math.min(h, lineH));
+      const distance = Math.abs(cy - lineCy);
+      if (overlapRatio >= 0.5 && distance <= Math.max(h, lineH) * 0.6 && distance < bestDistance) {
+        best = line;
+        bestDistance = distance;
+      }
+    }
+
+    if (!best) {
+      geometric.push({ words: [word], x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+    } else {
+      best.words.push(word);
+      best.x0 = Math.min(best.x0, b.x0);
+      best.y0 = Math.min(best.y0, b.y0);
+      best.x1 = Math.max(best.x1, b.x1);
+      best.y1 = Math.max(best.y1, b.y1);
+    }
+  }
+
+  // Geometry-only OCR output can put two columns on the same baseline. Split
+  // those at a gap that is far wider than a normal inter-word space.
+  for (const line of geometric) {
+    const sorted = line.words.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    let segment = [];
+    for (const word of sorted) {
+      const previous = segment[segment.length - 1];
+      if (previous) {
+        const gap = word.bbox.x0 - previous.bbox.x1;
+        const height = Math.max(
+          previous.bbox.y1 - previous.bbox.y0,
+          word.bbox.y1 - word.bbox.y0
+        );
+        if (gap > height * 6) {
+          const completed = lineFromWords(segment);
+          if (completed) lines.push(completed);
+          segment = [];
+        }
+      }
+      segment.push(word);
+    }
+    const completed = lineFromWords(segment);
+    if (completed) lines.push(completed);
+  }
+
+  return lines.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+}
+
 /**
- * Draw recognized words invisibly onto a pdf-lib page (searchable/selectable
- * text layer). widthPx is the pixel width the words' bboxes refer to.
+ * Draw recognized lines invisibly onto a pdf-lib page. A line is one PDF text
+ * object, allowing selection and copy/paste to continue across word spaces.
  */
 export function embedWordsOnPdfPage(page, words, widthPx, font) {
   const scale = page.getWidth() / widthPx;
@@ -64,31 +169,29 @@ export function embedWordsOnPdfPage(page, words, widthPx, font) {
   const pdfLib = window.PDFLib || {};
   let embedded = 0;
 
-  for (const w of words) {
-    const text = (w.text || "").trim();
-    const b = w.bbox;
-    if (!text || !b) continue;
+  for (const line of groupWordsIntoLines(words)) {
+    const text = line.words.map((word) => (word.text || "").trim()).filter(Boolean).join(" ");
+    if (!text) continue;
 
-    const x = b.x0 * scale;
-    const size = Math.max(4, (b.y1 - b.y0) * scale * 0.85);
-    const targetWidth = Math.max(1, (b.x1 - b.x0) * scale);
+    const x = line.x0 * scale;
+    const heights = line.words
+      .map((word) => word.bbox.y1 - word.bbox.y0)
+      .sort((a, b) => a - b);
+    const medianHeight = heights[Math.floor(heights.length / 2)];
+    const size = Math.max(4, medianHeight * scale * 0.85);
+    const targetWidth = Math.max(1, (line.x1 - line.x0) * scale);
     const naturalWidth = font.widthOfTextAtSize(text, size);
     const horizontalScale = naturalWidth > 0 ? targetWidth / naturalWidth : 1;
     const drawOptions = {
       x,
-      y: pageH - b.y1 * scale + size * 0.04, // align marker lines to the visual word center
+      y: pageH - line.y1 * scale + size * 0.04,
       size, font,
-      // A fully transparent glyph imports as a non-editable drawing in
-      // ONLYOFFICE after the PDF is reopened. Near-zero opacity remains
-      // visually indistinguishable from the raster below, while preserving
-      // an editable text run for a later text/marker/text cycle.
+      // Near-zero opacity stays visually indistinguishable from the scan while
+      // preserving an editable and selectable text run in ONLYOFFICE.
       opacity: 0.001,
     };
 
     try {
-      // OCR provides the real word box, while Helvetica often has different
-      // metrics from the printed font. Scale the text matrix horizontally so
-      // selection/annotation quads reach the final character as well.
       const canScaleText = Math.abs(horizontalScale - 1) > 0.02
         && typeof page.pushOperators === "function"
         && typeof pdfLib.pushGraphicsState === "function"
@@ -105,8 +208,8 @@ export function embedWordsOnPdfPage(page, words, widthPx, font) {
       } else {
         page.drawText(text, drawOptions);
       }
-      embedded++;
-    } catch { /* glyphs outside WinAnsi — skip the word */ }
+      embedded += line.words.length;
+    } catch { /* glyphs outside WinAnsi - skip the line */ }
   }
   return embedded;
 }
@@ -118,14 +221,14 @@ async function recognizePages(purposeLine) {
   const { setStatus } = deps;
 
   if (!(await ocrAvailable())) {
-    setStatus(`OCR-Daten fehlen in diesem Build (vendor/ocr — siehe „npm run fetch-ocr").`);
+    setStatus(`OCR-Daten fehlen in diesem Build (vendor/ocr - siehe "npm run fetch-ocr").`);
     return null;
   }
 
   const editor = deps.getEditor();
   const pageCount = editor.getCountPages() | 0;
   const spec = await deps.showPromptDialog(
-    `${purposeLine}\nWelche Seiten? z.B. "1-3" — Dokument hat ${pageCount} Seite(n).`,
+    `${purposeLine}\nWelche Seiten? z.B. "1-3" - Dokument hat ${pageCount} Seite(n).`,
     `1-${pageCount}`
   );
   if (!spec) return null;
@@ -144,19 +247,17 @@ async function recognizePages(purposeLine) {
     setStatus("OCR nicht verfügbar (Renderer fehlt).");
     return null;
   }
-  setStatus("OCR-Modell wird geladen …");
+  setStatus("OCR-Modell wird geladen ...");
   const worker = await ensureWorker();
 
   const results = [];
   for (let i = 0; i < indexes.length; i++) {
     const nPage = indexes[i];
-    setStatus(`Texterkennung: Seite ${nPage + 1} (${i + 1}/${indexes.length}) …`);
+    setStatus(`Texterkennung: Seite ${nPage + 1} (${i + 1}/${indexes.length}) ...`);
     const widthPx = Math.round(doc.GetPageWidthMM(nPage) / 25.4 * OCR_DPI);
     const heightPx = Math.round(doc.GetPageHeightMM(nPage) / 25.4 * OCR_DPI);
     const canvas = r.GetPrintPage(nPage, widthPx, heightPx,
       window.AscPDF.PRINT_CONTENT_TYPES.docAndMarkups);
-    // tesseract.js v6 omits word geometry unless the blocks output is
-    // explicitly requested — without it the searchable layer stays empty.
     const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
     results.push({
       nPage,
@@ -168,22 +269,26 @@ async function recognizePages(purposeLine) {
   return results;
 }
 
-// tesseract.js v6 nests words under blocks→paragraphs→lines; older builds
-// expose data.words directly. Accept both.
+// tesseract.js v6 nests words under blocks/paragraphs/lines; older builds
+// expose data.words directly. Preserve line identity in both cases.
 function collectWords(data) {
-  if (Array.isArray(data.words) && data.words.length) return data.words;
+  if (Array.isArray(data.words) && data.words.length) {
+    return data.words.map((word) => ({ ...word, _ocrLine: wordLineKey(word) }));
+  }
   const words = [];
+  let lineIndex = 0;
   for (const block of data.blocks || []) {
     for (const para of block.paragraphs || []) {
       for (const line of para.lines || []) {
-        for (const w of line.words || []) words.push(w);
+        for (const word of line.words || []) words.push({ ...word, _ocrLine: lineIndex });
+        lineIndex++;
       }
     }
   }
   return words;
 }
 
-/** Embed the recognized words as an invisible, searchable text layer. */
+/** Embed recognized lines as an invisible, searchable text layer. */
 export async function makeSearchablePdf() {
   const { setStatus } = deps;
   try {
@@ -192,12 +297,12 @@ export async function makeSearchablePdf() {
 
     const totalWords = results.reduce((n, r) => n + r.words.length, 0);
     if (!totalWords) {
-      setStatus("OCR abgeschlossen — kein Text erkannt, nichts einzubetten.");
+      setStatus("OCR abgeschlossen - kein Text erkannt, nichts einzubetten.");
       return;
     }
 
-    setStatus("Unsichtbare Textebene wird eingebettet …");
-    const bytes = await deps.collectPdfBytes(); // current state incl. edits
+    setStatus("Unsichtbare Textebene wird eingebettet ...");
+    const bytes = await deps.collectPdfBytes();
     if (!bytes) {
       setStatus("OCR fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
@@ -215,12 +320,12 @@ export async function makeSearchablePdf() {
       embedded += embedWordsOnPdfPage(page, res.words, res.widthPx, font);
     }
     if (!embedded) {
-      setStatus("OCR abgeschlossen — erkannte Wörter konnten nicht eingebettet werden.");
+      setStatus("OCR abgeschlossen - erkannte Wörter konnten nicht eingebettet werden.");
       return;
     }
     const outBytes = await pdf.save();
-    deps.markClean(); // new bytes carry the full state — skip reopen confirm
-    setStatus(`Durchsuchbare Textebene eingebettet: ${embedded} Wörter auf ${results.length} Seite(n) — bitte speichern.`);
+    deps.markClean();
+    setStatus(`Durchsuchbare Textebene eingebettet: ${embedded} Wörter auf ${results.length} Seite(n) - bitte speichern.`);
     deps.openArrayBuffer(outBytes.buffer, deps.getDocName());
   } catch (e) {
     console.error("OCR fehlgeschlagen:", e);
@@ -235,14 +340,14 @@ export async function exportRecognizedText() {
     const results = await recognizePages("Texterkennung (OCR, Deutsch/Englisch), Export als Textdatei:");
     if (!results) return;
 
-    const text = results.map((r) => `── Seite ${r.nPage + 1} ──\n${r.text}`).join("\n\n");
-    if (!text.replace(/── Seite \d+ ──/g, "").trim()) {
-      setStatus("OCR abgeschlossen — kein Text erkannt.");
+    const text = results.map((r) => `-- Seite ${r.nPage + 1} --\n${r.text}`).join("\n\n");
+    if (!text.replace(/-- Seite \d+ --/g, "").trim()) {
+      setStatus("OCR abgeschlossen - kein Text erkannt.");
       return;
     }
     const outName = deps.getDocName().replace(/\.pdf$/i, "") + "-OCR.txt";
     downloadBytes(new TextEncoder().encode(text), outName, "text/plain;charset=utf-8");
-    setStatus(`OCR abgeschlossen: „${outName}" (${results.length} Seite(n)).`);
+    setStatus(`OCR abgeschlossen: "${outName}" (${results.length} Seite(n)).`);
   } catch (e) {
     console.error("OCR fehlgeschlagen:", e);
     setStatus(`OCR fehlgeschlagen: ${e.message}`);
