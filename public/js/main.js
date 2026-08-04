@@ -461,9 +461,122 @@ function activateSelectedTextForTyping() {
   }
 }
 
+let textboxBorderWidth = 0;
+let textboxBorderColorHex = "#000000";
+
+function isFreeTextAnnotation(object) {
+  if (!object) return false;
+  try {
+    if (typeof object.IsFreeText === "function" && object.IsFreeText()) return true;
+    return typeof object.GetType === "function" && object.GetType() === annotType("FreeText");
+  } catch {
+    return false;
+  }
+}
+
+function activeFreeTextAnnotation() {
+  if (!editor || !docOpen) return null;
+  try {
+    const active = editor.getPDFDoc().GetActiveObject();
+    return isFreeTextAnnotation(active) ? active : null;
+  } catch {
+    return null;
+  }
+}
+
+function pdfBorderColor(hex = textboxBorderColorHex) {
+  return [
+    parseInt(hex.slice(1, 3), 16) / 255,
+    parseInt(hex.slice(3, 5), 16) / 255,
+    parseInt(hex.slice(5, 7), 16) / 255,
+  ];
+}
+
+function borderColorHex(color) {
+  if (!Array.isArray(color) || color.length < 3) return "#000000";
+  const scale = Math.max(...color.slice(0, 3)) <= 1 ? 255 : 1;
+  return "#" + color.slice(0, 3).map((value) =>
+    Math.max(0, Math.min(255, Math.round(value * scale))).toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function applyTextboxBorder(annotation, applyWidth = true, applyColor = true) {
+  if (!isFreeTextAnnotation(annotation)) return false;
+  try {
+    if (applyColor && typeof annotation.SetBorderColor === "function") {
+      annotation.SetBorderColor(pdfBorderColor());
+    }
+    if (applyWidth && typeof annotation.SetBorderWidth === "function") {
+      annotation.SetBorderWidth(textboxBorderWidth);
+    }
+    editor.getPDFDoc().UpdateInterface();
+    renderer() && renderer().onUpdateOverlay();
+    refreshHistoryButtons();
+    return true;
+  } catch (e) {
+    console.warn("Textfeldrahmen setzen fehlgeschlagen:", e);
+    return false;
+  }
+}
+
+function syncTextboxBorderControls() {
+  const annotation = activeFreeTextAnnotation();
+  if (!annotation) return;
+  try {
+    const width = Number(annotation.GetBorderWidth && annotation.GetBorderWidth()) || 0;
+    const widthSelect = el("textbox-border-width");
+    if (widthSelect) {
+      if (![...widthSelect.options].some((option) => Number(option.value) === width)) {
+        const option = document.createElement("option");
+        option.value = String(width);
+        option.textContent = `${String(width).replace(".", ",")} pt`;
+        widthSelect.appendChild(option);
+      }
+      widthSelect.value = String(width);
+    }
+    const color = annotation.GetBorderColor && annotation.GetBorderColor();
+    const colorInput = el("textbox-border-color");
+    if (colorInput && color) colorInput.value = borderColorHex(color);
+  } catch { /* leave the current defaults visible */ }
+}
+
+function applyDefaultsToNewTextbox(previousAnnotations) {
+  let attempts = 0;
+  const apply = () => {
+    let created = null;
+    try {
+      const doc = editor.getPDFDoc();
+      created = (doc.annots || []).find((annotation) =>
+        !previousAnnotations.has(annotation) && isFreeTextAnnotation(annotation));
+      if (!created) {
+        const active = doc.GetActiveObject();
+        if (!previousAnnotations.has(active) && isFreeTextAnnotation(active)) created = active;
+      }
+    } catch { /* annotation is still being created */ }
+    if (created) {
+      applyTextboxBorder(created);
+      return;
+    }
+    if (++attempts < 40) setTimeout(apply, 50);
+  };
+  apply();
+}
+
+async function initTextboxBorderControls() {
+  const savedWidth = Number(await storeGet("textbox-border-width"));
+  const savedColor = await storeGet("textbox-border-color");
+  if ([0, 0.5, 1, 2, 3].includes(savedWidth)) textboxBorderWidth = savedWidth;
+  if (typeof savedColor === "string" && /^#[0-9a-fA-F]{6}$/.test(savedColor)) {
+    textboxBorderColorHex = savedColor;
+  }
+  el("textbox-border-width").value = String(textboxBorderWidth);
+  el("textbox-border-color").value = textboxBorderColorHex;
+}
+
 function wireFormatControls() {
   const fontSel = el("text-font-family"), sizeInp = el("text-font-size");
   const boldBtn = el("text-bold"), italicBtn = el("text-italic"), colorInp = el("text-color");
+  const borderWidthSel = el("textbox-border-width"), borderColorInp = el("textbox-border-color");
   if (!fontSel) return;
 
   fontSel.addEventListener("change", () => {
@@ -496,10 +609,23 @@ function wireFormatControls() {
     } catch (e) { console.warn("Textfarbe fehlgeschlagen:", e); }
     refocusEditor();
   });
+  borderWidthSel.addEventListener("change", () => {
+    textboxBorderWidth = Math.max(0, Math.min(12, Number(borderWidthSel.value) || 0));
+    storeSet("textbox-border-width", textboxBorderWidth);
+    applyTextboxBorder(activeFreeTextAnnotation(), true, false);
+    refocusEditor();
+  });
+  borderColorInp.addEventListener("change", () => {
+    textboxBorderColorHex = borderColorInp.value;
+    storeSet("textbox-border-color", textboxBorderColorHex);
+    applyTextboxBorder(activeFreeTextAnnotation(), false, true);
+    refocusEditor();
+  });
 }
 
 function setFormatEnabled(on) {
-  for (const id of ["text-font-family", "text-font-size", "text-bold", "text-italic", "text-color", "marker-color"]) {
+  for (const id of ["text-font-family", "text-font-size", "text-bold", "text-italic", "text-color",
+    "textbox-border-width", "textbox-border-color", "marker-color"]) {
     const node = el(id);
     if (node) node.disabled = !on;
   }
@@ -1571,7 +1697,12 @@ const TOOL_HANDLERS = {
     scheduleCurrentPageTextEditing(editor.getCurrentPage() | 0, 0);
   },
   "textbox":     () => {
-    if (typeof editor.AddFreeTextAnnot === "function") editor.AddFreeTextAnnot(annotType("FreeText") || 2);
+    if (typeof editor.AddFreeTextAnnot === "function") {
+      const doc = editor.getPDFDoc();
+      const previousAnnotations = new Set(doc.annots || []);
+      editor.AddFreeTextAnnot(annotType("FreeText") || 2);
+      applyDefaultsToNewTextbox(previousAnnotations);
+    }
     setActiveTool("textbox");
   },
   "highlight":   () => setMarker("Highlight", ...markerRgb(), 50),
@@ -2379,6 +2510,7 @@ function wireUi() {
   });
   renderRecentFiles();
   initMarkerColor();
+  initTextboxBorderControls();
   initOcr({
     getEditor: () => editor, isDocOpen: () => docOpen, showPromptDialog,
     parsePageRangeSpec, getDocName: () => lastName, setStatus, renderer,
@@ -2404,6 +2536,7 @@ function wireUi() {
   // is applied after a drag has produced selection quads.
   el("editor_sdk").addEventListener("click", () => {
     setTimeout(activateSelectedTextForTyping, 0);
+    setTimeout(syncTextboxBorderControls, 0);
   }, true);
   el("editor_sdk").addEventListener("mouseup", () => {
     if (editableMarkerTool) setTimeout(applyEditableMarkerSelection, 0);
