@@ -890,6 +890,51 @@ async function testDeleteLastPageThenDrop(browser) {
   await page.close();
 }
 
+async function testSelectAllPagesThenDelete(browser) {
+  const sourcePdf = await makeMultiPagePdf(4);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({
+    name: "all-pages.pdf", mimeType: "application/pdf", buffer: sourcePdf,
+  });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+
+  await page.click(".sidebar", { position: { x: 20, y: 20 } });
+  await page.keyboard.press("Control+A");
+  const selected = await page.evaluate(() => ({
+    classSelected: document.querySelector(".sidebar").classList.contains("pages-all-selected"),
+    status: document.getElementById("status").textContent,
+  }));
+  check("Ctrl+A in the thumbnail rail selects every page",
+    selected.classSelected && selected.status.includes("Alle 4 Seiten ausgewählt"),
+    JSON.stringify(selected));
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }),
+    page.keyboard.press("Delete"),
+  ]);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+  const emptyState = await page.evaluate(() => ({
+    placeholderVisible: getComputedStyle(document.getElementById("placeholder")).display !== "none",
+    saveDisabled: document.getElementById("btn-save").disabled,
+  }));
+  check("Delete after selecting all pages closes the document",
+    emptyState.placeholderVisible && emptyState.saveDisabled,
+    JSON.stringify(emptyState));
+  check("no page errors (select-all-pages scenario)",
+    pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function testTextboxBorderControls(browser) {
   const sourcePdf = await makeMultiPagePdf(1);
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -1593,6 +1638,7 @@ async function main() {
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
     await testDeleteLastPageThenDrop(browser);
+    await testSelectAllPagesThenDelete(browser);
     await testTextboxBorderControls(browser);
     await testUiAndNewTools(browser);
     await testShapesSurviveSave(browser);
