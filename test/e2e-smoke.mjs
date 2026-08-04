@@ -890,6 +890,56 @@ async function testDeleteLastPageThenDrop(browser) {
   await page.close();
 }
 
+async function testTextboxBorderControls(browser) {
+  const sourcePdf = await makeMultiPagePdf(1);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({
+    name: "textbox.pdf", mimeType: "application/pdf", buffer: sourcePdf,
+  });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+
+  await clickTool(page, "textbox");
+  await page.waitForFunction(() => {
+    const active = window.__pdfEditor.getPDFDoc().GetActiveObject();
+    return active && typeof active.GetType === "function"
+      && active.GetType() === window.AscPDF.ANNOTATIONS_TYPES.FreeText
+      && active.GetBorderWidth() === 0;
+  }, null, { timeout: 10000 });
+  const defaultWidth = await page.evaluate(
+    () => window.__pdfEditor.getPDFDoc().GetActiveObject().GetBorderWidth());
+  check("new text boxes have no border by default", defaultWidth === 0, `width=${defaultWidth}`);
+
+  await page.evaluate(() => {
+    const width = document.getElementById("textbox-border-width");
+    width.value = "2";
+    width.dispatchEvent(new Event("change", { bubbles: true }));
+    const color = document.getElementById("textbox-border-color");
+    color.value = "#e53935";
+    color.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  const border = await page.evaluate(() => {
+    const active = window.__pdfEditor.getPDFDoc().GetActiveObject();
+    return { width: active.GetBorderWidth(), color: active.GetBorderColor() };
+  });
+  const expected = [0xe5 / 255, 0x39 / 255, 0x35 / 255];
+  check("text box border width is configurable", border.width === 2, `width=${border.width}`);
+  check("text box border color is configurable",
+    border.color.length >= 3 && expected.every((value, i) => Math.abs(border.color[i] - value) < 0.001),
+    JSON.stringify(border.color));
+  check("no page errors (textbox-border scenario)",
+    pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 // UI + new-feature regression: status bar page/zoom controls, menu-based
 // page move, ink pen strokes surviving the real save pipeline, and the
 // signature pad inserting an image. Guards the modularized toolbar wiring.
@@ -1543,6 +1593,7 @@ async function main() {
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
     await testDeleteLastPageThenDrop(browser);
+    await testTextboxBorderControls(browser);
     await testUiAndNewTools(browser);
     await testShapesSurviveSave(browser);
     await testHandMarkerSecondDoc(browser);
