@@ -2077,12 +2077,19 @@ function setFormFillMode(on) {
     : "Bearbeitungsmodus.");
 }
 
-async function discardCurrentDocument() {
+async function discardCurrentDocument(allPages = false) {
   const dirtyHint = docDirty ? " Alle ungespeicherten Änderungen gehen dabei verloren." : "";
-  if (!window.confirm(`Die letzte Seite löschen und das aktuelle Dokument schließen?${dirtyHint}`)) return false;
+  const question = allPages
+    ? "Alle Seiten löschen und das aktuelle Dokument schließen?"
+    : "Die letzte Seite löschen und das aktuelle Dokument schließen?";
+  if (!window.confirm(`${question}${dirtyHint}`)) return false;
 
   markDirty(false);
-  await clearRecoverySnapshot();
+  try {
+    await clearRecoverySnapshot();
+  } catch (e) {
+    console.warn("Wiederherstellungsdaten konnten beim Schließen nicht gelöscht werden:", e);
+  }
   try { sessionStorage.removeItem(TEXT_COMMIT_TRANSITION_KEY); } catch { /* no session storage */ }
   setStatus("Dokument wird geschlossen …");
   location.reload();
@@ -2119,7 +2126,7 @@ async function removePagesByRange() {
     return;
   }
   if (indexes.length >= pageCount) {
-    await discardCurrentDocument();
+    await discardCurrentDocument(true);
     return;
   }
 
@@ -2547,7 +2554,12 @@ function wireUi() {
     btn.addEventListener("click", (event) => {
       const handler = TOOL_HANDLERS[tool];
       if (!handler) return;
-      try { handler(event); } catch (e) {
+      try {
+        Promise.resolve(handler(event)).catch((e) => {
+          console.error(`Tool '${tool}' fehlgeschlagen:`, e);
+          setStatus(`Aktion „${tool}" fehlgeschlagen: ${e.message}`);
+        });
+      } catch (e) {
         console.error(`Tool '${tool}' fehlgeschlagen:`, e);
         setStatus(`Aktion „${tool}" fehlgeschlagen: ${e.message}`);
       }
@@ -2555,6 +2567,19 @@ function wireUi() {
   }
 
   const host = document.querySelector(".viewer-host");
+  const sidebar = document.querySelector(".sidebar");
+  let allPagesSelected = false;
+  const setAllPagesSelected = (selected) => {
+    allPagesSelected = !!selected && docOpen;
+    sidebar.classList.toggle("pages-all-selected", allPagesSelected);
+    sidebar.setAttribute("aria-selected", allPagesSelected ? "true" : "false");
+  };
+  sidebar.addEventListener("pointerdown", () => {
+    sidebar.focus({ preventScroll: true });
+    setAllPagesSelected(false);
+  }, true);
+  sidebar.addEventListener("click", () => sidebar.focus({ preventScroll: true }));
+  host.addEventListener("pointerdown", () => setAllPagesSelected(false), true);
 
   // Strg+Mausrad = Zoom (standard PDF-viewer behaviour). Capture phase +
   // passive:false so we beat the engine's own scroll handling and may call
@@ -2621,6 +2646,23 @@ function wireUi() {
   // Keyboard shortcuts. Capture phase so they win over the engine's own key
   // handling; undo/redo (Strg+Z/Y) is left to the engine.
   window.addEventListener("keydown", (e) => {
+    const sidebarFocused = document.activeElement === sidebar || sidebar.contains(document.activeElement);
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && k === "a" && docOpen && sidebarFocused) {
+      e.preventDefault();
+      e.stopPropagation();
+      setAllPagesSelected(true);
+      setStatus(`Alle ${editor.getCountPages()} Seiten ausgewählt — Entf löscht das Dokument.`);
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === "Delete" || e.key === "Backspace") && allPagesSelected) {
+      e.preventDefault();
+      e.stopPropagation();
+      setAllPagesSelected(false);
+      discardCurrentDocument(true);
+      return;
+    }
     if (!e.ctrlKey && !e.metaKey && !e.altKey
         && (e.key === "Delete" || e.key === "Backspace")
         && editableMarkerTool && clearEditableMarkerSelection()) {
@@ -2636,7 +2678,6 @@ function wireUi() {
       return;
     }
     if (!(e.ctrlKey || e.metaKey)) return;
-    const k = e.key.toLowerCase();
     if (k === "s") {
       e.preventDefault();
       e.stopPropagation();
