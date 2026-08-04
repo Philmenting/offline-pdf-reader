@@ -2569,17 +2569,23 @@ function wireUi() {
   const host = document.querySelector(".viewer-host");
   const sidebar = document.querySelector(".sidebar");
   let allPagesSelected = false;
+  let sidebarInteractionActive = false;
   const setAllPagesSelected = (selected) => {
     allPagesSelected = !!selected && docOpen;
     sidebar.classList.toggle("pages-all-selected", allPagesSelected);
     sidebar.setAttribute("aria-selected", allPagesSelected ? "true" : "false");
   };
   sidebar.addEventListener("pointerdown", () => {
+    sidebarInteractionActive = true;
     sidebar.focus({ preventScroll: true });
     setAllPagesSelected(false);
   }, true);
   sidebar.addEventListener("click", () => sidebar.focus({ preventScroll: true }));
-  host.addEventListener("pointerdown", () => setAllPagesSelected(false), true);
+  document.addEventListener("pointerdown", (event) => {
+    if (sidebar.contains(event.target)) return;
+    sidebarInteractionActive = false;
+    setAllPagesSelected(false);
+  }, true);
 
   // Strg+Mausrad = Zoom (standard PDF-viewer behaviour). Capture phase +
   // passive:false so we beat the engine's own scroll handling and may call
@@ -2646,7 +2652,9 @@ function wireUi() {
   // Keyboard shortcuts. Capture phase so they win over the engine's own key
   // handling; undo/redo (Strg+Z/Y) is left to the engine.
   window.addEventListener("keydown", (e) => {
-    const sidebarFocused = document.activeElement === sidebar || sidebar.contains(document.activeElement);
+    const sidebarFocused = sidebarInteractionActive
+      || document.activeElement === sidebar
+      || sidebar.contains(document.activeElement);
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && !e.altKey && k === "a" && docOpen && sidebarFocused) {
       e.preventDefault();
