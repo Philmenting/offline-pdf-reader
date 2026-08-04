@@ -39,7 +39,7 @@ async function maybeSnapshot() {
 /** Call when the document was saved or intentionally discarded. */
 export function clearRecoverySnapshot() {
   lastSnapshotTs = 0;
-  recoveryClear();
+  return recoveryClear();
 }
 
 /** Offer a leftover snapshot (crash last time) for restore. */
