@@ -831,6 +831,65 @@ async function testRemovePagesByRange(browser) {
   await page.close();
 }
 
+// Deleting the sole remaining page discards the current document and returns
+// to the persistent drop target. A PDF dropped afterwards must open as a new
+// document instead of entering the append workflow.
+async function testDeleteLastPageThenDrop(browser) {
+  const firstPdf = await makeMultiPagePdf(1);
+  const replacementPdf = await makeMultiPagePdf(2);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+  await (await page.$("#file-input")).setInputFiles({
+    name: "single.pdf", mimeType: "application/pdf", buffer: firstPdf,
+  });
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }),
+    clickTool(page, "page-remove"),
+  ]);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+
+  const emptyState = await page.evaluate(() => ({
+    placeholderVisible: getComputedStyle(document.getElementById("placeholder")).display !== "none",
+    saveDisabled: document.getElementById("btn-save").disabled,
+  }));
+  check("deleting the last page returns to the empty drop target",
+    emptyState.placeholderVisible && emptyState.saveDisabled,
+    JSON.stringify(emptyState));
+
+  await page.evaluate((bytes) => {
+    const file = new File([new Uint8Array(bytes)], "replacement.pdf", { type: "application/pdf" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    document.querySelector(".workspace").dispatchEvent(new DragEvent("drop", {
+      bubbles: true, cancelable: true, dataTransfer: transfer,
+    }));
+  }, Array.from(replacementPdf));
+  await page.waitForFunction(
+    () => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"),
+    null, { timeout: 90000 });
+  const replacement = await page.evaluate(() => ({
+    pages: window.__pdfEditor.getCountPages(),
+    title: document.title,
+  }));
+  check("a PDF dropped after deleting the last page opens as a new document",
+    replacement.pages === 2 && replacement.title.includes("replacement.pdf"),
+    JSON.stringify(replacement));
+  check("no page errors (delete-last-page scenario)",
+    pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 // UI + new-feature regression: status bar page/zoom controls, menu-based
 // page move, ink pen strokes surviving the real save pipeline, and the
 // signature pad inserting an image. Guards the modularized toolbar wiring.
@@ -1483,6 +1542,7 @@ async function main() {
     await testExtractPages(browser);
     await testRotateAll(browser);
     await testRemovePagesByRange(browser);
+    await testDeleteLastPageThenDrop(browser);
     await testUiAndNewTools(browser);
     await testShapesSurviveSave(browser);
     await testHandMarkerSecondDoc(browser);
