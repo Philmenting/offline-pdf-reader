@@ -62,7 +62,7 @@ async function headerYOffset(page) {
 // Some tools live inside the toolbar's "Seiten"/"Extras" dropdown menus
 // (<details class="menu">). Their buttons are unclickable while the menu is
 // closed, so open the owning menu first when there is one.
-async function clickTool(page, tool) {
+async function clickTool(page, tool, { closesDocument = false } = {}) {
   const sel = `[data-tool="${tool}"]`;
   const menuId = await page.evaluate((s) => {
     const btn = document.querySelector(s);
@@ -71,7 +71,9 @@ async function clickTool(page, tool) {
     return menu ? menu.id : null;
   }, sel);
   await page.click(sel);
-  if (menuId) await page.evaluate((id) => { document.getElementById(id).open = false; }, menuId);
+  if (menuId && !closesDocument) {
+    await page.evaluate((id) => { document.getElementById(id).open = false; }, menuId);
+  }
 }
 
 async function launchChromium() {
@@ -854,7 +856,7 @@ async function testDeleteLastPageThenDrop(browser) {
   page.once("dialog", (dialog) => dialog.accept());
   await Promise.all([
     page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }),
-    clickTool(page, "page-remove"),
+    clickTool(page, "page-remove", { closesDocument: true }),
   ]);
   await page.waitForFunction(
     () => window.__pdfEditorReady === true, null, { timeout: 90000 });
