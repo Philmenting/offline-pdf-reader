@@ -255,6 +255,13 @@ body {
   margin-right: 4px;
   user-select: none;
 }
+.format-sub-label {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+  user-select: none;
+}
 
 .format-select,
 .format-size {
@@ -273,6 +280,10 @@ body {
   padding: 0 8px;
   flex: 0 1 190px;
   min-width: 140px;
+}
+.format-select.format-border-select {
+  flex: 0 0 92px;
+  min-width: 92px;
 }
 .format-size {
   flex: 0 0 60px;
