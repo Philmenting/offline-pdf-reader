@@ -1946,11 +1946,23 @@ function setFormFillMode(on) {
     : "Bearbeitungsmodus.");
 }
 
-function removeCurrentPage() {
+async function discardCurrentDocument() {
+  const dirtyHint = docDirty ? " Alle ungespeicherten Änderungen gehen dabei verloren." : "";
+  if (!window.confirm(`Die letzte Seite löschen und das aktuelle Dokument schließen?${dirtyHint}`)) return false;
+
+  markDirty(false);
+  await clearRecoverySnapshot();
+  try { sessionStorage.removeItem(TEXT_COMMIT_TRANSITION_KEY); } catch { /* no session storage */ }
+  setStatus("Dokument wird geschlossen …");
+  location.reload();
+  return true;
+}
+
+async function removeCurrentPage() {
   if (!docOpen || typeof editor.asc_RemovePage !== "function") return;
   const cur = editor.getCurrentPage() | 0;
   if (typeof editor.getCountPages === "function" && editor.getCountPages() <= 1) {
-    setStatus("Die letzte Seite kann nicht gelöscht werden.");
+    await discardCurrentDocument();
     return;
   }
   editor.asc_RemovePage([cur]);
@@ -1976,7 +1988,7 @@ async function removePagesByRange() {
     return;
   }
   if (indexes.length >= pageCount) {
-    setStatus("Es kann nicht das gesamte Dokument gelöscht werden — mindestens eine Seite muss bleiben.");
+    await discardCurrentDocument();
     return;
   }
 
