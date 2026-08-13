@@ -747,9 +747,21 @@ function registerEditorCallbacks() {
 // .notdef box forever. Loading through LoadDocumentFonts2 also gives us the
 // proper end-callback → repaint pipeline.
 function preloadFallbackFonts() {
-  try {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timeout = setTimeout(finish, 3000);
+    try {
     const loader = window.AscCommon && window.AscCommon.g_font_loader;
-    if (!loader || typeof loader.LoadDocumentFonts2 !== "function" || loader.isWorking()) return;
+    if (!loader || typeof loader.LoadDocumentFonts2 !== "function" || loader.isWorking()) {
+      clearTimeout(timeout);
+      finish();
+      return;
+    }
     const families = [
       "Liberation Sans", "Liberation Serif", "Liberation Mono",
       "DejaVu Sans", "DejaVu Serif", "FreeSans", "FreeSerif",
@@ -774,10 +786,15 @@ function preloadFallbackFonts() {
         }
       } catch { /* best effort */ }
       try { const r = editor.getDocumentRenderer(); r && r.paint && r.paint(); } catch { /* ignore */ }
+      clearTimeout(timeout);
+      finish();
     });
   } catch (e) {
     console.warn("[fonts] preload fehlgeschlagen:", e);
+    clearTimeout(timeout);
+    finish();
   }
+  });
 }
 
 // The editor's own onDocumentContentReady creates a ThumbnailsControl into
@@ -930,7 +947,83 @@ function restoreTextCommitTransition() {
   setStatus("Textänderungen werden vorbereitet …");
 }
 
-function openArrayBuffer(buf, name) {
+const WIN_ANSI_UNICODE = new Map([
+  [0x80, 0x20ac], [0x82, 0x201a], [0x83, 0x0192], [0x84, 0x201e],
+  [0x85, 0x2026], [0x86, 0x2020], [0x87, 0x2021], [0x88, 0x02c6],
+  [0x89, 0x2030], [0x8a, 0x0160], [0x8b, 0x2039], [0x8c, 0x0152],
+  [0x8e, 0x017d], [0x91, 0x2018], [0x92, 0x2019], [0x93, 0x201c],
+  [0x94, 0x201d], [0x95, 0x2022], [0x96, 0x2013], [0x97, 0x2014],
+  [0x98, 0x02dc], [0x99, 0x2122], [0x9a, 0x0161], [0x9b, 0x203a],
+  [0x9c, 0x0153], [0x9e, 0x017e], [0x9f, 0x0178],
+]);
+
+function winAnsiCodePoint(code) {
+  return WIN_ANSI_UNICODE.get(code) || code;
+}
+
+function winAnsiToUnicodeCMap() {
+  const mappings = [];
+  for (let code = 0x20; code <= 0xff; code++) {
+    if ([0x81, 0x8d, 0x8f, 0x90, 0x9d].includes(code)) continue;
+    mappings.push(`<${code.toString(16).padStart(2, "0").toUpperCase()}> <${winAnsiCodePoint(code).toString(16).padStart(4, "0").toUpperCase()}>`);
+  }
+  const blocks = [];
+  for (let i = 0; i < mappings.length; i += 100) {
+    const block = mappings.slice(i, i + 100);
+    blocks.push(`${block.length} beginbfchar\n${block.join("\n")}\nendbfchar`);
+  }
+  return [
+    "/CIDInit /ProcSet findresource begin", "12 dict begin", "begincmap",
+    "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+    "/CMapName /Adobe-Identity-UCS def", "/CMapType 2 def",
+    "1 begincodespacerange", "<00> <FF>", "endcodespacerange",
+    ...blocks, "endcmap", "CMapName currentdict /CMap defineresource pop",
+    "end", "end", "",
+  ].join("\n");
+}
+
+// Word-generated PDFs often omit /ToUnicode on simple WinAnsi fonts. They
+// render correctly from glyph codes, but asc_EditPage then mistakes those
+// codes for Unicode and turns umlauts/section signs into unrelated symbols.
+// Add the standard CP1252 map to the in-memory working copy before ONLYOFFICE
+// parses it. Existing ToUnicode maps and non-WinAnsi/CID fonts are untouched.
+async function normalizeWinAnsiUnicode(bytes) {
+  try {
+    await loadPdfLib();
+    const { PDFDocument, PDFName } = window.PDFLib;
+    const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+    const toUnicodeName = PDFName.of("ToUnicode");
+    const encodingName = PDFName.of("Encoding");
+    const winAnsiName = PDFName.of("WinAnsiEncoding");
+    const subtypeName = PDFName.of("Subtype");
+    const type1Name = PDFName.of("Type1");
+    const trueTypeName = PDFName.of("TrueType");
+    const cmapBytes = new TextEncoder().encode(winAnsiToUnicodeCMap());
+    let patched = 0;
+
+    for (const [, object] of pdf.context.enumerateIndirectObjects()) {
+      if (!object || typeof object.get !== "function" || typeof object.set !== "function") continue;
+      if (object.get(toUnicodeName)) continue;
+      if (object.get(encodingName) !== winAnsiName) continue;
+      const subtype = object.get(subtypeName);
+      if (subtype !== type1Name && subtype !== trueTypeName) continue;
+      const stream = pdf.context.flateStream(cmapBytes);
+      object.set(toUnicodeName, pdf.context.register(stream));
+      patched++;
+    }
+
+    if (!patched) return bytes;
+    console.log(`[pdf] ${patched} WinAnsi-Schrift(en) mit ToUnicode ergänzt`);
+    return new Uint8Array(await pdf.save({ useObjectStreams: false, updateFieldAppearances: false }));
+  } catch (error) {
+    console.warn("WinAnsi-Zeichenzuordnung konnte nicht ergänzt werden:", error);
+    return bytes;
+  }
+}
+
+window.__normalizeWinAnsiUnicode = normalizeWinAnsiUnicode;
+
+async function openArrayBuffer(buf, name) {
   const bytes = new Uint8Array(buf);
   const magic = String.fromCharCode(...bytes.slice(0, 5));
   if (magic !== "%PDF-") {
@@ -947,7 +1040,10 @@ function openArrayBuffer(buf, name) {
   try {
     if (mode === "editor") {
       docOpen = false;
-      editor.openDocument({ data: bytes });   // browser open: no server, no upload
+      setStatus(`„${name}" wird für die Textbearbeitung vorbereitet …`);
+      const normalizedBytes = await normalizeWinAnsiUnicode(bytes);
+      await preloadFallbackFonts();
+      editor.openDocument({ data: normalizedBytes }); // browser open: no server, no upload
       // Offline: there is no Document Server, so the two "wait for server" gates
       // that block _openDocumentEndCallback() never clear on their own. Mark
       // both complete; the editor's own onFileOpened → _openDocumentEndCallback
@@ -1394,6 +1490,15 @@ function activateCurrentPageForTextEditing(expectedPage) {
 
   const pageIndex = editor.getCurrentPage() | 0;
   if (Number.isInteger(expectedPage) && expectedPage !== pageIndex) return;
+
+  try {
+    const loader = window.AscCommon && window.AscCommon.g_font_loader;
+    if (loader && typeof loader.isWorking === "function" && loader.isWorking()) {
+      setStatus(`Schriften für Seite ${pageIndex + 1} werden geladen …`);
+      scheduleCurrentPageTextEditing(pageIndex, 150);
+      return;
+    }
+  } catch { /* continue when the loader has no observable state */ }
 
   const page = currentPdfPageObject();
   if (!page || page.isRecognized) {
