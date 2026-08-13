@@ -114,6 +114,41 @@ async function makeFormPdf() {
   return Buffer.from(await doc.save());
 }
 
+async function makeWinAnsiPdf() {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595, 842]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  page.drawText("§ Änderung: Gebühren für Baden-Württemberg", {
+    x: 50, y: 760, size: 18, font,
+  });
+  return Buffer.from(await doc.save({ useObjectStreams: false }));
+}
+
+async function testWinAnsiUnicodeNormalization(browser) {
+  const source = await makeWinAnsiPdf();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+
+  await page.goto(BASE);
+  await page.waitForFunction(
+    () => window.__pdfEditorReady === true, null, { timeout: 90000 });
+  const result = await page.evaluate(async (bytes) => {
+    const normalized = await window.__normalizeWinAnsiUnicode(new Uint8Array(bytes));
+    const ascii = new TextDecoder("latin1").decode(normalized);
+    return {
+      changed: normalized.length !== bytes.length,
+      maps: (ascii.match(/\/ToUnicode/g) || []).length,
+    };
+  }, [...source]);
+  check("WinAnsi fonts without a map receive a ToUnicode CMap",
+    result.changed && result.maps > 0, JSON.stringify(result));
+  check("no page errors (WinAnsi normalization scenario)",
+    pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+  await page.close();
+}
+
 async function testFormRoundtrip(browser) {
   const formPdf = await makeFormPdf();
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -1635,6 +1670,7 @@ async function main() {
     // Guards the fill-mode gating (OnlyForms restriction), the
     // checkFieldFont/loadedFonts first-keystroke fix and the save pipeline.
     await testFormRoundtrip(browser);
+    await testWinAnsiUnicodeNormalization(browser);
     await testAppendScrollbarSync(browser);
     await testExtractPages(browser);
     await testRotateAll(browser);
