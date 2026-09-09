@@ -48,6 +48,7 @@ const OPTIONAL_LIBS = [
 ];
 
 import { el, setStatus, loadScript, downloadBytes, downloadDataUrl } from "./modules/dom.js";
+import { wireShapeFormat } from "./modules/shape-format.js";
 import { showPromptDialog, wirePromptDialog } from "./modules/prompt-dialog.js";
 import { wireSearchBar, openSearchBar, searchStep } from "./modules/search.js";
 import { wireStatusBar, updatePageCount, updateCurrentPage, updateZoomDisplay, setStatusControlsVisible } from "./modules/statusbar.js";
@@ -65,6 +66,7 @@ let viewer = null;       // AscViewer.CViewer instance (fallback mode)
 let thumbnails = null;
 let mode = "loading";    // "editor" | "viewer" | "loading"
 let docOpen = false;
+let shapeFormat;
 let lastName = "document.pdf";
 let activeTool = "select";
 let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
@@ -1260,7 +1262,7 @@ function collectShapeList(srcIndexes) {
           flipH: !!d.flipH,
           flipV: !!d.flipV,
           strokeWidthPt: d.pen && typeof d.pen.w === "number" ? d.pen.w / 12700 : 0.75,
-          stroke: (d.pen && rgba(d.pen)) || [47 / 255, 84 / 255, 150 / 255],
+          stroke: d.pen && d.pen.Fill ? rgba(d.pen.Fill) : null,
           fill: d.brush ? rgba(d.brush) : null,
         });
       } catch { /* skip malformed drawing */ }
@@ -1287,10 +1289,12 @@ async function bakeShapesIntoPdf(bytes, srcIndexes) {
     const pageH = page.getHeight();
     const [x1, yTop1, x2, yTop2] = s.rect;
     const w = x2 - x1, h = yTop2 - yTop1;
-    const stroke = rgb(...s.stroke);
-    const thickness = Math.max(0.5, s.strokeWidthPt);
+    const stroke = s.stroke ? rgb(...s.stroke) : undefined;
+    const thickness = stroke ? Math.max(0, s.strokeWidthPt) : 0;
+    if (!stroke && !s.fill) continue;
 
     if (s.preset === "line" || s.preset === "lineWithArrow") {
+      if (!stroke || !thickness) continue;
       // the xfrm box stores the drag's bounding box; flips encode direction
       let sx = s.flipH ? x2 : x1, ex = s.flipH ? x1 : x2;
       let syTop = s.flipV ? yTop2 : yTop1, eyTop = s.flipV ? yTop1 : yTop2;
@@ -1893,11 +1897,13 @@ function startShape(toolName, preset) {
   if (typeof editor.StartAddShape !== "function") return;
   if (activeTool === toolName) {
     try { editor.StartAddShape(preset, false); } catch { /* leave draw mode */ }
+    shapeFormat.cancel();
     setActiveTool("select");
     return;
   }
   editor.StartAddShape(preset, true);
   setActiveTool(toolName);
+  shapeFormat.start();
 }
 
 // Freehand pen: the engine's ink drawer turns drawn strokes into ink
@@ -2527,6 +2533,7 @@ function stepZoom(dir) {
 
 // ── Toolbar state ─────────────────────────────────────────────────────────
 function setActiveTool(name) {
+  if (!name.startsWith("shape") && activeTool.startsWith("shape")) shapeFormat?.cancel();
   if (activeTool === "edit-text" && name !== "edit-text" && !editableMarkerTool) {
     leavePageEditFocus();
   }
@@ -2583,6 +2590,7 @@ function waitFor(predicate, timeoutMs, errMsg) {
 
 // ── Wiring ────────────────────────────────────────────────────────────────
 function wireUi() {
+  shapeFormat = wireShapeFormat({ getEditor: () => editor, refocusEditor, setStatus });
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   // Desktop: route "Öffnen" through the native dialog in the main process so
   // the recent-files list gets a real file path to reopen from.
@@ -2649,8 +2657,10 @@ function wireUi() {
   el("editor_sdk").addEventListener("click", () => {
     setTimeout(activateSelectedTextForTyping, 0);
     setTimeout(syncTextboxBorderControls, 0);
+    setTimeout(shapeFormat.sync, 0);
   }, true);
   el("editor_sdk").addEventListener("mouseup", () => {
+    setTimeout(shapeFormat.finish, 0);
     if (editableMarkerTool) setTimeout(applyEditableMarkerSelection, 0);
   }, true);
 

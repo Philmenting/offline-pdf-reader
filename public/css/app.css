@@ -246,6 +246,8 @@ body {
   padding: 6px 0;
   border-top: 1px solid var(--border);
 }
+#shape-format[hidden] { display: none; }
+#shape-format { font-size: 12px; }
 .format-label {
   font-size: 11px;
   font-weight: 700;

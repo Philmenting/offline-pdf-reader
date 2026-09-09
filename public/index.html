@@ -243,10 +243,29 @@
           <option value="3">3 pt</option>
         </select>
         <label class="format-color-wrap" title="Rahmenfarbe für Textfelder">
-          <input type="color" id="textbox-border-color" value="#000000" disabled>
-        </label>
+            <input type="color" id="textbox-border-color" value="#000000" disabled>
+          </label>
+        </div>
+        <div class="toolbar-row format-row" id="shape-format" hidden>
+          <span class="format-label">Formformat</span>
+          <span class="format-sub-label">Füllung</span>
+          <label class="format-color-wrap" title="Füllfarbe der Form">
+            <input type="color" id="shape-fill-color" value="#ffffff" aria-label="Füllfarbe der Form">
+          </label>
+          <label><input type="checkbox" id="shape-fill-none"> Ohne Füllung</label>
+          <span class="format-sub-label">Rahmen</span>
+          <select class="format-select format-border-select" id="shape-border-width" aria-label="Rahmenstärke der Form">
+            <option value="0">Kein</option>
+            <option value="0.5">0,5 pt</option>
+            <option value="1" selected>1 pt</option>
+            <option value="2">2 pt</option>
+            <option value="3">3 pt</option>
+          </select>
+          <label class="format-color-wrap" title="Rahmenfarbe der Form">
+            <input type="color" id="shape-border-color" value="#000000" aria-label="Rahmenfarbe der Form">
+          </label>
+        </div>
       </div>
-    </div>
   </header>
 
   <main class="workspace">

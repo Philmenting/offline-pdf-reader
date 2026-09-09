@@ -1178,14 +1178,43 @@ async function testShapesSurviveSave(browser) {
     ["shape-line", 420, 330, 700, 360],
     ["shape-arrow", 420, 400, 700, 440],
   ];
-  for (const [tool, x1, y1, x2, y2] of shapeDrags) {
-    await clickTool(page, tool);
+    for (const [tool, x1, y1, x2, y2] of shapeDrags) {
+      await clickTool(page, tool);
+      if (tool !== "shape") await page.selectOption("#shape-border-width", "1");
     await page.waitForTimeout(200);
     await page.mouse.move(x1, y1 + 52 + dy);
     await page.mouse.down();
     await page.mouse.move(x2, y2 + 52 + dy, { steps: 8 });
-    await page.mouse.up();
-    await page.waitForTimeout(500);
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+      if (tool === "shape") {
+        await page.locator("#shape-fill-color").evaluate(input => {
+          input.value = "#ff0000";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await page.selectOption("#shape-border-width", "2");
+        await page.locator("#shape-border-color").evaluate(input => {
+          input.value = "#00ff00";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await page.waitForTimeout(200);
+        const style = await page.evaluate(() => {
+          const shape = window.__pdfEditor.getPDFDoc().GetActiveObject();
+          return { fill: shape.brush?.fill?.color?.RGBA, stroke: shape.pen?.Fill?.fill?.color?.RGBA, width: shape.pen?.w };
+        });
+        check("selected rectangle accepts fill and border colors", style.fill?.R === 255 && style.fill?.G === 0 && style.stroke?.G === 255 && style.stroke?.R === 0 && Math.abs(style.width - 25400) <= 1, JSON.stringify(style));
+        await page.locator("#shape-fill-color").evaluate(input => {
+          input.value = "#ffffff";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await page.selectOption("#shape-border-width", "0");
+        await page.waitForTimeout(200);
+        const white = await page.evaluate(() => {
+          const shape = window.__pdfEditor.getPDFDoc().GetActiveObject();
+          return { fill: shape.brush?.fill?.color?.RGBA, border: !!shape.pen?.Fill?.fill?.color };
+        });
+        check("white rectangle can have no border", white.fill?.R === 255 && white.fill?.G === 255 && white.fill?.B === 255 && !white.border, JSON.stringify(white));
+      }
   }
   const drawn = await page.evaluate(() => {
     const d = window.__pdfEditor.getPDFDoc();
