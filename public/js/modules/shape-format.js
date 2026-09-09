@@ -5,8 +5,10 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
   const stroke = document.getElementById("shape-border-color");
   const width = document.getElementById("shape-border-width");
   let pending = null;
-  const supported = (shape) => shape && shape.IsShape?.() &&
-    ["rect", "ellipse", "line", "lineWithArrow"].includes(shape.getPresetGeom?.());
+  let completionTimer = null;
+  // PDF shapes can have custom geometry without a preset name. The SDK's
+  // object interface, not the geometry label, determines style support.
+  const supported = (shape) => shape && shape.IsShape?.() && !shape.IsEditFieldShape?.();
   const active = () => getEditor()?.getPDFDoc().GetActiveObject();
   const color = (hex) => new window.Asc.asc_CColor(
     parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16));
@@ -66,10 +68,35 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
     width.value = String(points);
   }
 
+  function completePending() {
+    if (!pending || !canFormat()) return false;
+    const shape = active();
+    if (!supported(shape) || pending.has(shape)) return false;
+    pending = null;
+    clearTimeout(completionTimer);
+    apply();
+    return true;
+  }
+
+  function finish(attempt = 0) {
+    if (!canFormat()) { sync(); return; }
+    try { completePending(); }
+    catch (error) { console.error(error); setStatus("Formfarbe konnte nicht gesetzt werden."); }
+    if (pending && attempt < 20) {
+      clearTimeout(completionTimer);
+      completionTimer = setTimeout(() => finish(attempt + 1), 50);
+    }
+    sync();
+  }
+
   for (const input of [fill, transparent, stroke, width]) {
     input.addEventListener("change", () => {
       if (input === fill) transparent.checked = false;
-      try { if (!pending) apply(input === fill || input === transparent ? "fill" : "stroke"); }
+      try {
+        // A native color picker may be used before the SDK reports the
+        // newly drawn object as active. Complete that hand-off here too.
+        if (!completePending() && !pending) apply(input === fill || input === transparent ? "fill" : "stroke");
+      }
       catch (error) { console.error(error); setStatus("Formfarbe konnte nicht gesetzt werden."); }
       refocusEditor();
     });
@@ -77,23 +104,13 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
 
   return {
     start() {
+      clearTimeout(completionTimer);
       const doc = getEditor().getPDFDoc();
       pending = new Set(Array.from({ length: doc.GetPagesCount() }, (_, i) => doc.GetPageInfo(i).drawings || []).flat());
       show(true);
     },
-    cancel() { pending = null; sync(); },
+    cancel() { clearTimeout(completionTimer); pending = null; sync(); },
     sync,
-    finish() {
-      if (!canFormat()) { sync(); return; }
-      if (pending) {
-        const shape = active();
-        if (supported(shape) && !pending.has(shape)) {
-          pending = null;
-          try { apply(); }
-          catch (error) { console.error(error); setStatus("Formfarbe konnte nicht gesetzt werden."); }
-        }
-      }
-      sync();
-    },
+    finish,
   };
 }

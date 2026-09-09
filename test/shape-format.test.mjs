@@ -29,3 +29,52 @@ test("text mode never reads drawing selection, applies styles, or resizes on cli
     globalThis.document = previousDocument;
   }
 });
+
+test("a late shape selection accepts the first color change and border removal", () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const nodes = new Map();
+  let selected = null;
+  const applied = [];
+  class Properties {
+    asc_putType(v) { this.type = v; }
+    asc_putColor(v) { this.color = v; }
+    asc_putWidth(v) { this.width = v; }
+    asc_putFill(v) { this.fill = v; }
+    asc_putStroke(v) { this.stroke = v; }
+  }
+  globalThis.document = { getElementById(id) {
+    if (!nodes.has(id)) nodes.set(id, { hidden: true, checked: false,
+      value: id === "shape-border-width" ? "1" : "#ffffff", events: {},
+      addEventListener(event, fn) { this.events[event] = fn; },
+    });
+    return nodes.get(id);
+  } };
+  globalThis.window = { Asc: {
+    asc_CShapeProperty: Properties, asc_CShapeFill: Properties,
+    asc_CFillSolid: Properties, asc_CStroke: Properties,
+    asc_CColor: class { constructor(r, g, b) { Object.assign(this, { r, g, b }); } },
+    c_oAscFill: { FILL_TYPE_NOFILL: 2, FILL_TYPE_SOLID: 3 },
+    c_oAscStrokeType: { STROKE_NONE: 0, STROKE_COLOR: 1 },
+  } };
+  const editor = { getPDFDoc: () => ({ GetActiveObject: () => selected,
+    GetPagesCount: () => 1, GetPageInfo: () => ({ drawings: [] }) }),
+    ShapeApply: (props) => applied.push(props),
+  };
+  try {
+    const format = wireShapeFormat({ getEditor: () => editor, canFormat: () => true,
+      refocusEditor() {}, setStatus: (message) => assert.fail(message) });
+    format.start();
+    format.finish(); // The SDK has not selected the new object yet.
+    selected = { IsShape: () => true }; // PDF geometry need not have a preset label.
+    nodes.get("shape-fill-color").events.change();
+    assert.equal(applied.length, 1);
+    assert.deepEqual({ ...applied[0].fill.fill.color }, { r: 255, g: 255, b: 255 });
+    nodes.get("shape-border-width").value = "0";
+    nodes.get("shape-border-width").events.change();
+    assert.equal(applied[1].stroke.type, 0);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
