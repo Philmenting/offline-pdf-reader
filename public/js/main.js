@@ -2538,6 +2538,7 @@ function setActiveTool(name) {
     leavePageEditFocus();
   }
   activeTool = name;
+  if (name === "edit-text" || name === "textbox" || name === "form-fill") shapeFormat?.sync();
   for (const btn of document.querySelectorAll(".toolbar .tool")) {
     const t = btn.getAttribute("data-tool");
     const isActive = (name === t) || (name === "marker:Highlight" && t === "highlight")
@@ -2590,7 +2591,11 @@ function waitFor(predicate, timeoutMs, errMsg) {
 
 // ── Wiring ────────────────────────────────────────────────────────────────
 function wireUi() {
-  shapeFormat = wireShapeFormat({ getEditor: () => editor, refocusEditor, setStatus });
+  shapeFormat = wireShapeFormat({
+    getEditor: () => editor,
+    canFormat: () => activeTool === "select" || activeTool.startsWith("shape"),
+    refocusEditor, setStatus,
+  });
   el("file-input").addEventListener("change", (e) => onFileChosen(e.target.files[0]));
   // Desktop: route "Öffnen" through the native dialog in the main process so
   // the recent-files list gets a real file path to reopen from.

@@ -1641,6 +1641,12 @@ async function main() {
     // double-click into the headline (fixed viewport → stable coordinates)
     await page.mouse.dblclick(590, 111 + await headerYOffset(page));
     await page.waitForTimeout(1500);
+    check("text selection never opens the shape toolbar",
+      await page.locator("#shape-format").isHidden());
+    await page.waitForFunction(() => {
+      const controller = window.__pdfEditor.getPDFDoc().getTextController();
+      return !!controller?.GetDocContent();
+    }, null, { timeout: 10000 });
     await page.keyboard.press("End");
 
     // "Byrußé" — none of these characters are in the headline's subset

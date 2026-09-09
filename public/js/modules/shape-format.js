@@ -1,4 +1,4 @@
-export function wireShapeFormat({ getEditor, refocusEditor, setStatus }) {
+export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus }) {
   const panel = document.getElementById("shape-format");
   const fill = document.getElementById("shape-fill-color");
   const transparent = document.getElementById("shape-fill-none");
@@ -18,6 +18,7 @@ export function wireShapeFormat({ getEditor, refocusEditor, setStatus }) {
   }
 
   function apply(part = "all") {
+    if (!canFormat()) return;
     if (!supported(active())) return;
     const Asc = window.Asc;
     const props = new Asc.asc_CShapeProperty();
@@ -42,6 +43,13 @@ export function wireShapeFormat({ getEditor, refocusEditor, setStatus }) {
   }
 
   function sync() {
+    // Recognized PDF text is also a CShape. Never resize the viewer or
+    // apply drawing properties while the user is placing a text caret.
+    if (!canFormat()) {
+      pending = null;
+      show(false);
+      return;
+    }
     if (pending) return;
     const shape = active();
     show(!!supported(shape));
@@ -76,6 +84,7 @@ export function wireShapeFormat({ getEditor, refocusEditor, setStatus }) {
     cancel() { pending = null; sync(); },
     sync,
     finish() {
+      if (!canFormat()) { sync(); return; }
       if (pending) {
         const shape = active();
         if (supported(shape) && !pending.has(shape)) {
