@@ -49,6 +49,7 @@ const OPTIONAL_LIBS = [
 
 import { el, setStatus, loadScript, downloadBytes, downloadDataUrl } from "./modules/dom.js";
 import { wireShapeFormat } from "./modules/shape-format.js";
+import { IMAGE_PAGE_ACCEPT, isPageImage, imagePagePdf } from "./modules/image-page.js"
 import { showPromptDialog, wirePromptDialog } from "./modules/prompt-dialog.js";
 import { wireSearchBar, openSearchBar, searchStep } from "./modules/search.js";
 import { wireStatusBar, updatePageCount, updateCurrentPage, updateZoomDisplay, setStatusControlsVisible } from "./modules/statusbar.js";
@@ -1831,6 +1832,7 @@ const TOOL_HANDLERS = {
   "page-remove": () => removeCurrentPage(),
   "page-remove-range": () => removePagesByRange(),
   "pdf-append":  () => appendPdf(),
+  "image-page":  () => chooseImagePage(),
   "pdf-extract": () => extractPages(),
   "rotate-left":  () => rotateCurrentPage(-90),
   "rotate-right": () => rotateCurrentPage(90),
@@ -2037,6 +2039,43 @@ async function appendPdfFile(file) {
   }
 }
 
+let imagePageBusy = false
+
+async function appendImagePage(file) {
+  if (!file || !docOpen || mode !== "editor" || imagePageBusy) return false
+  if (activeTool === "form-fill") {
+    setStatus("Bitte zuerst den Ausfüllmodus beenden, um eine Bildseite anzuhängen.")
+    return false
+  }
+  imagePageBusy = true
+  const doc = editor.getPDFDoc()
+  try {
+    const index = editor.getCurrentPage() | 0
+    const size = [doc.GetPageWidthMM(index), doc.GetPageHeightMM(index)].map(v => v * 72 / 25.4)
+    setStatus("Bildseite wird vorbereitet …")
+    await loadPdfLib()
+    const bytes = await imagePagePdf(file, window.PDFLib, size)
+    if (!docOpen || editor.getPDFDoc() !== doc) return false
+    return await appendPdfFile(new File([bytes], file.name.replace(/\.[^.]+$/, "") + ".pdf", { type: "application/pdf" }))
+  } catch (error) {
+    console.error("Bildseite hinzufügen fehlgeschlagen:", error)
+    setStatus(`Bildseite konnte nicht hinzugefügt werden: ${error.message}`)
+    return false
+  } finally {
+    imagePageBusy = false
+    refocusEditor()
+  }
+}
+
+function chooseImagePage() {
+  if (!docOpen || mode !== "editor") return
+  const input = document.createElement("input")
+  input.type = "file"
+  input.accept = IMAGE_PAGE_ACCEPT
+  input.onchange = () => appendImagePage(input.files?.[0])
+  input.click()
+}
+
 function appendPdf() {
   if (!docOpen || mode !== "editor") return;
   const input = document.createElement("input");
@@ -2178,7 +2217,7 @@ function setFormFillMode(on) {
   // tools that edit content are unavailable while filling
   const editTools = ["edit-text", "textbox", "highlight", "underline", "strikeout",
     "shape", "shape-ellipse", "shape-line", "shape-arrow", "ink", "comment", "image",
-    "signature", "page-add", "page-remove", "page-remove-range", "page-move", "pdf-append",
+    "signature", "page-add", "page-remove", "page-remove-range", "page-move", "pdf-append", "image-page",
     "rotate-left", "rotate-right", "rotate-all", "watermark", "page-numbers"];
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
@@ -2558,7 +2597,7 @@ const EDITOR_TOOLS = [
   "undo", "redo", "select", "hand", "edit-text", "textbox", "highlight", "underline",
   "strikeout", "shape", "shape-ellipse", "shape-line", "shape-arrow", "ink", "comment",
   "image", "signature", "page-add", "page-remove", "page-remove-range", "page-move",
-  "pdf-append", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
+  "pdf-append", "image-page", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images",
   "pages-to-images", "ocr", "ocr-txt",
 ];
@@ -2730,6 +2769,11 @@ function wireUi() {
     dropMessage.textContent = docOpen
       ? "PDF hier ablegen, um sie an das Dokument anzuhängen."
       : "PDF hier ablegen, um sie zu öffnen.";
+    if ([...e.dataTransfer.items || []].some(item => /^image\/(png|jpeg|webp)$/.test(item.type))) {
+      dropMessage.textContent = docOpen
+        ? "Bild hier ablegen, um eine neue Seite anzuhängen."
+        : "Bitte zuerst eine PDF öffnen, um eine Bildseite anzuhängen."
+    }
     dropOverlay.hidden = false;
   });
   workspace.addEventListener("dragover", (e) => {
@@ -2747,7 +2791,12 @@ function wireUi() {
 
     const files = Array.from(e.dataTransfer.files || []);
     const file = files.find((candidate) =>
-      candidate.type === "application/pdf" || /\.pdf$/i.test(candidate.name));
+      candidate.type === "application/pdf" || /\.pdf$/i.test(candidate.name) || isPageImage(candidate))
+    if (file && isPageImage(file)) {
+      if (docOpen && mode === "editor") appendImagePage(file)
+      else setStatus("Bitte zuerst eine PDF öffnen, um eine Bildseite anzuhängen.")
+      return
+    }
     if (!file) {
       setStatus("Bitte eine PDF-Datei ablegen.");
       return;

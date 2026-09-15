@@ -1153,6 +1153,50 @@ async function testUiAndNewTools(browser) {
 // getting it backwards) and (b) survive the real save path. The engine's
 // save stream has no drawing serialization, so the host bakes shapes into
 // the PDF with pdf-lib; this verifies that end to end via pixel comparison.
+async function testImagePage(browser) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  const errors = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.goto(BASE)
+  await page.waitForFunction(() => window.__pdfEditorReady, null, { timeout: 90000 })
+  await page.locator("#file-input").setInputFiles({ name: "image-pages.pdf", mimeType: "application/pdf", buffer: await makeMultiPagePdf(1) })
+  await page.waitForFunction(() => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"), null, { timeout: 90000 })
+  const data = await page.evaluate(() => {
+    const canvas = document.createElement("canvas")
+    canvas.width = 400
+    canvas.height = 200
+    const ctx = canvas.getContext("2d")
+    ctx.fillStyle = "#00aa00"
+    ctx.fillRect(0, 0, 400, 200)
+    return canvas.toDataURL("image/png").split(",")[1]
+  })
+  const chooser = page.waitForEvent("filechooser")
+  await clickTool(page, "image-page")
+  await (await chooser).setFiles({ name: "landscape.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") })
+  await page.waitForFunction(() => window.__pdfEditor.getCountPages() === 2)
+  check("image menu appends a new PDF page", true)
+  await page.evaluate(base64 => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([bytes], "dropped.png", { type: "image/png" }))
+    document.querySelector(".sidebar").dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }))
+  }, data)
+  await page.waitForFunction(() => window.__pdfEditor.getCountPages() === 3)
+  await clickTool(page, "undo")
+  await page.waitForFunction(() => window.__pdfEditor.getCountPages() === 2)
+  check("dropping an image adds an undoable page", true)
+  const downloading = page.waitForEvent("download")
+  await page.click("#btn-save")
+  const stream = await (await downloading).createReadStream()
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  const { PDFDocument, PDFName } = await import("pdf-lib")
+  const saved = await PDFDocument.load(Buffer.concat(chunks))
+  check("saved PDF contains the appended image page", saved.getPageCount() === 2 && !!saved.getPage(1).node.Resources()?.get(PDFName.of("XObject")))
+  check("no page errors (image-page scenario)", errors.length === 0, errors.join(" | "))
+  await page.close()
+}
+
 async function testShapesSurviveSave(browser) {
   const sourcePdf = await makeMultiPagePdf(1);
 
@@ -1715,6 +1759,7 @@ async function main() {
     await testTextboxBorderControls(browser);
     await testUiAndNewTools(browser);
     await testShapesSurviveSave(browser);
+    await testImagePage(browser)
     await testHandMarkerSecondDoc(browser);
     await testOcrSearchable(browser);
     await testEditPageImageRendering(browser);
