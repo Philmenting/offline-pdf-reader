@@ -2222,6 +2222,7 @@ function setFormFillMode(on) {
   for (const tool of editTools) setToolEnabled(tool, !on);
   setFormatEnabled(!on);
   setActiveTool(on ? "form-fill" : "select");
+  refocusEditor();
   setStatus(on
     ? "Formularmodus: Felder anklicken und ausfüllen. „Auswahl“ beendet den Modus."
     : "Bearbeitungsmodus.");

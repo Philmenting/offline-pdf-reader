@@ -233,7 +233,11 @@ async function testFormRoundtrip(browser) {
       window.__pdfEditor.getPDFDoc().activeForm?.GetFullName() === name,
     name, { timeout: 10000 });
   };
+  // Host controls can disable SDK keyboard capture before switching modes.
+  await page.evaluate(() => window.__pdfEditor.asc_enableKeyEvents(false));
   await clickTool(page, "form-fill");
+  check("fill mode restores SDK keyboard capture", await page.evaluate(() =>
+    window.AscCommon.g_inputContext.InterfaceEnableKeyEvents === true));
   await clickField("name");
   await page.waitForFunction(() => document.activeElement?.id === "area_id"
     && !window.AscCommon.g_font_loader.isWorking()
