@@ -211,21 +211,41 @@ async function testFormRoundtrip(browser) {
   check("newly recreated form design shapes contain no visible field name",
     forcedDesignLabelItemCount === 0, `text items=${forcedDesignLabelItemCount}`);
 
-  // fill mode: text field at PDF pts (150..400, 705..729), checkbox at
-  // (150..168, 660..678) → screen at 100% zoom (page top-left ~336/72,
-  // scale 96/72): field center ~(703,238), checkbox ~(548,302)
+  // Use the SDK's current page transform, not coordinates tied to a toolbar layout.
+  const clickField = async (name) => {
+    await page.waitForFunction(() => !window.AscCommon.g_font_loader.isWorking()
+      && !window.__pdfEditor.isLongAction(), null, { timeout: 30000 });
+    const point = await page.evaluate((name) => {
+      const doc = window.__pdfEditor.getPDFDoc();
+      const field = doc.widgets.find((widget) => widget.GetFullName() === name);
+      const rect = field.GetRect();
+      const transform = doc.GetPageTransform(field.GetPage(), true).invert;
+      const x = (rect[0] + rect[2]) / 2;
+      const y = (rect[1] + rect[3]) / 2;
+      return { x: doc.Viewer.x + transform.TransformPointX(x, y),
+        y: doc.Viewer.y + transform.TransformPointY(x, y) };
+    }, name);
+    await page.mouse.move(point.x, point.y);
+    await page.waitForFunction(() => window.__pdfEditor.getPDFDoc().Viewer.canInteract(),
+      null, { timeout: 30000 });
+    await page.mouse.click(point.x, point.y, { delay: 50 });
+    await page.waitForFunction((name) =>
+      window.__pdfEditor.getPDFDoc().activeForm?.GetFullName() === name,
+    name, { timeout: 10000 });
+  };
   await clickTool(page, "form-fill");
-  await page.waitForTimeout(800);
-  const dy = await headerYOffset(page);
-  await page.mouse.click(703, 238 + dy);
-  await page.waitForTimeout(1200);
+  await clickField("name");
+  await page.waitForFunction(() => document.activeElement?.id === "area_id"
+    && !window.AscCommon.g_font_loader.isWorking()
+    && !window.__pdfEditor.isLongAction(), null, { timeout: 30000 });
   const NAME = "Philipp Holzwarth";
   await page.keyboard.type(NAME, { delay: 60 });
-  await page.waitForTimeout(600);
-  await page.mouse.click(548, 302 + dy); // checkbox (commits the text field)
-  await page.waitForTimeout(1000);
-  await page.mouse.click(950, 500 + dy); // blur
-  await page.waitForTimeout(800);
+  await clickField("einverstanden"); // commits the text field
+  await page.waitForFunction(() => {
+    const fields = window.__pdfEditor.getPDFDoc().widgets;
+    return fields.find((f) => f.GetFullName() === "name").GetValue() === "Philipp Holzwarth"
+      && fields.find((f) => f.GetFullName() === "einverstanden").IsChecked();
+  }, null, { timeout: 10000 });
 
   const readValues = () => page.evaluate(() => {
     const doc = window.__pdfEditor.getPDFDoc();
