@@ -1,6 +1,20 @@
 # offline-pdf-reader
 
-## Version 0.7.0
+## Aktuelle Windows-Version
+
+[Installer herunterladen](https://github.com/Philmenting/offline-pdf-reader/releases/latest/download/Offline-PDF-Editor-Setup.exe)
+
+[Portable ZIP herunterladen](https://github.com/Philmenting/offline-pdf-reader/releases/latest/download/Offline-PDF-Editor.zip)
+
+Die aktuelle Version ist unter Releases als neueste Veröffentlichung markiert.
+Der separate Vorabrelease `continuous` bleibt für laufende Testbuilds erhalten.
+Alte Quellcode-Tags bleiben unabhängig von der bereinigten Release-Liste verfügbar.
+
+## Version 0.8.0
+
+Diese Veröffentlichung vereinheitlicht die Versionsfolge nach dem früheren
+Release v0.7.4. Sie enthält die nachfolgend beschriebenen Verbesserungen des
+zuletzt als 0.7.0 bezeichneten Testbuilds.
 
 1. Speichern und Seitenextraktion verwenden denselben vollständigen Exportweg.
    Bearbeitete Textseiten gehen dadurch beim Extrahieren nicht verloren.

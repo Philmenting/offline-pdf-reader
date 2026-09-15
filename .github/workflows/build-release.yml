@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +38,8 @@ jobs:
 
       - name: Resolve build metadata
         id: meta
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -50,6 +53,15 @@ jobs:
             fi
           elif [ "${{ github.ref_type }}" = "tag" ]; then
             RELEASE_TAG="${{ github.ref_name }}"
+          fi
+
+          if [ "$HEAD_MESSAGE" = "Publish v0.8.0 and clean historical builds" ] && [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            test "$VERSION" = "0.8.0"
+            if git rev-parse --verify refs/tags/v0.8.0 >/dev/null 2>&1; then
+              echo "Tag v0.8.0 already exists. Refusing to replace it."
+              exit 1
+            fi
+            RELEASE_TAG="v0.8.0"
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -79,6 +91,12 @@ jobs:
             git log --no-merges --pretty='* %s' -20 >> release-notes.md
           fi
           cat release-notes.md
+
+      - name: Use curated release notes
+        if: github.event.head_commit.message == 'Publish v0.8.0 and clean historical builds' && github.ref == 'refs/heads/master'
+        run: |
+          cp RELEASE_NOTES.md release-notes.md
+          printf '\nBuild aus Commit `%s`.\n' "$GITHUB_SHA" >> release-notes.md
 
       - name: Build ONLYOFFICE PDF engine
         run: npm run build-engine
@@ -138,13 +156,71 @@ jobs:
             dist/Offline-PDF-Editor.zip
 
       - name: Publish version release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: steps.meta.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           name: "Offline PDF Editor ${{ steps.meta.outputs.release_tag }}"
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           overwrite_files: true
           body_path: release-notes.md
           files: |
             dist/Offline-PDF-Editor-Setup.exe
             dist/Offline-PDF-Editor.zip
+
+      - name: Clean historical releases and workflow runs once
+        if: github.event.head_commit.message == 'Publish v0.8.0 and clean historical builds' && github.ref == 'refs/heads/master'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            if (repo.owner !== 'Philmenting' || repo.repo !== 'offline-pdf-reader') {
+              throw new Error('Cleanup is restricted to the explicitly requested repository.');
+            }
+            const head = await github.rest.git.getRef({ ...repo, ref: 'heads/master' });
+            if (head.data.object.sha !== context.sha) throw new Error('Master moved. Cleanup stopped.');
+            const release = (await github.rest.repos.getReleaseByTag({ ...repo, tag: 'v0.8.0' })).data;
+            const tag = (await github.rest.git.getRef({ ...repo, ref: 'tags/v0.8.0' })).data;
+            if (release.draft || release.prerelease || tag.object.sha !== context.sha ||
+                !release.body.includes(context.sha)) throw new Error('Current release is not verified.');
+            for (const name of ['Offline-PDF-Editor.zip', 'Offline-PDF-Editor-Setup.exe']) {
+              if (!release.assets.some(a => a.name === name && a.state === 'uploaded' && a.size > 1000000)) {
+                throw new Error('Current download is missing: ' + name);
+              }
+            }
+            const latest = (await github.rest.repos.getLatestRelease(repo)).data;
+            if (latest.id !== release.id) throw new Error('New release is not marked latest.');
+            // Fixed snapshot only. Future releases, runs and every git tag are untouched.
+            const oldReleases = [{"id":361625225,"tag":"v0.7.4"},{"id":361570828,"tag":"v0.7.3"},{"id":355108845,"tag":"v0.7.2"},{"id":355010721,"tag":"v0.7.1"},{"id":354922686,"tag":"v0.7.0"},{"id":354891861,"tag":"v0.6.9"},{"id":354277441,"tag":"v0.6.8"},{"id":354271312,"tag":"v0.6.7"},{"id":354259804,"tag":"v0.6.6"},{"id":354250261,"tag":"v0.6.5"},{"id":353917571,"tag":"v0.6.4"},{"id":353908203,"tag":"v0.6.3"},{"id":353700905,"tag":"v0.6.2"},{"id":353080592,"tag":"v0.6.1"},{"id":352026714,"tag":"v0.6.0"},{"id":351533707,"tag":"v0.5.2"},{"id":351496690,"tag":"v0.5.1"},{"id":351416291,"tag":"v0.5.0"},{"id":351327794,"tag":"v0.4.13"},{"id":350954872,"tag":"v0.4.12"},{"id":350803314,"tag":"v0.4.11"},{"id":350791458,"tag":"v0.4.10"},{"id":350753432,"tag":"v0.4.9"},{"id":350732333,"tag":"v0.4.8"},{"id":349589864,"tag":"v0.4.7"},{"id":349542386,"tag":"v0.4.6"},{"id":349519141,"tag":"v0.4.5"},{"id":349348023,"tag":"v0.4.4"},{"id":349335053,"tag":"v0.4.3"},{"id":349326964,"tag":"v0.4.2"},{"id":349320345,"tag":"v0.4.1"},{"id":349138751,"tag":"v0.4.0"},{"id":349134714,"tag":"v0.3.11"},{"id":349130272,"tag":"v0.3.10"},{"id":349120421,"tag":"v0.3.9"},{"id":349046045,"tag":"v0.3.8"},{"id":348486547,"tag":"v0.3.7"},{"id":348462384,"tag":"v0.3.6"},{"id":348437048,"tag":"v0.3.5"},{"id":348057600,"tag":"v0.3.4"},{"id":348041197,"tag":"v0.3.3"},{"id":348036729,"tag":"v0.3.2"},{"id":348030652,"tag":"v0.3.1"},{"id":347897645,"tag":"v0.3.0"},{"id":347891069,"tag":"v0.2.9"},{"id":347424315,"tag":"v0.2.8"},{"id":347390256,"tag":"v0.2.7"},{"id":347382697,"tag":"v0.2.6"},{"id":347376732,"tag":"v0.2.5"},{"id":347371891,"tag":"v0.2.4"},{"id":346719896,"tag":"v0.2.3"},{"id":346712628,"tag":"v0.2.2"},{"id":346707162,"tag":"v0.2.1"},{"id":346701327,"tag":"v0.2.0"},{"id":346700185,"tag":"v0.1.12"},{"id":346342512,"tag":"v0.1.11"},{"id":346332996,"tag":"v0.1.10"},{"id":346321253,"tag":"v0.1.9"},{"id":344155747,"tag":"v0.1.8"},{"id":344094726,"tag":"v0.1.7"},{"id":343918915,"tag":"v0.1.6"},{"id":343915076,"tag":"v0.1.5"},{"id":343911859,"tag":"v0.1.4"},{"id":343909070,"tag":"v0.1.3"},{"id":343906896,"tag":"v0.1.2"},{"id":343902630,"tag":"v0.1.1"},{"id":343900623,"tag":"master"}];
+            const oldRuns = [34975298972,34958849087,34958286803,34953229111,34331379855,34328598074,34317523992,31677344371,31677299228,30905319014,30902215825,30900777554,30900752837,30900712933,30900686378,30900656035,30891990260,30891961664,30891919138,30891897444,30891865862,30890112249,30890086914,30890057648,30890033354,30803767384,30803734095,30803699419,30801071400,30797712957,30797565112,30795797260,30795360878,30793852251,30791778874,30791776546,30791773270,30544722427,30543111048,30543110614,30543107593,30543106283,30541279000,30541277442,30541274952,30539057272,30539056419,30539053827,30539052236,30539051274,30539049741,30539048463,30442326434,30442318286,30441475499,30441467329,30438242173,30437192636,30437176302,30431134646,29898440957,29898297004,29501823097,29490031243,29479117304,29475341347,29398671614,29397951303,29396499638,29395193230,29394678224,29349700588,29347965374];
+            let deletedReleases = 0;
+            let deletedRuns = 0;
+            for (const old of oldReleases) {
+              if (old.id === release.id) throw new Error('Cannot delete the current release.');
+              try {
+                const candidate = (await github.rest.repos.getRelease({ ...repo, release_id: old.id })).data;
+                if (candidate.tag_name !== old.tag || candidate.tag_name === 'continuous') {
+                  throw new Error('Release identity changed: ' + old.id);
+                }
+                await github.rest.repos.deleteRelease({ ...repo, release_id: old.id });
+                deletedReleases++;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            for (const run_id of oldRuns) {
+              if (run_id === context.runId) throw new Error('Cannot delete the current run.');
+              try {
+                const candidate = (await github.rest.actions.getWorkflowRun({ ...repo, run_id })).data;
+                if (candidate.status !== 'completed') throw new Error('Old run is still active: ' + run_id);
+                await github.rest.actions.deleteWorkflowRun({ ...repo, run_id });
+                deletedRuns++;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            await core.summary.addHeading('Repository cleanup')
+              .addRaw('Published v0.8.0. Kept the current run and continuous test download.\n')
+              .addRaw('Deleted releases: ' + deletedReleases + '. Deleted runs: ' + deletedRuns + '.\n')
+              .addRaw('Source history and git tags were not deleted.').write();
