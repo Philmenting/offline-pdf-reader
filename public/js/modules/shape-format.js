@@ -5,6 +5,7 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
   const stroke = document.getElementById("shape-border-color");
   const width = document.getElementById("shape-border-width");
   let pending = null;
+  let drawing = false;
   let completionTimer = null;
   // PDF shapes can have custom geometry without a preset name. The SDK's
   // object interface, not the geometry label, determines style support.
@@ -52,7 +53,8 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
       show(false);
       return;
     }
-    if (pending) return;
+    // In drawing mode these controls are presets, not a selection inspector.
+    if (pending || drawing) return;
     const shape = active();
     show(!!supported(shape));
     if (panel.hidden) return;
@@ -105,11 +107,12 @@ export function wireShapeFormat({ getEditor, canFormat, refocusEditor, setStatus
   return {
     start() {
       clearTimeout(completionTimer);
+      drawing = true;
       const doc = getEditor().getPDFDoc();
       pending = new Set(Array.from({ length: doc.GetPagesCount() }, (_, i) => doc.GetPageInfo(i).drawings || []).flat());
       show(true);
     },
-    cancel() { clearTimeout(completionTimer); pending = null; sync(); },
+    cancel() { clearTimeout(completionTimer); pending = null; drawing = false; sync(); },
     sync,
     finish,
   };

@@ -70,6 +70,9 @@ test("a late shape selection accepts the first color change and border removal",
     nodes.get("shape-fill-color").events.change();
     assert.equal(applied.length, 1);
     assert.deepEqual({ ...applied[0].fill.fill.color }, { r: 255, g: 255, b: 255 });
+    selected.brush = { fill: { color: { RGBA: { R: 79, G: 129, B: 189 } } } };
+    format.sync(); // SDK paint properties still carry the old theme color.
+    assert.equal(nodes.get("shape-fill-color").value, "#ffffff");
     nodes.get("shape-border-width").value = "0";
     nodes.get("shape-border-width").events.change();
     assert.equal(applied[1].stroke.type, 0);

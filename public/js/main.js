@@ -738,6 +738,8 @@ function registerEditorCallbacks() {
     }
   });
   on("asc_onCanRedo", (v) => setToolEnabled("redo", docOpen && !!v));
+  // The SDK captures mouseup before it reaches our editor container.
+  on("asc_onEndAddShape", () => setTimeout(() => shapeFormat.finish(), 0));
   on("asc_onMarkerFormatChanged", (type, isOn) => {
     // keep the toolbar's active highlight in sync if the engine toggles it off
     if (!isOn) clearActiveMarkerTools();
@@ -2780,7 +2782,6 @@ function wireUi() {
     setTimeout(shapeFormat.sync, 0);
   }, true);
   el("editor_sdk").addEventListener("mouseup", () => {
-    setTimeout(shapeFormat.finish, 0);
     if (editableMarkerTool) setTimeout(applyEditableMarkerSelection, 0);
   }, true);
 

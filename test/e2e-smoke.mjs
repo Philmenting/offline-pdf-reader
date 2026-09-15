@@ -1248,6 +1248,13 @@ async function testShapesSurviveSave(browser) {
   ];
     for (const [tool, x1, y1, x2, y2] of shapeDrags) {
       await clickTool(page, tool);
+      if (tool === "shape") {
+        await page.locator("#shape-fill-color").evaluate(input => {
+          input.value = "#ffffff";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await page.selectOption("#shape-border-width", "0");
+      }
       if (tool !== "shape") await page.selectOption("#shape-border-width", "1");
     await page.waitForTimeout(200);
     await page.mouse.move(x1, y1 + 52 + dy);
@@ -1256,6 +1263,13 @@ async function testShapesSurviveSave(browser) {
       await page.mouse.up();
       await page.waitForTimeout(500);
       if (tool === "shape") {
+        const preset = await page.evaluate(() => {
+          const shape = window.__pdfEditor.getPDFDoc().GetActiveObject();
+          return { fill: shape.brush?.fill?.color?.RGBA, border: !!shape.pen?.Fill?.fill?.color,
+            control: document.getElementById("shape-fill-color").value };
+        });
+        check("new rectangle uses the chosen white fill and no border", preset.fill?.R === 255 && preset.fill?.G === 255 && preset.fill?.B === 255 && !preset.border, JSON.stringify(preset));
+        check("drawing keeps the chosen fill preset", preset.control === "#ffffff", preset.control);
         await page.locator("#shape-fill-color").evaluate(input => {
           input.value = "#ff0000";
           input.dispatchEvent(new Event("change", { bubbles: true }));
