@@ -1,6 +1,6 @@
 {
   "name": "offline-pdf-editor",
-  "version": "0.6.11",
+  "version": "0.7.0",
   "description": "An offline PDF editor built on the ONLYOFFICE sdkjs PDF engine (AGPL-3.0).",
   "main": "electron-main.js",
   "license": "AGPL-3.0-only",
@@ -10,7 +10,7 @@
     "fetch-ocr": "node scripts/fetch-ocr.mjs",
     "start": "electron .",
     "dev": "node server.mjs",
-    "test": "node test/e2e-smoke.mjs",
+    "test": "node --test test/*.test.mjs && node test/e2e-smoke.mjs && node test/document-tools.e2e.mjs",
     "dist:win": "node scripts/build-desktop-win.mjs",
     "dist:win:installer": "node scripts/build-installer-win.mjs"
   },

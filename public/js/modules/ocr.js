@@ -209,7 +209,9 @@ export function embedWordsOnPdfPage(page, words, widthPx, font) {
         page.drawText(text, drawOptions);
       }
       embedded += line.words.length;
-    } catch { /* glyphs outside WinAnsi - skip the line */ }
+    } catch (error) {
+      throw new Error(`Erkannter Text enthält nicht unterstützte Zeichen: ${error.message}`);
+    }
   }
   return embedded;
 }
@@ -324,9 +326,8 @@ export async function makeSearchablePdf() {
       return;
     }
     const outBytes = await pdf.save();
-    deps.markClean();
     setStatus(`Durchsuchbare Textebene eingebettet: ${embedded} Wörter auf ${results.length} Seite(n) - bitte speichern.`);
-    deps.openArrayBuffer(outBytes.buffer, deps.getDocName());
+    await deps.openArrayBuffer(outBytes.buffer, deps.getDocName(), true);
   } catch (e) {
     console.error("OCR fehlgeschlagen:", e);
     setStatus(`OCR fehlgeschlagen: ${e.message}`);

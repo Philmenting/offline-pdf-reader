@@ -15,6 +15,8 @@ let deps = null; // { isDirty, isDocOpen, collectPdfBytes, getDocName, openArray
 let lastInputTs = 0;
 let lastSnapshotTs = 0;
 let snapshotting = false;
+let generation = 0;
+let pendingWrite = Promise.resolve();
 
 async function maybeSnapshot() {
   if (snapshotting || !deps.isDocOpen() || !deps.isDirty()) return;
@@ -22,10 +24,13 @@ async function maybeSnapshot() {
   if (now - lastInputTs < IDLE_REQUIRED_MS) return;
   if (now - lastSnapshotTs < SNAPSHOT_INTERVAL_MS) return;
   snapshotting = true;
+  const version = generation;
+  const name = deps.getDocName();
   try {
     const bytes = await deps.collectPdfBytes();
-    if (bytes) {
-      await recoverySave(bytes, deps.getDocName());
+    if (bytes && version === generation) {
+      pendingWrite = recoverySave(bytes, name);
+      await pendingWrite;
       lastSnapshotTs = now;
       console.log(`[recovery] Snapshot gespeichert (${bytes.length} Bytes)`);
     }
@@ -37,8 +42,10 @@ async function maybeSnapshot() {
 }
 
 /** Call when the document was saved or intentionally discarded. */
-export function clearRecoverySnapshot() {
+export async function clearRecoverySnapshot() {
+  generation++;
   lastSnapshotTs = 0;
+  await pendingWrite.catch(() => {});
   return recoveryClear();
 }
 
@@ -51,12 +58,16 @@ export async function offerRecovery() {
     `Es wurde eine nicht gespeicherte Sitzung gefunden:\n„${snap.name}" (${when}).\n\nWiederherstellen?`);
   if (restore) {
     const bytes = snap.data instanceof Uint8Array ? snap.data : new Uint8Array(snap.data);
-    deps.openArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-      snap.name || "wiederhergestellt.pdf");
-    setStatus(`Sitzung „${snap.name}" wiederhergestellt — bitte speichern.`);
+    try {
+      await deps.openArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        snap.name || "wiederhergestellt.pdf", true);
+      setStatus(`Sitzung „${snap.name}" wiederhergestellt — bitte speichern.`);
+    } catch (error) {
+      setStatus(`Wiederherstellung fehlgeschlagen. Die Sicherung bleibt erhalten: ${error.message}`);
+    }
+    return;
   }
-  // either way the snapshot is consumed; a restored doc re-snapshots on edit
-  await recoveryClear();
+  await clearRecoverySnapshot();
 }
 
 export function initRecovery(dependencies) {

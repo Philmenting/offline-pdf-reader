@@ -1,5 +1,56 @@
 # offline-pdf-reader
 
+## Version 0.7.0
+
+1. Speichern und Seitenextraktion verwenden denselben vollständigen Exportweg.
+   Bearbeitete Textseiten gehen dadurch beim Extrahieren nicht verloren.
+2. Bereits bekannte, horizontal angeordnete Textzeilen werden mit den
+   Layoutkoordinaten der Engine direkt als durchsuchbare Textebene übernommen.
+   Für Seiten mit Bildern oder nicht unterstützten Layouts bleibt OCR der
+   Ersatzweg. Fehlende OCR-Daten und Fehler beim Einbetten führen zu einem
+   sichtbaren Exportfehler statt einer unbemerkt fehlenden Textebene.
+3. Eine wiederhergestellte Sitzung gilt als ungespeichert. Die Absturzsicherung
+   bleibt bis zum ausdrücklichen Speichern oder Verwerfen erhalten.
+4. Unter Seiten > Dateien einfügen können mehrere PDFs, PNG-, JPEG- und
+   WebP-Bilder gemeinsam eingefügt werden. Positionen sind Anfang, Ende sowie
+   vor oder nach der aktuellen Seite. Mehrere abgelegte Dateien öffnen
+   denselben Dialog. Die Auswahl wird vor dem Einfügen vollständig verarbeitet
+   und kann anschließend mit einem einzigen Rückgängig-Schritt entfernt werden.
+5. Extras > Geschwärzte Kopie erzeugt eine eigenständige PDF ausschließlich aus
+   bereinigten Seitenbildern. Bereiche können auf mehreren Seiten ausgewählt
+   oder über Prozentkoordinaten eingegeben werden. Originalobjekte, verborgene
+   Textebenen, Anhänge und ursprüngliche Metadaten werden nicht übernommen.
+6. Extras > PDF verkleinern erzeugt eine JPEG-Bildkopie mit 96, 150 oder 200 dpi.
+   Vor dem Speichern werden die bisherige und die neue Dateigröße angezeigt.
+   In der Desktop-App kann diese Kopie direkt an das Mailprogramm übergeben werden.
+
+Schwärzung und Komprimierung verändern das geöffnete Original nicht. Die neuen
+Bildkopien besitzen keine Textsuche, interaktiven Formularfelder oder gültigen
+digitalen Signaturen. Nicht sichtbare Kommentare werden nicht übernommen.
+Die Dialoge weisen darauf vor dem Export hin. Eine Komprimierung ist nicht bei
+jeder Ausgangsdatei möglich. Eine größere Kopie wird ausdrücklich angezeigt.
+
+### Verbleibende Exportgrenze
+
+Der eigenständige WASM-Split-Writer serialisiert bearbeitete Textzeichnungen
+nicht als Vektortext. Die sichtbare Darstellung solcher Seiten wird daher
+weiterhin gerastert. Der direkte Export bekannter Textzeilen vermeidet das
+erneute Erraten dieser Wörter, ersetzt aber keinen vollständigen Vektorexport.
+OCR-Ergebnisse sind vor der Weitergabe zu prüfen. Ein Enginewechsel ist nicht
+Bestandteil dieser Version.
+
+### Prüfungen
+
+`npm test` führt kleine Regressionstests, den bisherigen vollständigen
+Browsertest und zusätzliche Import-, Schwärzungs-, Komprimierungs- und
+Wiederherstellungstests aus. Die Bearbeitungskette prüft auch Speichern und
+Extrahieren nach erneutem Bearbeiten eines markierten Textes. Windows-Pfade
+und beide Zeilenumbrucharten werden berücksichtigt. Erforderliche Enginepatches
+brechen bei abweichendem Quelltext den Build ab.
+
+Für lokale Windows-Tests kann `CHROMIUM_PATH` auf eine installierte Chromium-
+oder Edge-Programmdatei und `PYTHON` auf einen Python-3-Interpreter zeigen.
+
 An **offline, in-browser PDF editor** built on the open-source
 [ONLYOFFICE sdkjs](https://github.com/ONLYOFFICE/sdkjs) PDF engine.
 

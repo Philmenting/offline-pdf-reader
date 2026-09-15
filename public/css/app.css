@@ -666,3 +666,38 @@ body {
 .prompt-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .prompt-actions .btn { border: 1px solid var(--border-strong); }
 .prompt-actions .btn.primary-action { border-color: var(--accent); }
+.document-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid #cbd0dc;
+  border-radius: 8px;
+  padding: 20px;
+  color: #202938;
+  background: #fff;
+  font: 14px system-ui, sans-serif;
+}
+.document-dialog::backdrop { background: #0006; }
+.document-dialog h2 { margin: 0 0 12px; font-size: 19px; }
+.document-dialog button, .document-dialog select, .document-dialog input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #aeb9cc;
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+}
+.document-dialog button { cursor: pointer; }
+.document-dialog button:disabled { opacity: .5; cursor: default; }
+.document-dialog button:focus-visible, .document-dialog input:focus-visible,
+.document-dialog select:focus-visible { outline: 2px solid #3c55e8; outline-offset: 2px; }
+.document-dialog .dialog-actions, .copy-controls, .region-controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0;
+}
+.document-dialog label { display: grid; gap: 4px; }
+.document-dialog input[type=number] { width: 74px; }
+.copy-warning { line-height: 1.5; }
+.copy-preview { max-height: 45vh; overflow: auto; background: #e9ecef; text-align: center; }
+.copy-preview canvas { display: block; max-width: 100%; height: auto; margin: auto; cursor: crosshair; }
+.document-dialog .import-files { max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }

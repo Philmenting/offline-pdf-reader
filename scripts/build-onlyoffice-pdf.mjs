@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
+import { guardTextShaper, keepPageContents } from "./engine-patches.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -88,19 +89,7 @@ async function exists(p) {
  */
 async function patchTextShaper() {
   const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
-  if (!(await exists(file))) return;
-  let src = await readFile(file, "utf8");
-
-  const needle = "\t\tlet oFontInfo = this.GetFontInfo(this.FontSlot);\n" +
-    "\t\tlet nFontId   = AscCommon.FontNameMap.GetId(this.FontId.m_pFaceInfo.family_name);";
-  const guard = "\t\tif (!this.FontId || !this.FontId.m_pFaceInfo)\n" +
-    "\t\t\treturn this.ClearBuffer(); // font file not in memory yet — repaint after load reshapes\n";
-
-  if (!src.includes(needle)) {
-    console.warn("  ! patchTextShaper: FlushWord signature not found — upstream changed, patch skipped");
-    return;
-  }
-  src = src.replace(needle, guard + needle);
+  const src = guardTextShaper(await readFile(file, "utf8"));
   await writeFile(file, src);
   console.log("→ patched sdk-all.js: FlushWord null-font guard");
 }
@@ -116,7 +105,6 @@ async function patchTextShaper() {
  */
 async function patchFormDesignLabels() {
   const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
-  if (!(await exists(file))) return;
   let src = await readFile(file, "utf8");
 
   const needle = "oRun.AddText(this.GetFullName());";
@@ -153,17 +141,7 @@ async function patchFormDesignLabels() {
  */
 async function patchSaveNoPageClear() {
   const file = join(VENDOR, "sdkjs", "word", "sdk-all.js");
-  if (!(await exists(file))) return;
-  let src = await readFile(file, "utf8");
-
-  const needle = "let bClearPage = !!oFile.pages[curIndex].isRecognized;";
-  const count = src.split(needle).length - 1;
-  if (count !== 2) {
-    console.warn(`  ! patchSaveNoPageClear: expected 2 occurrences, found ${count} — upstream changed, patch skipped`);
-    return;
-  }
-  src = src.replaceAll(needle,
-    "let bClearPage = false; // patched: split-save can't rewrite drawings, so never clear (see build script)");
+  const src = keepPageContents(await readFile(file, "utf8"));
   await writeFile(file, src);
   console.log("→ patched sdk-all.js: save no longer clears text-edited pages");
 }
@@ -279,7 +257,7 @@ async function main() {
   await run("tar", ["xzf", TAR_PATH, "-C", SRC_DIR, "--strip-components=1"]);
 
   console.log("→ building 'word' product (PDF editor engine) ...");
-  await run("python3", ["build/build.py", "--product", "word"], { cwd: SRC_DIR });
+  await run(process.env.PYTHON || (process.platform === "win32" ? "python" : "python3"), ["build/build.py", "--product", "word"], { cwd: SRC_DIR });
 
   console.log("→ vendoring deploy/sdkjs -> vendor/onlyoffice/sdkjs ...");
   await rm(join(VENDOR, "sdkjs"), { recursive: true, force: true });

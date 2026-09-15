@@ -1527,6 +1527,40 @@ async function testHandMarkerSecondDoc(browser) {
   const dirtyAfterEdit = await page.evaluate(() => document.title.startsWith("•"));
   check("document stays marked unsaved after editable formatting", dirtyAfterEdit);
 
+  // Known edited text must survive both export paths without OCR guessing it.
+  const exactText = await page.evaluate(async () => {
+    const { editableTextLines } = await import("/js/modules/editable-text.js");
+    return editableTextLines(window.__pdfEditor.getPDFDoc(), 0, 1000)?.map(w => w.text).join(" ");
+  });
+  check("edited line is available directly without OCR", exactText?.includes("XQYZ"), exactText);
+  await page.route("**/vendor/ocr/tesseract.min.js", route => route.abort());
+  const readDownload = async (action) => {
+    const pending = page.waitForEvent("download", { timeout: 90000 });
+    await action();
+    const chunks = [];
+    for await (const chunk of await (await pending).createReadStream()) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  };
+  const extractedEdit = await readDownload(async () => {
+    await clickTool(page, "pdf-extract");
+    await fillPromptDialog(page, "1");
+  });
+  const savedEdit = await readDownload(() => page.click("#btn-save"));
+  for (const [name, bytes] of [["extracted-edit.pdf", extractedEdit], ["saved-edit.pdf", savedEdit]]) {
+    const reopened = await browser.newPage();
+    await reopened.goto(BASE);
+    await reopened.waitForFunction(() => window.__pdfEditorReady, null, { timeout: 90000 });
+    await reopened.locator("#file-input").setInputFiles({ name, mimeType: "application/pdf", buffer: bytes });
+    await reopened.waitForFunction(() => document.getElementById("status").textContent.includes("bereit zum Bearbeiten"), null, { timeout: 90000 });
+    await reopened.waitForFunction(() => {
+      const props = new window.AscCommon.CSearchSettings();
+      props.put_Text("XQYZ"); props.put_MatchCase(true);
+      return window.__pdfEditor.asc_findText(props, true) > 0;
+    }, null, { timeout: 30000 });
+    check(`${name} preserves the exact second edit after reopening`, true);
+    await reopened.close();
+  }
+
   check("no page errors (hand-marker-seconddoc scenario)", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
   await page.close();
 }

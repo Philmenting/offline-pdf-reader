@@ -49,6 +49,8 @@ const OPTIONAL_LIBS = [
 
 import { el, setStatus, loadScript, downloadBytes, downloadDataUrl } from "./modules/dom.js";
 import { wireShapeFormat } from "./modules/shape-format.js";
+import { wireDocumentTools } from "./modules/document-tools.js";
+import { editableTextLines } from "./modules/editable-text.js";
 import { IMAGE_PAGE_ACCEPT, isPageImage, imagePagePdf } from "./modules/image-page.js"
 import { showPromptDialog, wirePromptDialog } from "./modules/prompt-dialog.js";
 import { wireSearchBar, openSearchBar, searchStep } from "./modules/search.js";
@@ -68,6 +70,7 @@ let thumbnails = null;
 let mode = "loading";    // "editor" | "viewer" | "loading"
 let docOpen = false;
 let shapeFormat;
+let documentTools;
 let lastName = "document.pdf";
 let activeTool = "select";
 let editorErrorMsg = null; // why we fell back to read-only mode (if we did)
@@ -895,11 +898,10 @@ const PENDING_STORE = "pending-open";
 const pendingDb = openAppDb;
 
 async function stashPendingOpenAndReload(bytes, name, keepDirty) {
-  if (docDirty && !window.confirm(
+  if (docDirty && !keepDirty && !window.confirm(
     `„${lastName}" hat ungespeicherte Änderungen. Trotzdem „${name}" öffnen?`)) {
     return;
   }
-  markDirty(false); // decision made — don't let the beforeunload guard interfere
   try {
     const db = await pendingDb();
     await new Promise((resolve, reject) => {
@@ -911,6 +913,8 @@ async function stashPendingOpenAndReload(bytes, name, keepDirty) {
     if (textCommitReloadRequested) {
       try { sessionStorage.setItem(TEXT_COMMIT_TRANSITION_KEY, "1"); } catch { /* no session storage */ }
     }
+    if (!keepDirty) await clearRecoverySnapshot();
+    markDirty(false); // only after the handover was stored successfully
     location.reload();
   } catch (e) {
     console.error("Zweites Dokument konnte nicht übergeben werden:", e);
@@ -1026,7 +1030,7 @@ async function normalizeWinAnsiUnicode(bytes) {
 
 window.__normalizeWinAnsiUnicode = normalizeWinAnsiUnicode;
 
-async function openArrayBuffer(buf, name) {
+async function openArrayBuffer(buf, name, keepDirty = false) {
   const bytes = new Uint8Array(buf);
   const magic = String.fromCharCode(...bytes.slice(0, 5));
   if (magic !== "%PDF-") {
@@ -1034,10 +1038,11 @@ async function openArrayBuffer(buf, name) {
     return;
   }
   if (docOpen && mode === "editor") {
-    stashPendingOpenAndReload(bytes, name);
+    await stashPendingOpenAndReload(bytes, name, keepDirty);
     return;
   }
   lastName = name;
+  pendingKeepDirty = pendingKeepDirty || keepDirty;
   el("placeholder").style.display = "none";
 
   try {
@@ -1063,6 +1068,7 @@ async function openArrayBuffer(buf, name) {
       } catch (e) { console.warn("Offline-Öffnen-Abschluss fehlgeschlagen:", e); }
       setStatus(`„${name}" wird geöffnet …`);
       scheduleOpenFallback(name);
+      if (keepDirty) await waitFor(() => docOpen, 90000, "PDF konnte nicht wiederhergestellt werden.");
     } else if (mode === "viewer") {
       viewer.open(buf);
       enableEditing(false);
@@ -1074,6 +1080,8 @@ async function openArrayBuffer(buf, name) {
   } catch (e) {
     console.error("open() error:", e);
     setStatus(`„${name}" konnte nicht geöffnet werden: ${e.message}`);
+    if (!docOpen) el("placeholder").style.display = "";
+    if (keepDirty) throw e;
   }
 }
 
@@ -1157,11 +1165,23 @@ function updateTitle() {
 // NOTE: viewer.Save() is NOT that — it only returns the raw change-command
 // stream meant as serializer input; an earlier "Speichern" wrote exactly that
 // stream into .pdf files, which no PDF reader could open.
-async function collectPdfBytes(forceRasterPages) {
+function exportRevision() {
+  const history = window.AscCommon.History;
+  const point = history.Points[history.Index];
+  return { point, index: history.Index, items: point?.Items?.length || 0 };
+}
+
+function sameExportRevision(before) {
+  const after = exportRevision();
+  return before.point === after.point && before.index === after.index && before.items === after.items;
+}
+
+async function collectPdfBytes(selectedIndexes) {
   const doc = editor.getPDFDoc();
   try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
+  const revision = exportRevision();
   const pageCount = editor.getCountPages() | 0;
-  const indexes = Array.from({ length: pageCount }, (_, i) => i);
+  const indexes = selectedIndexes || Array.from({ length: pageCount }, (_, i) => i);
   const result = doc.GetPagesBinary(indexes, false);
   if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") return null;
   let bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
@@ -1172,10 +1192,11 @@ async function collectPdfBytes(forceRasterPages) {
   // So pages with real text edits are rasterized from the editor's own
   // renderer (which shows the edits correctly) and replace the page content,
   // plus an invisible OCR text layer so the text stays searchable/markable.
-  const rasterPages = (forceRasterPages && forceRasterPages.length)
-    ? forceRasterPages
-    : editedTextPageIndexes();
-  return rasterizePagesIntoPdf(bytes, rasterPages);
+  bytes = await rasterizePagesIntoPdf(bytes, editedTextPageIndexes().filter(i => indexes.includes(i)), indexes);
+  if (doc !== editor.getPDFDoc() || !sameExportRevision(revision)) {
+    throw new Error("Das Dokument wurde während des Exports verändert. Bitte erneut speichern.");
+  }
+  return bytes;
 }
 
 function editedTextPageIndexes() {
@@ -1200,7 +1221,7 @@ function sessionHasRealEdits() {
 
 const RASTER_DPI = 300; // match OCR resolution so rebuilt text selection stays precise
 
-async function rasterizePagesIntoPdf(bytes, pages) {
+async function rasterizePagesIntoPdf(bytes, pages, sourceIndexes) {
   if (!pages || !pages.length) return bytes;
   await loadPdfLib();
   const { PDFDocument, PDFName, StandardFonts } = window.PDFLib;
@@ -1208,10 +1229,10 @@ async function rasterizePagesIntoPdf(bytes, pages) {
   const doc = editor.getPDFDoc();
   const r = renderer();
   const useOcr = await ocrStackAvailable();
-  const font = useOcr ? await pdf.embedFont(StandardFonts.Helvetica) : null;
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
 
   for (const nPage of pages) {
-    const page = pdf.getPage(nPage);
+    const page = pdf.getPage(sourceIndexes ? sourceIndexes.indexOf(nPage) : nPage);
     if (!page) continue;
     const wPx = Math.round(doc.GetPageWidthMM(nPage) / 25.4 * RASTER_DPI);
     const hPx = Math.round(doc.GetPageHeightMM(nPage) / 25.4 * RASTER_DPI);
@@ -1222,13 +1243,18 @@ async function rasterizePagesIntoPdf(bytes, pages) {
     const png = await pdf.embedPng(canvas.toDataURL("image/png"));
     page.node.set(PDFName.of("Contents"), pdf.context.obj([]));
     page.drawImage(png, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
-    if (useOcr) {
+    {
       try {
-        setStatus(`Textebene für Seite ${nPage + 1} wird erzeugt (OCR) …`);
-        const words = await recognizeCanvasWords(canvas);
-        embedWordsOnPdfPage(page, words, wPx, font);
+        let words = editableTextLines(doc, nPage, wPx);
+        if (!words) {
+          if (!useOcr) throw new Error("OCR-Daten fehlen. Alternativ unter Extras eine Bildkopie erzeugen.");
+          setStatus(`Textebene für Seite ${nPage + 1} wird erzeugt (OCR). Ergebnis bitte prüfen …`);
+          words = await recognizeCanvasWords(canvas);
+        }
+        const embedded = embedWordsOnPdfPage(page, words, wPx, font);
+        if (words.length && !embedded) throw new Error("Die erkannte Textebene ist leer.");
       } catch (e) {
-        console.warn(`OCR-Textebene für Seite ${nPage + 1} fehlgeschlagen:`, e);
+        throw new Error(`Textebene für Seite ${nPage + 1} fehlgeschlagen. Es wurde nicht gespeichert: ${e.message}`);
       }
     }
   }
@@ -1340,6 +1366,8 @@ async function saveDocument() {
       setStatus("Speichern fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
     }
+    const savedRevision = exportRevision();
+    const savedDoc = editor.getPDFDoc();
 
     // Desktop app (Electron): native save dialog via the preload bridge,
     // suggesting the ORIGINAL file name. Web build: browser download with a
@@ -1347,8 +1375,10 @@ async function saveDocument() {
     if (window.desktop && typeof window.desktop.savePdf === "function") {
       const res = await window.desktop.savePdf(bytes, lastName);
       if (res && res.saved) {
-        markDirty(false);
-        clearRecoverySnapshot();
+        if (sameExportRevision(savedRevision) && editor.getPDFDoc() === savedDoc) {
+          markDirty(false);
+          await clearRecoverySnapshot();
+        }
         setStatus(`Gespeichert: ${res.path}`);
       } else if (res && res.error) {
         setStatus(`Speichern fehlgeschlagen: ${res.error}`);
@@ -1833,6 +1863,9 @@ const TOOL_HANDLERS = {
   "page-remove-range": () => removePagesByRange(),
   "pdf-append":  () => appendPdf(),
   "image-page":  () => chooseImagePage(),
+  "files-insert": () => documentTools.chooseFiles(),
+  "redact-copy": () => documentTools.redact(),
+  "compress-copy": () => documentTools.compress(),
   "pdf-extract": () => extractPages(),
   "rotate-left":  () => rotateCurrentPage(-90),
   "rotate-right": () => rotateCurrentPage(90),
@@ -2128,15 +2161,11 @@ async function extractPages() {
 
   setStatus("PDF wird erzeugt …");
   try {
-    const doc = editor.getPDFDoc();
-    try { doc.BlurActiveObject(); } catch { /* commits an active form field */ }
-    const result = doc.GetPagesBinary(indexes, false);
-    if (!result || !result.length || String.fromCharCode(...result.slice(0, 5)) !== "%PDF-") {
+    const bytes = await collectPdfBytes(indexes);
+    if (!bytes) {
       setStatus("Extrahieren fehlgeschlagen: keine gültigen PDF-Daten von der Engine.");
       return;
     }
-    const bytes = await bakeShapesIntoPdf(
-      result instanceof Uint8Array ? result : new Uint8Array(result), indexes);
     const suffix = indexes.length === pageCount ? "alle-Seiten" : `Seiten-${spec.replace(/[^0-9,-]/g, "")}`;
     const outName = lastName.replace(/\.pdf$/i, "") + `-${suffix}.pdf`;
 
@@ -2600,7 +2629,7 @@ const EDITOR_TOOLS = [
   "image", "signature", "page-add", "page-remove", "page-remove-range", "page-move",
   "pdf-append", "image-page", "pdf-extract", "rotate-left", "rotate-right", "rotate-all", "zoom-out", "zoom-in",
   "fit-width", "fit-page", "form-fill", "watermark", "page-numbers", "extract-images",
-  "pages-to-images", "ocr", "ocr-txt",
+  "pages-to-images", "ocr", "ocr-txt", "files-insert", "redact-copy", "compress-copy",
 ];
 
 function enableEditing(on) {
@@ -2631,6 +2660,52 @@ function waitFor(predicate, timeoutMs, errMsg) {
 
 // ── Wiring ────────────────────────────────────────────────────────────────
 function wireUi() {
+  documentTools = wireDocumentTools({
+    isOpen: () => docOpen && mode === "editor",
+    document: () => editor.getPDFDoc(),
+    pageCount: () => editor.getCountPages(),
+    currentPage: () => editor.getCurrentPage(),
+    name: () => lastName,
+    pageSize: n => [editor.getPDFDoc().GetPageWidthMM(n), editor.getPDFDoc().GetPageHeightMM(n)].map(v => v * 72 / 25.4),
+    loadPdfLib, collectPdfBytes, setStatus, refocus: refocusEditor,
+    renderPage: async (n, dpi) => {
+      const doc = editor.getPDFDoc();
+      const width = doc.GetPageWidthMM(n), height = doc.GetPageHeightMM(n);
+      const w = Math.round(width / 25.4 * dpi), h = Math.round(height / 25.4 * dpi);
+      if (w * h > 40000000) throw new Error("Seite zu groß für den Bildexport (höchstens 40 Megapixel).");
+      await waitFor(() => !window.AscCommon.g_font_loader.isWorking(), 30000, "Schriften konnten nicht geladen werden.");
+      if (!renderer().file.pages[n].isRecognized) {
+        await waitFor(() => renderer().file.getPage(n, w, h, undefined, 0xFFFFFF), 30000, "Seitenbild konnte nicht geladen werden.");
+      }
+      if (editor.getPDFDoc() !== doc) throw new Error("Das Dokument wurde gewechselt.");
+      return { canvas: renderer().GetPrintPage(n, w, h, window.AscPDF.PRINT_CONTENT_TYPES.docAndMarkups), size: [width * 72 / 25.4, height * 72 / 25.4] };
+    },
+    insertPages: async (files, index, check) => {
+      const doc = editor.getPDFDoc();
+      const prepared = [];
+      for (const file of files) prepared.push({ ...file, bytes: await normalizeWinAnsiUnicode(file.bytes) });
+      check();
+      if (editor.getPDFDoc() !== doc) throw new Error("Das Dokument wurde gewechselt.");
+      const before = exportRevision();
+      let failed;
+      const success = doc.DoAction(() => {
+        try {
+          for (const file of prepared) {
+            const count = editor.getCountPages();
+            doc.MergePagesBinary(index, file.bytes);
+            if (editor.getCountPages() !== count + file.count) throw new Error("Die Engine konnte nicht alle Seiten einfügen.");
+            index += file.count;
+          }
+          return true;
+        } catch (error) { failed = error; return false; }
+      }, window.AscDFH.historydescription_Pdf_AddPage, doc);
+      if (!success) {
+        if (!sameExportRevision(before)) editor.Undo();
+        throw failed || new Error("Das Dokument ist momentan für Änderungen gesperrt.");
+      }
+      suppressFormDesignLabels(); refreshHistoryButtons(); markDirty(true);
+    },
+  });
   shapeFormat = wireShapeFormat({
     getEditor: () => editor,
     canFormat: () => activeTool === "select" || activeTool.startsWith("shape"),
@@ -2666,7 +2741,7 @@ function wireUi() {
   });
   wireSignatureDialog({ insertImageDataUrl, refocusEditor, setStatus });
   initRecovery({
-    isDirty: () => docDirty,
+    isDirty: () => docDirty && !documentTools.isBusy(),
     isDocOpen: () => docOpen,
     collectPdfBytes,
     getDocName: () => lastName,
@@ -2791,6 +2866,10 @@ function wireUi() {
     hideDropOverlay();
 
     const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 1 && docOpen && mode === "editor") {
+      documentTools.importFiles(files);
+      return;
+    }
     const file = files.find((candidate) =>
       candidate.type === "application/pdf" || /\.pdf$/i.test(candidate.name) || isPageImage(candidate))
     if (file && isPageImage(file)) {

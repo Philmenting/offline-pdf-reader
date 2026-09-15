@@ -11,7 +11,7 @@
  */
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { join, normalize, extname } from "node:path";
+import { join, posix, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
@@ -52,7 +52,9 @@ const MOUNTS = [
 ];
 
 function resolvePath(urlPath) {
-  const clean = normalize(decodeURIComponent(urlPath.split("?")[0]));
+  const decoded = decodeURIComponent(urlPath.split("?")[0]);
+  if (decoded.includes("\\") || decoded.includes("\0")) return null;
+  const clean = posix.normalize(decoded);
   if (clean.includes("..")) return null; // path traversal guard
   for (const m of MOUNTS) {
     if (clean.startsWith(m.prefix)) {
@@ -64,7 +66,8 @@ function resolvePath(urlPath) {
 }
 
 const server = createServer(async (req, res) => {
-  let filePath = resolvePath(req.url || "/");
+  let filePath;
+  try { filePath = resolvePath(req.url || "/"); } catch { /* malformed URL */ }
   if (!filePath) {
     res.writeHead(400).end("Bad request");
     return;
@@ -85,6 +88,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`offline-pdf-reader dev server: http://localhost:${PORT}`);
 });
