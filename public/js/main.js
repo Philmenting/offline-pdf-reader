@@ -50,6 +50,7 @@ const OPTIONAL_LIBS = [
 import { el, setStatus, loadScript, downloadBytes, downloadDataUrl } from "./modules/dom.js";
 import { wireShapeFormat } from "./modules/shape-format.js";
 import { wireDocumentTools } from "./modules/document-tools.js";
+import { embedMissingTrueTypeFonts } from "./modules/pdf-fonts.js";
 import { editableTextLines } from "./modules/editable-text.js";
 import { IMAGE_PAGE_ACCEPT, isPageImage, imagePagePdf } from "./modules/image-page.js"
 import { showPromptDialog, wirePromptDialog } from "./modules/prompt-dialog.js";
@@ -349,7 +350,7 @@ function installSubsetFontNameNormalization() {
 
   const orig = app.GetFontFileWeb;
   app.GetFontFileWeb = function (name, lStyle) {
-    if (typeof name === "string" && /^[A-Z]{6}\+/.test(name) && undefined === this.FontPickerMap[name]) {
+    if (typeof name === "string" && (/^[A-Z]{6}\+/.test(name) || /\s+[0-9A-Fa-f]{16,}$/.test(name)) && undefined === this.FontPickerMap[name]) {
       const clean = name
         .replace(/^[A-Z]{6}\+/, "")
         .replace(/\s+[0-9A-Fa-f]{16,}$/, "");
@@ -995,7 +996,9 @@ function winAnsiToUnicodeCMap() {
 // render correctly from glyph codes, but asc_EditPage then mistakes those
 // codes for Unicode and turns umlauts/section signs into unrelated symbols.
 // Add the standard CP1252 map to the in-memory working copy before ONLYOFFICE
-// parses it. Existing ToUnicode maps and non-WinAnsi/CID fonts are untouched.
+// parses it. Also embed known missing TrueType faces: glyph IDs from a
+// substituted font are not valid in another face, even with correct Unicode.
+// Existing ToUnicode maps and non-WinAnsi/CID fonts are untouched.
 async function normalizeWinAnsiUnicode(bytes) {
   try {
     await loadPdfLib();
@@ -1008,7 +1011,11 @@ async function normalizeWinAnsiUnicode(bytes) {
     const type1Name = PDFName.of("Type1");
     const trueTypeName = PDFName.of("TrueType");
     const cmapBytes = new TextEncoder().encode(winAnsiToUnicodeCMap());
-    let patched = 0;
+    let patched = await embedMissingTrueTypeFonts(pdf, window.PDFLib, async name => {
+      const response = await fetch(FONTS_PATH + name);
+      if (!response.ok) throw new Error(`Schriftdatei ${name} konnte nicht geladen werden.`);
+      return response.arrayBuffer();
+    });
 
     for (const [, object] of pdf.context.enumerateIndirectObjects()) {
       if (!object || typeof object.get !== "function" || typeof object.set !== "function") continue;
@@ -1022,7 +1029,7 @@ async function normalizeWinAnsiUnicode(bytes) {
     }
 
     if (!patched) return bytes;
-    console.log(`[pdf] ${patched} WinAnsi-Schrift(en) mit ToUnicode ergänzt`);
+    console.log(`[pdf] ${patched} Schriftkorrektur(en): Einbettung und Unicode-Zuordnung`);
     return new Uint8Array(await pdf.save({ useObjectStreams: false, updateFieldAppearances: false }));
   } catch (error) {
     console.warn("WinAnsi-Zeichenzuordnung konnte nicht ergänzt werden:", error);

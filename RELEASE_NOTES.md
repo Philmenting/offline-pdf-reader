@@ -1,3 +1,20 @@
+# Offline PDF Editor 0.8.2
+
+- Fehlende Windows-Standardschriften (WinAnsi/TrueType) werden durch passende
+  eingebettete Liberation-Schriften ergänzt. Fett, Kursiv und Sonderzeichen
+  bleiben dadurch bei der Bearbeitung korrekt zugeordnet.
+- Bereits eingebettete Schriften, unbekannte Familien und andere Kodierungen
+  werden nicht ersetzt.
+- Bilder und Logos erzwingen keine erneute OCR des vorhandenen Seitentextes.
+  Umlaute, Eurozeichen und m²/m³ bleiben in der durchsuchbaren Textebene erhalten.
+- Automatische Regressionstests für Schrifteinbettung, Textseiten mit Bildern
+  und Bearbeiten/Speichern ergänzt.
+
+Die sichtbare Ausgabe bearbeiteter Textseiten bleibt technisch eine
+300-dpi-Rasterdarstellung mit zusätzlicher Textebene. Nicht eingebettete
+Microsoft-Schriften erhalten einen metrisch kompatiblen Ersatz. Für bereits
+beschädigte Exporte bitte die ursprüngliche PDF erneut bearbeiten.
+
 # Offline PDF Editor 0.8.0
 
 Aktuelle Windows-Ausgabe mit Installer und portabler ZIP. Die Versionsnummer

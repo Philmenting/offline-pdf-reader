@@ -10,6 +10,25 @@ Die aktuelle Version ist unter Releases als neueste Veröffentlichung markiert.
 Der separate Vorabrelease `continuous` bleibt für laufende Testbuilds erhalten.
 Alte Quellcode-Tags bleiben unabhängig von der bereinigten Release-Liste verfügbar.
 
+## Version 0.8.2 – Schrift und Sonderzeichen
+
+Nicht eingebettete Arial-, Times-New-Roman- und Courier-New-Schriften mit
+WinAnsi-Kodierung erhalten vor dem Bearbeiten die mitgelieferte metrisch
+passende Liberation-Schrift einschließlich Fett/Kursiv. Dadurch stimmen die
+Glyphenkennungen beim Bearbeiten und Speichern; bereits eingebettete Schriften
+bleiben erhalten. Dies ist ein kompatibler Ersatz, keine nachträgliche
+Beschaffung der ursprünglichen Microsoft-Schriftdatei.
+
+Bilder auf einer ansonsten unterstützten Textseite erzwingen keine OCR mehr.
+Die Textebene übernimmt vorhandene Umlaute, Eurozeichen und Hochzahlen direkt.
+Text innerhalb der Bilder wird dabei nicht neu erkannt; dafür gibt es weiterhin
+die ausdrückliche OCR-Funktion. Bereits falsch gespeicherte Bildseiten lassen
+sich damit nicht rückwirkend reparieren – bitte erneut vom Original ausgehen.
+
+Regressionstest: `node test/pdf-fonts.e2e.mjs` (Engine, Fonts und Playwright
+müssen vorhanden sein). Optional lässt sich lokal ein eigenes Original mit
+PDF-Pfad und nullbasiertem Seitenindex prüfen; keine Nutzerdokumente liegen im Repo.
+
 ## Version 0.8.0
 
 Diese Veröffentlichung vereinheitlicht die Versionsfolge nach dem früheren
@@ -20,7 +39,7 @@ zuletzt als 0.7.0 bezeichneten Testbuilds.
    Bearbeitete Textseiten gehen dadurch beim Extrahieren nicht verloren.
 2. Bereits bekannte, horizontal angeordnete Textzeilen werden mit den
    Layoutkoordinaten der Engine direkt als durchsuchbare Textebene übernommen.
-   Für Seiten mit Bildern oder nicht unterstützten Layouts bleibt OCR der
+   Für reine Bildseiten oder nicht unterstützte Textlayouts bleibt OCR der
    Ersatzweg. Fehlende OCR-Daten und Fehler beim Einbetten führen zu einem
    sichtbaren Exportfehler statt einer unbemerkt fehlenden Textebene.
 3. Eine wiederhergestellte Sitzung gilt als ungespeichert. Die Absturzsicherung

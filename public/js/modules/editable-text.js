@@ -1,11 +1,14 @@
 // Preserve known text, using the SDK's own line layout and transforms. Return
-// null for picture-bearing/rotated content rather than guessing its geometry.
+// null for unsupported text geometry rather than guessing its placement.
+// Pictures do not invalidate known text: OCR would corrupt exact umlauts and
+// superscripts and can mistake decorative logos for additional text.
 export function editableTextLines(doc, pageIndex, widthPx) {
   const drawings = doc.GetPageInfo(pageIndex).drawings || [];
   const scale = widthPx / doc.GetPageWidthMM(pageIndex);
   const words = [];
   for (const drawing of drawings) {
     if (drawing.IsEditFieldShape?.()) continue;
+    if (drawing.IsImage?.()) continue;
     if (!drawing.IsShape?.()) return null;
     const content = drawing.GetDocContent?.();
     if (!content) continue;
